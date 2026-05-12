@@ -4,19 +4,14 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { encryptPasswordRSAOAEP, type PublicKeyResponse } from "@/lib/crypto/client";
-import { encryptPayload, decryptPayload, type VaultBlob } from "@/lib/crypto/vault";
 
 type DbType = "auto" | "mysql" | "postgresql" | "mssql";
 
-type SavedProfile = {
+type ProfileMeta = {
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
-  salt: string;
-  iv: string;
-  ciphertext: string;
-  kdf: { name: "PBKDF2"; hash: "SHA-256"; iterations: number };
 };
 
 type StoredPayload = {
@@ -25,6 +20,7 @@ type StoredPayload = {
   port: number;
   user: string;
   password: string;
+  ssl?: boolean;
 };
 
 export default function AppPage() {
@@ -40,40 +36,33 @@ export default function AppPage() {
   const [connectionId, setConnectionId] = useState<string | null>(null);
 
   // Saved-connection state
-  const [savedProfiles, setSavedProfiles] = useState<SavedProfile[]>([]);
+  const [savedProfiles, setSavedProfiles] = useState<ProfileMeta[]>([]);
   const [savedError, setSavedError] = useState<string | null>(null);
 
   // Save modal
   const [saveOpen, setSaveOpen] = useState(false);
   const [saveName, setSaveName] = useState("");
-  const [savePass, setSavePass] = useState("");
-  const [savePass2, setSavePass2] = useState("");
   const [saveBusy, setSaveBusy] = useState(false);
   const [saveErr, setSaveErr] = useState<string | null>(null);
 
-  // Load modal
-  const [loadProfile, setLoadProfile] = useState<SavedProfile | null>(null);
-  const [loadPass, setLoadPass] = useState("");
-  const [loadBusy, setLoadBusy] = useState(false);
-  const [loadErr, setLoadErr] = useState<string | null>(null);
+  // Track which profile is being loaded (for spinner)
+  const [loadingId, setLoadingId] = useState<string | null>(null);
 
   const canSubmit = useMemo(
     () => host.trim().length > 0 && port > 0 && password.length > 0,
     [host, port, password]
   );
-  const canSave = useMemo(
-    () => host.trim().length > 0 && port > 0 && password.length > 0,
-    [host, port, password]
-  );
+  const canSave = canSubmit;
 
   const refreshSaved = useCallback(async () => {
     try {
       const res = await fetch("/api/saved-connections", { cache: "no-store" });
       if (!res.ok) {
-        if (res.status === 401) return; // not signed in; ignore
+        if (res.status === 401) return;
+        if (res.status === 503) return; // feature not configured server-side
         throw new Error("Failed to load saved");
       }
-      const j = (await res.json()) as { profiles: SavedProfile[] };
+      const j = (await res.json()) as { profiles: ProfileMeta[] };
       setSavedProfiles(j.profiles ?? []);
       setSavedError(null);
     } catch (e) {
@@ -114,7 +103,7 @@ export default function AppPage() {
         return;
       }
       setConnectionId(data.connectionId);
-      setMessage(`Connected. Mở explorer…`);
+      setMessage("Connected. Mở explorer…");
       router.push(`/app/explorer?cid=${encodeURIComponent(data.connectionId)}`);
     } catch (e) {
       setMessage(e instanceof Error ? e.message : "Unexpected error");
@@ -123,11 +112,9 @@ export default function AppPage() {
     }
   }
 
-  // ----- Save profile -----
+  // ----- Save profile (server-encrypted) -----
   function openSave() {
     setSaveName("");
-    setSavePass("");
-    setSavePass2("");
     setSaveErr(null);
     setSaveOpen(true);
   }
@@ -135,25 +122,19 @@ export default function AppPage() {
   async function submitSave() {
     setSaveErr(null);
     if (!saveName.trim()) { setSaveErr("Tên profile không được trống."); return; }
-    if (savePass.length < 8) { setSaveErr("Passphrase tối thiểu 8 ký tự."); return; }
-    if (savePass !== savePass2) { setSaveErr("Passphrase xác nhận không khớp."); return; }
     setSaveBusy(true);
     try {
-      const payload: StoredPayload = { dbType, host, port, user, password };
-      const blob = await encryptPayload(savePass, payload);
+      const data: StoredPayload = { dbType, host, port, user, password };
       const res = await fetch("/api/saved-connections", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: saveName.trim(), ...blob })
+        body: JSON.stringify({ name: saveName.trim(), data })
       });
       const j = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(j?.error?.message ?? `HTTP ${res.status}`);
       setSaveOpen(false);
-      // Best-effort: wipe passphrase from state.
-      setSavePass("");
-      setSavePass2("");
       await refreshSaved();
-      setMessage(`Đã lưu profile: ${saveName.trim()}`);
+      setMessage(`Đã lưu profile (server-encrypted): ${saveName.trim()}`);
       setTimeout(() => setMessage(null), 4000);
     } catch (e) {
       setSaveErr(String(e instanceof Error ? e.message : e));
@@ -163,41 +144,29 @@ export default function AppPage() {
   }
 
   // ----- Load profile -----
-  function openLoad(p: SavedProfile) {
-    setLoadProfile(p);
-    setLoadPass("");
-    setLoadErr(null);
-  }
-
-  async function submitLoad() {
-    if (!loadProfile) return;
-    setLoadErr(null);
-    setLoadBusy(true);
+  async function loadAndFill(p: ProfileMeta) {
+    setLoadingId(p.id);
+    setSavedError(null);
     try {
-      const blob: VaultBlob = {
-        salt: loadProfile.salt,
-        iv: loadProfile.iv,
-        ciphertext: loadProfile.ciphertext,
-        kdf: loadProfile.kdf
-      };
-      const payload = await decryptPayload<StoredPayload>(loadPass, blob);
-      setDbType(payload.dbType);
-      setHost(payload.host);
-      setPort(payload.port);
-      setUser(payload.user);
-      setPassword(payload.password);
-      setLoadProfile(null);
-      setLoadPass("");
-      setMessage(`Đã load: ${loadProfile.name}. Nhấn Connect để kết nối.`);
+      const res = await fetch(`/api/saved-connections/${encodeURIComponent(p.id)}`, { cache: "no-store" });
+      const j = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(j?.error?.message ?? `HTTP ${res.status}`);
+      const data = j.data as StoredPayload;
+      setDbType(data.dbType);
+      setHost(data.host);
+      setPort(data.port);
+      setUser(data.user ?? "");
+      setPassword(data.password);
+      setMessage(`Đã load: ${p.name}. Nhấn Connect để kết nối.`);
       setTimeout(() => setMessage(null), 5000);
     } catch (e) {
-      setLoadErr(String(e instanceof Error ? e.message : e));
+      setSavedError(String(e instanceof Error ? e.message : e));
     } finally {
-      setLoadBusy(false);
+      setLoadingId(null);
     }
   }
 
-  async function deleteProfile(p: SavedProfile) {
+  async function deleteProfile(p: ProfileMeta) {
     if (!confirm(`Xoá profile "${p.name}"? Không thể khôi phục.`)) return;
     try {
       const res = await fetch(`/api/saved-connections/${encodeURIComponent(p.id)}`, { method: "DELETE" });
@@ -319,7 +288,7 @@ export default function AppPage() {
                 className="rounded-xl bg-white border px-4 py-2 text-sm hover:bg-zinc-50 disabled:opacity-50"
                 disabled={!canSave}
                 onClick={openSave}
-                title="Mã hoá toàn bộ thông tin với passphrase rồi lưu vào server"
+                title="Lưu credential — server mã hoá AES-256-GCM trước khi ghi đĩa"
               >
                 💾 Save credentials…
               </button>
@@ -342,8 +311,8 @@ export default function AppPage() {
             <ul className="mt-2 text-sm text-zinc-700 space-y-1 list-disc pl-5">
               <li>Auth gate + email allowlist</li>
               <li>Password mã hoá RSA-OAEP trước gửi</li>
-              <li>Saved credentials: AES-GCM với key từ passphrase (PBKDF2)</li>
-              <li>Server không thấy plaintext credential</li>
+              <li>Saved credentials: AES-256-GCM at rest (HKDF + master key)</li>
+              <li>Per-user key derive — user khác không decrypt được</li>
               <li>Production bắt buộc HTTPS</li>
             </ul>
           </div>
@@ -353,14 +322,14 @@ export default function AppPage() {
         <section className="mt-4 rounded-2xl bg-white border border-zinc-200 shadow-sm p-5">
           <div className="flex items-center justify-between">
             <h3 className="font-semibold">Saved connections</h3>
-            <span className="text-xs text-zinc-500">{savedProfiles.length} profile(s) — E2E encrypted</span>
+            <span className="text-xs text-zinc-500">{savedProfiles.length} profile(s) — server-encrypted</span>
           </div>
           {savedError && (
             <div className="mt-2 text-sm text-red-600 border border-red-200 bg-red-50 rounded-xl p-3">{savedError}</div>
           )}
           {savedProfiles.length === 0 ? (
             <p className="mt-2 text-sm text-zinc-500">
-              Chưa có profile nào. Điền form + nhấn <strong>Save credentials</strong> để lưu (cần passphrase).
+              Chưa có profile nào. Điền form + nhấn <strong>Save credentials</strong> để lưu.
             </p>
           ) : (
             <ul className="mt-3 divide-y divide-zinc-100">
@@ -374,10 +343,11 @@ export default function AppPage() {
                   </div>
                   <div className="flex gap-1">
                     <button
-                      onClick={() => openLoad(p)}
-                      className="text-xs px-3 py-1 rounded-xl border bg-white hover:bg-zinc-50"
+                      onClick={() => loadAndFill(p)}
+                      disabled={loadingId === p.id}
+                      className="text-xs px-3 py-1 rounded-xl border bg-white hover:bg-zinc-50 disabled:opacity-50"
                     >
-                      Load
+                      {loadingId === p.id ? "Loading…" : "Load"}
                     </button>
                     <button
                       onClick={() => deleteProfile(p)}
@@ -394,19 +364,19 @@ export default function AppPage() {
 
         <section className="mt-6 text-xs text-zinc-500">
           <p>
-            Saved credentials được mã hoá end-to-end bằng passphrase bạn nhập (PBKDF2 200k → AES-GCM).
-            Server CHỈ lưu ciphertext — quên passphrase = mất data, không recover được.
+            Saved credentials được mã hoá ở server (AES-256-GCM với master key HKDF-derive per-user) trước khi ghi đĩa.
+            File leak một mình không decrypt được — cần cả master key trên server. Server admin có thể decrypt khi cần.
           </p>
         </section>
       </div>
 
-      {/* Save modal */}
+      {/* Save modal — just the profile name */}
       {saveOpen && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => !saveBusy && setSaveOpen(false)}>
           <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
             <header className="px-5 py-3 border-b">
-              <h2 className="text-base font-semibold">Save credentials (E2E encrypted)</h2>
-              <p className="text-xs text-zinc-500 mt-1">Passphrase chỉ ở browser của bạn. Server không thể giải mã.</p>
+              <h2 className="text-base font-semibold">Save credentials</h2>
+              <p className="text-xs text-zinc-500 mt-1">Server sẽ mã hoá AES-256-GCM rồi lưu.</p>
             </header>
             <div className="px-5 py-3 space-y-3 text-sm">
               <label className="block">
@@ -419,74 +389,17 @@ export default function AppPage() {
                   maxLength={64}
                   autoComplete="off"
                   autoFocus
-                />
-              </label>
-              <label className="block">
-                <span>Vault passphrase (≥ 8 ký tự)</span>
-                <input
-                  type="password"
-                  className="mt-1 w-full rounded-xl border p-2"
-                  value={savePass}
-                  onChange={(e) => setSavePass(e.target.value)}
-                  autoComplete="new-password"
-                />
-              </label>
-              <label className="block">
-                <span>Xác nhận passphrase</span>
-                <input
-                  type="password"
-                  className="mt-1 w-full rounded-xl border p-2"
-                  value={savePass2}
-                  onChange={(e) => setSavePass2(e.target.value)}
-                  autoComplete="new-password"
+                  onKeyDown={(e) => { if (e.key === "Enter") submitSave(); }}
                 />
               </label>
               {saveErr && <div className="text-sm text-red-600 border border-red-200 bg-red-50 rounded-xl p-3">{saveErr}</div>}
-              <div className="text-xs text-amber-700 bg-amber-50 border border-amber-200 rounded-xl p-3">
-                ⚠️ Quên passphrase = không có cách nào lấy lại được credential. Lưu nó ở chỗ an toàn (password manager).
-              </div>
             </div>
             <footer className="px-5 py-3 border-t flex items-center justify-end gap-2">
               <button onClick={() => setSaveOpen(false)} disabled={saveBusy} className="px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50 disabled:opacity-50">
                 Cancel
               </button>
-              <button onClick={submitSave} disabled={saveBusy} className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
-                {saveBusy ? "Encrypting…" : "Save"}
-              </button>
-            </footer>
-          </div>
-        </div>
-      )}
-
-      {/* Load modal */}
-      {loadProfile && (
-        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => !loadBusy && setLoadProfile(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
-            <header className="px-5 py-3 border-b">
-              <h2 className="text-base font-semibold">Load: {loadProfile.name}</h2>
-              <p className="text-xs text-zinc-500 mt-1">Decrypt bằng passphrase đã dùng lúc save.</p>
-            </header>
-            <div className="px-5 py-3 space-y-3 text-sm">
-              <label className="block">
-                <span>Vault passphrase</span>
-                <input
-                  type="password"
-                  className="mt-1 w-full rounded-xl border p-2"
-                  value={loadPass}
-                  onChange={(e) => setLoadPass(e.target.value)}
-                  autoComplete="current-password"
-                  autoFocus
-                  onKeyDown={(e) => { if (e.key === "Enter") submitLoad(); }}
-                />
-              </label>
-              {loadErr && <div className="text-sm text-red-600 border border-red-200 bg-red-50 rounded-xl p-3">{loadErr}</div>}
-            </div>
-            <footer className="px-5 py-3 border-t flex items-center justify-end gap-2">
-              <button onClick={() => setLoadProfile(null)} disabled={loadBusy} className="px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50 disabled:opacity-50">
-                Cancel
-              </button>
-              <button onClick={submitLoad} disabled={loadBusy || loadPass.length === 0} className="px-4 py-2 rounded-xl bg-zinc-900 text-white hover:bg-zinc-800 disabled:opacity-50">
-                {loadBusy ? "Decrypting…" : "Load"}
+              <button onClick={submitSave} disabled={saveBusy || !saveName.trim()} className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50">
+                {saveBusy ? "Saving…" : "Save"}
               </button>
             </footer>
           </div>

@@ -1,52 +1,52 @@
 /**
- * Server-side store for end-to-end encrypted DB connection profiles.
+ * Server-side store for saved DB connection profiles.
  *
- * The server only sees ciphertext + salt + iv + KDF params — NEVER plaintext.
- * The key to decrypt is derived client-side from the user's vault passphrase
- * (PBKDF2-SHA256 200k iterations) and never sent to the server.
+ * Plaintext credentials are encrypted at the store boundary using `serverVault`
+ * (HKDF + AES-256-GCM with master key from env). The file on disk only contains
+ * ciphertext + salt + iv per profile.
  *
- * Storage: a single JSON file at SAVED_CONNECTIONS_PATH (env, default /data/saved-connections.json).
+ * Storage: a single JSON file at SAVED_CONNECTIONS_PATH (default /data/saved-connections.json).
  * User identity is hashed (SHA-256 of lowercased email) so the on-disk file does not reveal raw emails.
- * Atomic write via tmp + rename. In-process write lock prevents lost updates.
+ * Atomic write via tmp + rename. Single in-process serial chain prevents lost updates.
+ *
+ * Schema versions:
+ *   - v1 (legacy, client-encrypted with passphrase) — IGNORED on read, treated as empty.
+ *   - v2 (current, server-encrypted with master key).
  */
 import { readFile, writeFile, rename, mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID, createHash } from "node:crypto";
-import type { SaveProfileInput } from "./schemas";
+import { encryptForUser, decryptForUser, type ServerVaultBlob } from "@/lib/crypto/serverVault";
 
 const DEFAULT_PATH = "/data/saved-connections.json";
 const MAX_PROFILES_PER_USER = 50;
+const SCHEMA_VERSION = 2;
 
-// Path is read on every call so tests / runtime env changes are honored.
 function storePath(): string {
   return process.env.SAVED_CONNECTIONS_PATH || DEFAULT_PATH;
 }
 
-export type EncryptedProfile = {
+export type ProfileMeta = {
   id: string;
   name: string;
   createdAt: string;
   updatedAt: string;
-  salt: string;
-  iv: string;
-  ciphertext: string;
-  kdf: { name: "PBKDF2"; hash: "SHA-256"; iterations: number };
 };
 
+type PersistedProfile = ProfileMeta & ServerVaultBlob;
+
 type StoreShape = {
-  version: 1;
-  users: Record<string, { profiles: EncryptedProfile[] }>;
+  version: typeof SCHEMA_VERSION;
+  users: Record<string, { profiles: PersistedProfile[] }>;
 };
 
 function userKey(email: string): string {
   return createHash("sha256").update(email.toLowerCase().trim()).digest("hex");
 }
 
-// Single serial chain — all read-modify-write ops go through it.
 let chain: Promise<void> = Promise.resolve();
 function withLock<T>(fn: () => Promise<T>): Promise<T> {
   const run = chain.then(() => fn());
-  // Ensure the chain itself never rejects (so subsequent locks keep working).
   chain = run.then(() => undefined, () => undefined);
   return run;
 }
@@ -55,13 +55,17 @@ async function readStore(): Promise<StoreShape> {
   try {
     const raw = await readFile(storePath(), "utf8");
     const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && parsed.version === 1 && typeof parsed.users === "object") {
-      return parsed as StoreShape;
+    if (parsed && typeof parsed === "object" && typeof parsed.users === "object") {
+      if (parsed.version === SCHEMA_VERSION) return parsed as StoreShape;
+      if (parsed.version === 1) {
+        // eslint-disable-next-line no-console
+        console.warn("[saved/store] legacy v1 data found — ignoring (incompatible).");
+      }
     }
   } catch (e) {
     if ((e as NodeJS.ErrnoException).code !== "ENOENT") throw e;
   }
-  return { version: 1, users: {} };
+  return { version: SCHEMA_VERSION, users: {} };
 }
 
 async function writeStore(data: StoreShape): Promise<void> {
@@ -69,17 +73,18 @@ async function writeStore(data: StoreShape): Promise<void> {
   await mkdir(dirname(path), { recursive: true });
   const tmp = `${path}.tmp.${process.pid}.${Date.now()}`;
   await writeFile(tmp, JSON.stringify(data), { mode: 0o600, encoding: "utf8" });
-  await rename(tmp, path); // atomic on POSIX
+  await rename(tmp, path);
 }
 
-export async function listProfiles(email: string): Promise<EncryptedProfile[]> {
+export async function listProfiles(email: string): Promise<ProfileMeta[]> {
   return withLock(async () => {
     const store = await readStore();
-    return store.users[userKey(email)]?.profiles ?? [];
+    const arr = store.users[userKey(email)]?.profiles ?? [];
+    return arr.map((p) => ({ id: p.id, name: p.name, createdAt: p.createdAt, updatedAt: p.updatedAt }));
   });
 }
 
-export async function saveProfile(email: string, input: SaveProfileInput): Promise<EncryptedProfile> {
+export async function saveProfile(email: string, name: string, plaintext: string): Promise<ProfileMeta> {
   return withLock(async () => {
     const store = await readStore();
     const key = userKey(email);
@@ -87,21 +92,32 @@ export async function saveProfile(email: string, input: SaveProfileInput): Promi
     if (u.profiles.length >= MAX_PROFILES_PER_USER) {
       throw new Error(`Profile limit reached (${MAX_PROFILES_PER_USER})`);
     }
+    const blob = encryptForUser(email, plaintext);
     const now = new Date().toISOString();
-    const profile: EncryptedProfile = {
+    const profile: PersistedProfile = {
       id: randomUUID(),
-      name: input.name,
+      name,
       createdAt: now,
       updatedAt: now,
-      salt: input.salt,
-      iv: input.iv,
-      ciphertext: input.ciphertext,
-      kdf: input.kdf
+      ...blob
     };
     u.profiles.push(profile);
     store.users[key] = u;
     await writeStore(store);
-    return profile;
+    return { id: profile.id, name: profile.name, createdAt: profile.createdAt, updatedAt: profile.updatedAt };
+  });
+}
+
+export async function loadProfile(email: string, id: string): Promise<{ meta: ProfileMeta; plaintext: string } | null> {
+  return withLock(async () => {
+    const store = await readStore();
+    const p = store.users[userKey(email)]?.profiles.find((x) => x.id === id);
+    if (!p) return null;
+    const plaintext = decryptForUser(email, { salt: p.salt, iv: p.iv, ciphertext: p.ciphertext });
+    return {
+      meta: { id: p.id, name: p.name, createdAt: p.createdAt, updatedAt: p.updatedAt },
+      plaintext
+    };
   });
 }
 
