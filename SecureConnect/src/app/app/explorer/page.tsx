@@ -45,6 +45,26 @@ function ExplorerInner() {
   // Refresh trigger — incremented after mutations to refetch rows.
   const [refreshSeq, setRefreshSeq] = useState(0);
 
+  // Edit row modal state (2-stage: form → confirm)
+  type PreviewState = { token: string; total: number; sample: Record<string, unknown>[]; columns: string[]; hasPrimaryKey: boolean };
+  const [editOpen, setEditOpen] = useState(false);
+  const [editOrig, setEditOrig] = useState<Record<string, unknown> | null>(null);
+  const [editValues, setEditValues] = useState<Record<string, string>>({});
+  const [editNulls, setEditNulls] = useState<Record<string, boolean>>({});
+  const [editStage, setEditStage] = useState<"form" | "confirm">("form");
+  const [editPreview, setEditPreview] = useState<PreviewState | null>(null);
+  const [editTokenInput, setEditTokenInput] = useState("");
+  const [editBusy, setEditBusy] = useState(false);
+  const [editError, setEditError] = useState<string | null>(null);
+
+  // Delete row modal state
+  const [delOpen, setDelOpen] = useState(false);
+  const [delOrig, setDelOrig] = useState<Record<string, unknown> | null>(null);
+  const [delPreview, setDelPreview] = useState<PreviewState | null>(null);
+  const [delTokenInput, setDelTokenInput] = useState("");
+  const [delBusy, setDelBusy] = useState(false);
+  const [delError, setDelError] = useState<string | null>(null);
+
   // Redirect to /app if no cid.
   useEffect(() => {
     if (!cid) router.replace("/app");
@@ -173,6 +193,177 @@ function ExplorerInner() {
       setInsertError(String(e instanceof Error ? e.message : e));
     } finally {
       setInserting(false);
+    }
+  }
+
+  const apiSend = useCallback(async <T,>(path: string, method: "PUT" | "DELETE" | "POST", body: unknown): Promise<T> => {
+    const res = await fetch(path, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (res.status === 404 || res.status === 401) {
+      router.replace("/app");
+      throw new Error("Connection expired. Please reconnect.");
+    }
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j?.error?.message ?? `HTTP ${res.status}`);
+    }
+    return res.json() as Promise<T>;
+  }, [router]);
+
+  // Build a safe WHERE clause from an original row — primitives + short strings only.
+  function buildWhereFromRow(row: Record<string, unknown>): Record<string, string | number | boolean | null> {
+    const w: Record<string, string | number | boolean | null> = {};
+    for (const [k, v] of Object.entries(row)) {
+      if (v === null || v === undefined) w[k] = null;
+      else if (typeof v === "number" || typeof v === "boolean") w[k] = v;
+      else if (typeof v === "string" && v.length <= 256) w[k] = v;
+      // Skip large strings / objects / buffers — server will rely on remaining cols.
+    }
+    return w;
+  }
+
+  function openEditModal(row: Record<string, unknown>) {
+    const vals: Record<string, string> = {};
+    const nulls: Record<string, boolean> = {};
+    for (const c of columns) {
+      const v = row[c.name];
+      if (v === null || v === undefined) { vals[c.name] = ""; nulls[c.name] = true; }
+      else { vals[c.name] = String(v); nulls[c.name] = false; }
+    }
+    setEditOrig(row);
+    setEditValues(vals);
+    setEditNulls(nulls);
+    setEditStage("form");
+    setEditPreview(null);
+    setEditTokenInput("");
+    setEditError(null);
+    setEditOpen(true);
+  }
+
+  function diffEditSet(): Record<string, string | number | boolean | null> {
+    if (!editOrig) return {};
+    const set: Record<string, string | number | boolean | null> = {};
+    for (const c of columns) {
+      const wantNull = !!editNulls[c.name];
+      const newStr = editValues[c.name] ?? "";
+      const orig = editOrig[c.name];
+      const origStr = orig === null || orig === undefined ? null : String(orig);
+      const newVal = wantNull ? null : newStr;
+      if (wantNull && origStr === null) continue;
+      if (!wantNull && newStr === origStr) continue;
+      set[c.name] = newVal;
+    }
+    return set;
+  }
+
+  async function editPreviewSubmit() {
+    if (!selectedDb || !selectedTable || !editOrig) return;
+    const set = diffEditSet();
+    if (Object.keys(set).length === 0) {
+      setEditError("No changes detected.");
+      return;
+    }
+    const where = buildWhereFromRow(editOrig);
+    setEditBusy(true);
+    setEditError(null);
+    try {
+      const preview = await apiSend<PreviewState>(`/api/db/${cid}/rows/preview`, "POST", {
+        database: selectedDb,
+        table: selectedTable,
+        action: "update",
+        where,
+        set
+      });
+      setEditPreview(preview);
+      setEditStage("confirm");
+    } catch (e) {
+      setEditError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  async function editExecute() {
+    if (!selectedDb || !selectedTable || !editOrig || !editPreview) return;
+    if (editTokenInput.trim().toUpperCase() !== editPreview.token) {
+      setEditError("Token không khớp.");
+      return;
+    }
+    const set = diffEditSet();
+    const where = buildWhereFromRow(editOrig);
+    setEditBusy(true);
+    setEditError(null);
+    try {
+      const r = await apiSend<{ affected: number }>(`/api/db/${cid}/rows`, "PUT", {
+        database: selectedDb,
+        table: selectedTable,
+        where,
+        set,
+        token: editPreview.token
+      });
+      setEditOpen(false);
+      setRefreshSeq((n) => n + 1);
+      setError(`Updated ${r.affected} row(s).`);
+      setTimeout(() => setError(null), 3500);
+    } catch (e) {
+      setEditError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setEditBusy(false);
+    }
+  }
+
+  async function openDeleteModal(row: Record<string, unknown>) {
+    if (!selectedDb || !selectedTable) return;
+    setDelOrig(row);
+    setDelTokenInput("");
+    setDelError(null);
+    setDelPreview(null);
+    setDelOpen(true);
+    setDelBusy(true);
+    try {
+      const where = buildWhereFromRow(row);
+      const preview = await apiSend<PreviewState>(`/api/db/${cid}/rows/preview`, "POST", {
+        database: selectedDb,
+        table: selectedTable,
+        action: "delete",
+        where
+      });
+      setDelPreview(preview);
+    } catch (e) {
+      setDelError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setDelBusy(false);
+    }
+  }
+
+  async function deleteExecute() {
+    if (!selectedDb || !selectedTable || !delOrig || !delPreview) return;
+    if (delTokenInput.trim().toUpperCase() !== delPreview.token) {
+      setDelError("Token không khớp.");
+      return;
+    }
+    const where = buildWhereFromRow(delOrig);
+    setDelBusy(true);
+    setDelError(null);
+    try {
+      const r = await apiSend<{ affected: number; backupPath: string | null }>(`/api/db/${cid}/rows`, "DELETE", {
+        database: selectedDb,
+        table: selectedTable,
+        where,
+        token: delPreview.token
+      });
+      setDelOpen(false);
+      setRefreshSeq((n) => n + 1);
+      const bk = r.backupPath ? ` Backup: ${r.backupPath}` : "";
+      setError(`Deleted ${r.affected} row(s).${bk}`);
+      setTimeout(() => setError(null), 5000);
+    } catch (e) {
+      setDelError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setDelBusy(false);
     }
   }
 
@@ -321,6 +512,7 @@ function ExplorerInner() {
                   <table className="w-full text-sm border-separate border-spacing-0">
                     <thead className="sticky top-0 bg-zinc-100 text-left">
                       <tr>
+                        <th className="px-2 py-2 border-b w-20">Actions</th>
                         {rowsData.columns.map((c) => (
                           <th key={c} className="px-3 py-2 border-b whitespace-nowrap">{c}</th>
                         ))}
@@ -329,6 +521,22 @@ function ExplorerInner() {
                     <tbody>
                       {rowsData.rows.map((r, i) => (
                         <tr key={i} className="hover:bg-zinc-50">
+                          <td className="px-2 py-1 border-b whitespace-nowrap">
+                            <button
+                              onClick={() => openEditModal(r)}
+                              className="text-xs px-2 py-0.5 rounded border border-zinc-300 bg-white hover:bg-amber-50 hover:border-amber-400 mr-1"
+                              title="Edit row"
+                            >
+                              ✏️
+                            </button>
+                            <button
+                              onClick={() => openDeleteModal(r)}
+                              className="text-xs px-2 py-0.5 rounded border border-zinc-300 bg-white hover:bg-red-50 hover:border-red-400"
+                              title="Delete row"
+                            >
+                              🗑️
+                            </button>
+                          </td>
                           {rowsData.columns.map((c) => (
                             <td key={c} className="px-3 py-1 border-b align-top max-w-[420px] overflow-hidden text-ellipsis whitespace-nowrap" title={formatCell(r[c])}>
                               {formatCell(r[c])}
@@ -337,7 +545,7 @@ function ExplorerInner() {
                         </tr>
                       ))}
                       {rowsData.rows.length === 0 && (
-                        <tr><td colSpan={Math.max(1, rowsData.columns.length)} className="px-3 py-4 text-center text-zinc-400">No rows</td></tr>
+                        <tr><td colSpan={Math.max(1, rowsData.columns.length) + 1} className="px-3 py-4 text-center text-zinc-400">No rows</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -364,6 +572,182 @@ function ExplorerInner() {
           )}
         </section>
       </div>
+
+      {/* Edit modal — 2 stages: form → confirm */}
+      {editOpen && selectedTable && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => !editBusy && setEditOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <header className="px-5 py-3 border-b">
+              <div className="text-xs text-zinc-500">{selectedDb} · {editStage === "form" ? "Edit" : "Confirm update"}</div>
+              <h2 className="text-base font-semibold">{selectedTable}</h2>
+            </header>
+
+            {editStage === "form" && (
+              <div className="flex-1 overflow-auto px-5 py-3 space-y-2">
+                {columns.map((c) => (
+                  <div key={c.name} className="grid grid-cols-12 gap-2 items-center">
+                    <label className="col-span-4 text-sm">
+                      <span className="font-medium">{c.name}</span>
+                      {c.isPrimaryKey && <span className="ml-1 text-amber-600">🔑</span>}
+                      <div className="text-xs text-zinc-500">{c.dataType}{c.nullable ? "" : " · NOT NULL"}</div>
+                    </label>
+                    <div className="col-span-7">
+                      <input
+                        type="text"
+                        className="w-full rounded-xl border p-2 text-sm disabled:bg-zinc-100 disabled:text-zinc-400"
+                        value={editValues[c.name] ?? ""}
+                        disabled={!!editNulls[c.name]}
+                        onChange={(e) => setEditValues((v) => ({ ...v, [c.name]: e.target.value }))}
+                        autoComplete="off"
+                        spellCheck={false}
+                        maxLength={4096}
+                      />
+                    </div>
+                    <label className="col-span-1 text-xs flex items-center gap-1">
+                      <input
+                        type="checkbox"
+                        checked={!!editNulls[c.name]}
+                        disabled={!c.nullable}
+                        onChange={(e) => setEditNulls((n) => ({ ...n, [c.name]: e.target.checked }))}
+                      />
+                      NULL
+                    </label>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {editStage === "confirm" && editPreview && (
+              <div className="flex-1 overflow-auto px-5 py-3 space-y-3 text-sm">
+                <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
+                  <div><strong>Will update {editPreview.total} row(s).</strong></div>
+                  {editPreview.total > 1 && (
+                    <div className="text-amber-900 text-xs mt-1">⚠️ Match nhiều dòng — WHERE có thể không đủ chặt.</div>
+                  )}
+                  {!editPreview.hasPrimaryKey && (
+                    <div className="text-amber-900 text-xs mt-1">⚠️ WHERE không có PRIMARY KEY — match có thể không deterministic.</div>
+                  )}
+                </div>
+                <div>
+                  <div className="text-xs uppercase text-zinc-500 mb-1">Changes</div>
+                  <table className="w-full text-xs border-separate border-spacing-0">
+                    <thead className="bg-zinc-100"><tr><th className="px-2 py-1 border-b text-left">Column</th><th className="px-2 py-1 border-b text-left">Old</th><th className="px-2 py-1 border-b text-left">New</th></tr></thead>
+                    <tbody>
+                      {Object.entries(diffEditSet()).map(([k, v]) => (
+                        <tr key={k}>
+                          <td className="px-2 py-1 border-b font-medium">{k}</td>
+                          <td className="px-2 py-1 border-b text-zinc-600">{formatCell(editOrig?.[k])}</td>
+                          <td className="px-2 py-1 border-b text-emerald-700">{v === null ? "NULL" : String(v)}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+                <div>
+                  <div className="text-xs uppercase text-zinc-500 mb-1">Sample matched rows</div>
+                  <div className="rounded-xl border bg-zinc-50 p-2 max-h-48 overflow-auto text-xs">
+                    <pre>{JSON.stringify(editPreview.sample, null, 2)}</pre>
+                  </div>
+                </div>
+                <div>
+                  <label className="text-sm">
+                    Gõ token để xác nhận: <code className="bg-zinc-900 text-white px-2 py-0.5 rounded font-mono">{editPreview.token}</code>
+                  </label>
+                  <input
+                    type="text"
+                    className="mt-1 w-full rounded-xl border p-2 font-mono text-sm uppercase tracking-widest"
+                    value={editTokenInput}
+                    onChange={(e) => setEditTokenInput(e.target.value)}
+                    autoComplete="off"
+                    spellCheck={false}
+                    maxLength={8}
+                  />
+                </div>
+              </div>
+            )}
+
+            {editError && (
+              <div className="mx-5 mb-2 text-sm rounded-xl border border-red-200 bg-red-50 text-red-700 p-3">{editError}</div>
+            )}
+
+            <footer className="px-5 py-3 border-t flex items-center justify-between gap-2">
+              <button onClick={() => setEditOpen(false)} disabled={editBusy} className="px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50 disabled:opacity-50">
+                Cancel
+              </button>
+              {editStage === "form" && (
+                <button onClick={editPreviewSubmit} disabled={editBusy} className="px-4 py-2 rounded-xl bg-amber-600 text-white hover:bg-amber-700 disabled:opacity-50">
+                  {editBusy ? "Preview…" : "Preview update →"}
+                </button>
+              )}
+              {editStage === "confirm" && (
+                <div className="flex gap-2">
+                  <button onClick={() => setEditStage("form")} disabled={editBusy} className="px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50 disabled:opacity-50">
+                    ← Back
+                  </button>
+                  <button onClick={editExecute} disabled={editBusy || editTokenInput.length < 8} className="px-4 py-2 rounded-xl bg-amber-700 text-white hover:bg-amber-800 disabled:opacity-50">
+                    {editBusy ? "Updating…" : "Confirm update"}
+                  </button>
+                </div>
+              )}
+            </footer>
+          </div>
+        </div>
+      )}
+
+      {/* Delete modal */}
+      {delOpen && selectedTable && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => !delBusy && setDelOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl max-h-[90vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <header className="px-5 py-3 border-b">
+              <div className="text-xs text-zinc-500">{selectedDb} · Confirm DELETE</div>
+              <h2 className="text-base font-semibold text-red-700">Delete row from {selectedTable}</h2>
+            </header>
+            <div className="flex-1 overflow-auto px-5 py-3 space-y-3 text-sm">
+              {!delPreview && !delError && <div className="text-zinc-500">Loading preview…</div>}
+              {delPreview && (
+                <>
+                  <div className="rounded-xl border border-red-200 bg-red-50 p-3">
+                    <div><strong>Will DELETE {delPreview.total} row(s) permanently.</strong></div>
+                    {delPreview.total > 1 && <div className="text-red-900 text-xs mt-1">⚠️ Match nhiều dòng — WHERE có thể không đủ chặt.</div>}
+                    {!delPreview.hasPrimaryKey && <div className="text-red-900 text-xs mt-1">⚠️ WHERE không có PRIMARY KEY — match có thể không deterministic.</div>}
+                  </div>
+                  <div>
+                    <div className="text-xs uppercase text-zinc-500 mb-1">Sample matched rows</div>
+                    <div className="rounded-xl border bg-zinc-50 p-2 max-h-64 overflow-auto text-xs">
+                      <pre>{JSON.stringify(delPreview.sample, null, 2)}</pre>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="text-sm">
+                      Gõ token để xác nhận xoá: <code className="bg-red-700 text-white px-2 py-0.5 rounded font-mono">{delPreview.token}</code>
+                    </label>
+                    <input
+                      type="text"
+                      className="mt-1 w-full rounded-xl border p-2 font-mono text-sm uppercase tracking-widest"
+                      value={delTokenInput}
+                      onChange={(e) => setDelTokenInput(e.target.value)}
+                      autoComplete="off"
+                      spellCheck={false}
+                      maxLength={8}
+                    />
+                  </div>
+                </>
+              )}
+            </div>
+            {delError && (
+              <div className="mx-5 mb-2 text-sm rounded-xl border border-red-200 bg-red-50 text-red-700 p-3">{delError}</div>
+            )}
+            <footer className="px-5 py-3 border-t flex items-center justify-between gap-2">
+              <button onClick={() => setDelOpen(false)} disabled={delBusy} className="px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50 disabled:opacity-50">
+                Cancel
+              </button>
+              <button onClick={deleteExecute} disabled={delBusy || !delPreview || delTokenInput.length < 8} className="px-4 py-2 rounded-xl bg-red-700 text-white hover:bg-red-800 disabled:opacity-50">
+                {delBusy ? "Deleting…" : "Confirm DELETE"}
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
 
       {/* Insert modal */}
       {insertOpen && selectedTable && (
