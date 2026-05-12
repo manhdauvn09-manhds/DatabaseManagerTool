@@ -1,6 +1,9 @@
 import { NextResponse } from "next/server";
 
 export const runtime = "nodejs";
+// Bypass Next.js full route cache — health probe must reflect real-time state.
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 // Public liveness probe. Returns 200 with minimal info — no auth required, no secrets.
 // Used by Docker HEALTHCHECK and external uptime monitors.
