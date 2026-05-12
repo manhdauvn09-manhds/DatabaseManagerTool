@@ -453,12 +453,28 @@ function ExplorerInner() {
                 </div>
                 <div className="flex items-center gap-2">
                   {view === "data" && columns.length > 0 && (
-                    <button
-                      onClick={openInsertModal}
-                      className="px-3 py-1.5 rounded-xl text-sm border bg-emerald-600 text-white hover:bg-emerald-700"
-                    >
-                      + Insert row
-                    </button>
+                    <>
+                      <button
+                        onClick={openInsertModal}
+                        className="px-3 py-1.5 rounded-xl text-sm border bg-emerald-600 text-white hover:bg-emerald-700"
+                      >
+                        + Insert row
+                      </button>
+                      <div className="flex items-center text-xs border rounded-xl overflow-hidden" title="Export current view">
+                        <span className="px-2 py-1 text-zinc-500 bg-zinc-50 border-r">Export</span>
+                        {(["csv", "json", "sql"] as const).map((fmt) => (
+                          <a
+                            key={fmt}
+                            href={selectedDb && selectedTable
+                              ? `/api/db/${cid}/export?database=${encodeURIComponent(selectedDb)}&table=${encodeURIComponent(selectedTable)}&format=${fmt}&limit=10000`
+                              : "#"}
+                            className="px-2 py-1 hover:bg-zinc-100 uppercase border-r last:border-r-0"
+                          >
+                            {fmt}
+                          </a>
+                        ))}
+                      </div>
+                    </>
                   )}
                   <div className="flex gap-1">
                     <button
