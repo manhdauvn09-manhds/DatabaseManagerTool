@@ -1,0 +1,8 @@
+{
+  "Server": "62.238.28.106",
+  "User": "deploy",
+  "Path": "/opt/dbmanager",
+  "Branch": "main",
+  "HealthUrl": "https://DBManager.allin1site.com/api/health",
+  "SshKey": "C:\\Users\\ManhDS\\.ssh\\id_ed25519"
+}

@@ -1,0 +1,22 @@
+# Optional Caddy config for auto-HTTPS in front of the Next.js app.
+#
+# !!!! DEDICATED-SERVER ONLY !!!!
+# Do NOT use on a shared Docker host — the Caddy service in docker-compose.yml
+# binds 80/443 which conflicts with the shared reverse proxy. On a shared box,
+# rely on the existing nginx/NPM/Caddy/Traefik on the host (see README.md
+# "Shared server deploy").
+#
+# Set DOMAIN + EMAIL env vars; Caddy will obtain a Let's Encrypt cert.
+
+{$DOMAIN} {
+	encode zstd gzip
+	reverse_proxy app:3000
+	tls {$EMAIL}
+
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Frame-Options "DENY"
+	}
+}

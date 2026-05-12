@@ -1,0 +1,26 @@
+# Node / Next
+**/node_modules
+**/.next
+**/out
+**/*.tsbuildinfo
+
+# Env (keep examples)
+**/.env
+**/.env.local
+**/.env.*.local
+**/.env.production
+**/.env.development
+!**/.env.example
+
+# Local deploy config (contains server hostnames, ssh key paths)
+deploy.config.json
+
+# Local .env templates with generated secrets
+deploy/.env.production.template
+deploy/.env.production.local
+
+# Logs / OS / IDE
+*.log
+.DS_Store
+.vscode/
+.idea/

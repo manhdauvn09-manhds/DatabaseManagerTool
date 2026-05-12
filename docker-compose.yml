@@ -1,0 +1,66 @@
+# DatabaseManager — runs on a SHARED Docker host (alongside other apps).
+#
+# Defaults:
+#   - Container binds to 127.0.0.1:${HOST_PORT:-13000} → only the local reverse
+#     proxy (nginx / NPM / Caddy on the host) can reach it. Nothing exposed to
+#     the public internet directly.
+#   - Image name + container name are namespaced so they don't collide.
+#   - Resource limits set so a runaway app can't starve the box.
+#
+# Public hostname:   DBManager.allin1site.com  (TLS terminated at shared proxy)
+# Upstream port:     127.0.0.1:13000 → container:3000
+#
+# If your shared proxy is Traefik (Docker container on a shared network) instead
+# of nginx-on-host, uncomment the `labels:` and `networks:` blocks and remove
+# the `ports:` line — see README.md "Shared server deploy" section.
+
+services:
+  app:
+    image: dbmanager:latest
+    container_name: dbmanager-app
+    build:
+      context: ./SecureConnect
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    expose:
+      - "3000"
+    ports:
+      - "127.0.0.1:${HOST_PORT:-13000}:3000"
+    env_file:
+      - ./SecureConnect/.env.production
+    healthcheck:
+      test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 20s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "5"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: "1.0"
+        reservations:
+          memory: 128M
+
+    # ----- Traefik (uncomment if shared proxy is Traefik) -----
+    # labels:
+    #   - "traefik.enable=true"
+    #   - "traefik.docker.network=proxy"
+    #   - "traefik.http.routers.dbmanager.rule=Host(`DBManager.allin1site.com`)"
+    #   - "traefik.http.routers.dbmanager.entrypoints=websecure"
+    #   - "traefik.http.routers.dbmanager.tls=true"
+    #   - "traefik.http.routers.dbmanager.tls.certresolver=letsencrypt"
+    #   - "traefik.http.services.dbmanager.loadbalancer.server.port=3000"
+    # networks:
+    #   - default
+    #   - proxy
+
+# networks:
+#   proxy:
+#     external: true
+#     name: proxy
