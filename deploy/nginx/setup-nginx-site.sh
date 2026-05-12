@@ -11,7 +11,13 @@ SITE_NAME="DBManager.allin1site.com"
 REPO_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 SRC_CONF="$REPO_DIR/deploy/nginx/${SITE_NAME}.conf"
 DST_AVAIL="/etc/nginx/sites-available/${SITE_NAME}.conf"
-DST_ENABLED="/etc/nginx/sites-enabled/${SITE_NAME}.conf"
+# NOTE: `zzz-` prefix on the enabled symlink so this site loads LAST in
+# `include /etc/nginx/sites-enabled/*` glob order. Prevents this site from
+# being picked as the implicit default-server for HTTPS requests whose
+# `server_name` doesn't match any block (which would shadow other domains
+# like xiangqi.games-core.com that only have `listen 80`).
+DST_ENABLED="/etc/nginx/sites-enabled/zzz-${SITE_NAME}.conf"
+LEGACY_ENABLED="/etc/nginx/sites-enabled/${SITE_NAME}.conf"
 CERT_PEM="/etc/ssl/certs/dbmanager.pem"
 CERT_KEY="/etc/ssl/private/dbmanager.key"
 
@@ -43,10 +49,14 @@ fi
 echo "[..] Installing nginx config -> $DST_AVAIL"
 cp "$SRC_CONF" "$DST_AVAIL"
 
-# 3. Enable site (symlink).
+# 3. Enable site (symlink). Remove any legacy non-prefixed symlink first.
+if [[ -L "$LEGACY_ENABLED" ]]; then
+  rm -f "$LEGACY_ENABLED"
+  echo "[ok] Removed legacy symlink without zzz- prefix."
+fi
 if [[ ! -L "$DST_ENABLED" ]]; then
   ln -s "$DST_AVAIL" "$DST_ENABLED"
-  echo "[ok] Enabled site."
+  echo "[ok] Enabled site as $(basename "$DST_ENABLED") (loads last)."
 else
   echo "[ok] Site already enabled."
 fi
