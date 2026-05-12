@@ -35,6 +35,16 @@ function ExplorerInner() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Insert row modal state
+  const [insertOpen, setInsertOpen] = useState(false);
+  const [insertValues, setInsertValues] = useState<Record<string, string>>({});
+  const [insertNulls, setInsertNulls] = useState<Record<string, boolean>>({});
+  const [inserting, setInserting] = useState(false);
+  const [insertError, setInsertError] = useState<string | null>(null);
+
+  // Refresh trigger — incremented after mutations to refetch rows.
+  const [refreshSeq, setRefreshSeq] = useState(0);
+
   // Redirect to /app if no cid.
   useEffect(() => {
     if (!cid) router.replace("/app");
@@ -49,6 +59,23 @@ function ExplorerInner() {
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
       throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
+    }
+    return res.json() as Promise<T>;
+  }, [router]);
+
+  const apiPost = useCallback(async <T,>(path: string, body: unknown): Promise<T> => {
+    const res = await fetch(path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body)
+    });
+    if (res.status === 404 || res.status === 401) {
+      router.replace("/app");
+      throw new Error("Connection expired. Please reconnect.");
+    }
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      throw new Error(j?.error?.message ?? `HTTP ${res.status}`);
     }
     return res.json() as Promise<T>;
   }, [router]);
@@ -113,7 +140,41 @@ function ExplorerInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedDb, selectedTable, offset, limit, apiGet, cid]);
+  }, [selectedDb, selectedTable, offset, limit, apiGet, cid, refreshSeq]);
+
+  function openInsertModal() {
+    const init: Record<string, string> = {};
+    const nulls: Record<string, boolean> = {};
+    columns.forEach((c) => {
+      init[c.name] = "";
+      nulls[c.name] = c.nullable && c.default === null;
+    });
+    setInsertValues(init);
+    setInsertNulls(nulls);
+    setInsertError(null);
+    setInsertOpen(true);
+  }
+
+  async function submitInsert() {
+    if (!selectedDb || !selectedTable) return;
+    setInserting(true);
+    setInsertError(null);
+    try {
+      const data: Record<string, string | null> = {};
+      for (const c of columns) {
+        if (insertNulls[c.name]) data[c.name] = null;
+        else data[c.name] = insertValues[c.name];
+      }
+      await apiPost(`/api/db/${cid}/rows`, { database: selectedDb, table: selectedTable, data });
+      setInsertOpen(false);
+      setOffset(0);
+      setRefreshSeq((n) => n + 1);
+    } catch (e) {
+      setInsertError(String(e instanceof Error ? e.message : e));
+    } finally {
+      setInserting(false);
+    }
+  }
 
   const totalPages = useMemo(() => rowsData ? Math.max(1, Math.ceil(rowsData.total / limit)) : 1, [rowsData, limit]);
   const currentPage = useMemo(() => Math.floor(offset / limit) + 1, [offset, limit]);
@@ -199,19 +260,29 @@ function ExplorerInner() {
                   <div className="text-xs text-zinc-500">{selectedDb}</div>
                   <div className="text-base font-semibold">{selectedTable}</div>
                 </div>
-                <div className="flex gap-1">
-                  <button
-                    onClick={() => setView("data")}
-                    className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "data" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
-                  >
-                    Data
-                  </button>
-                  <button
-                    onClick={() => setView("columns")}
-                    className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "columns" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
-                  >
-                    Columns
-                  </button>
+                <div className="flex items-center gap-2">
+                  {view === "data" && columns.length > 0 && (
+                    <button
+                      onClick={openInsertModal}
+                      className="px-3 py-1.5 rounded-xl text-sm border bg-emerald-600 text-white hover:bg-emerald-700"
+                    >
+                      + Insert row
+                    </button>
+                  )}
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => setView("data")}
+                      className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "data" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
+                    >
+                      Data
+                    </button>
+                    <button
+                      onClick={() => setView("columns")}
+                      className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "columns" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
+                    >
+                      Columns
+                    </button>
+                  </div>
                 </div>
               </div>
 
@@ -293,6 +364,70 @@ function ExplorerInner() {
           )}
         </section>
       </div>
+
+      {/* Insert modal */}
+      {insertOpen && selectedTable && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => !inserting && setInsertOpen(false)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <header className="px-5 py-3 border-b">
+              <div className="text-xs text-zinc-500">{selectedDb}</div>
+              <h2 className="text-base font-semibold">Insert row into {selectedTable}</h2>
+            </header>
+            <div className="flex-1 overflow-auto px-5 py-3 space-y-2">
+              {columns.map((c) => (
+                <div key={c.name} className="grid grid-cols-12 gap-2 items-center">
+                  <label className="col-span-4 text-sm">
+                    <span className="font-medium">{c.name}</span>
+                    {c.isPrimaryKey && <span className="ml-1 text-amber-600">🔑</span>}
+                    <div className="text-xs text-zinc-500">{c.dataType}{c.nullable ? "" : " · NOT NULL"}</div>
+                  </label>
+                  <div className="col-span-7">
+                    <input
+                      type="text"
+                      className="w-full rounded-xl border p-2 text-sm disabled:bg-zinc-100 disabled:text-zinc-400"
+                      placeholder={c.default ?? ""}
+                      value={insertValues[c.name] ?? ""}
+                      disabled={!!insertNulls[c.name]}
+                      onChange={(e) => setInsertValues((v) => ({ ...v, [c.name]: e.target.value }))}
+                      autoComplete="off"
+                      spellCheck={false}
+                      maxLength={4096}
+                    />
+                  </div>
+                  <label className="col-span-1 text-xs flex items-center gap-1" title={c.nullable ? "Set NULL" : "Column is NOT NULL"}>
+                    <input
+                      type="checkbox"
+                      checked={!!insertNulls[c.name]}
+                      disabled={!c.nullable}
+                      onChange={(e) => setInsertNulls((n) => ({ ...n, [c.name]: e.target.checked }))}
+                    />
+                    NULL
+                  </label>
+                </div>
+              ))}
+            </div>
+            {insertError && (
+              <div className="mx-5 mb-2 text-sm rounded-xl border border-red-200 bg-red-50 text-red-700 p-3">{insertError}</div>
+            )}
+            <footer className="px-5 py-3 border-t flex items-center justify-end gap-2">
+              <button
+                onClick={() => setInsertOpen(false)}
+                disabled={inserting}
+                className="px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submitInsert}
+                disabled={inserting}
+                className="px-4 py-2 rounded-xl bg-emerald-600 text-white hover:bg-emerald-700 disabled:opacity-50"
+              >
+                {inserting ? "Inserting…" : "Insert"}
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
     </main>
   );
 }

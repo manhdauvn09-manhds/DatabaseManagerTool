@@ -14,6 +14,10 @@ export type QueryResult = {
   columns: string[];
   rows: Record<string, unknown>[];
   rowCount: number;
+  // INSERT/UPDATE/DELETE only — number of rows affected. SELECT: same as rowCount.
+  affectedRows?: number;
+  // INSERT only (mysql AUTO_INCREMENT). undefined for pg/mssql (use RETURNING / OUTPUT instead).
+  insertId?: number | string;
 };
 
 export type QueryFn = (sql: string, params?: unknown[]) => Promise<QueryResult>;
@@ -81,14 +85,27 @@ async function withMysql<T>(rec: ConnectionRecord, fn: (q: QueryFn, ctx: { drive
   );
   try {
     const q: QueryFn = async (sql, params) => {
-      const [rows, fields] = await withTimeout(
-        conn.query(sql, params ?? []) as Promise<[mysql.RowDataPacket[], mysql.FieldPacket[]]>,
+      const result = await withTimeout(
+        conn.query(sql, params ?? []) as Promise<[mysql.RowDataPacket[] | mysql.ResultSetHeader, mysql.FieldPacket[] | undefined]>,
         QUERY_TIMEOUT_MS,
         "mysql query"
       );
-      const cols = Array.isArray(fields) ? fields.map((f) => f.name) : [];
-      const out = Array.isArray(rows) ? (rows as Record<string, unknown>[]) : [];
-      return { columns: cols, rows: out, rowCount: out.length };
+      const data = result[0];
+      const fields = result[1];
+      if (Array.isArray(data)) {
+        const cols = fields ? fields.map((f) => f.name) : [];
+        const rows = data as Record<string, unknown>[];
+        return { columns: cols, rows, rowCount: rows.length };
+      }
+      // ResultSetHeader (INSERT/UPDATE/DELETE)
+      const rsh = data as mysql.ResultSetHeader;
+      return {
+        columns: [],
+        rows: [],
+        rowCount: rsh.affectedRows ?? 0,
+        affectedRows: rsh.affectedRows,
+        insertId: rsh.insertId !== undefined && rsh.insertId !== 0 ? rsh.insertId : undefined
+      };
     };
     return await fn(q, { driver: "mysql" });
   } finally {
@@ -109,14 +126,21 @@ async function withPg<T>(rec: ConnectionRecord, fn: (q: QueryFn, ctx: { driver: 
   await withTimeout(client.connect(), CONNECT_TIMEOUT_MS + 500, "pg connect");
   try {
     const q: QueryFn = async (sql, params) => {
+      // Translate ?-placeholders to $N so callers can use ? uniformly across drivers.
+      let bound = sql;
+      if (params && params.length > 0 && bound.includes("?")) {
+        let i = 0;
+        bound = bound.replace(/\?/g, () => `$${++i}`);
+      }
       const result = await withTimeout(
-        client.query(sql, params),
+        client.query(bound, params),
         QUERY_TIMEOUT_MS,
         "pg query"
       );
-      const cols = result.fields.map((f) => f.name);
-      const out = result.rows as Record<string, unknown>[];
-      return { columns: cols, rows: out, rowCount: result.rowCount ?? out.length };
+      const cols = result.fields?.map((f) => f.name) ?? [];
+      const out = (result.rows ?? []) as Record<string, unknown>[];
+      const affected = result.rowCount ?? out.length;
+      return { columns: cols, rows: out, rowCount: affected, affectedRows: affected };
     };
     return await fn(q, { driver: "postgresql" });
   } finally {
@@ -157,7 +181,10 @@ async function withMssql<T>(rec: ConnectionRecord, fn: (q: QueryFn, ctx: { drive
       );
       const out = (result.recordset ?? []) as Record<string, unknown>[];
       const cols = out.length > 0 ? Object.keys(out[0]) : [];
-      return { columns: cols, rows: out, rowCount: out.length };
+      const affected = Array.isArray(result.rowsAffected) && result.rowsAffected.length > 0
+        ? result.rowsAffected[result.rowsAffected.length - 1]
+        : out.length;
+      return { columns: cols, rows: out, rowCount: out.length, affectedRows: affected };
     };
     return await fn(q, { driver: "mssql" });
   } finally {
