@@ -23,12 +23,13 @@ export async function POST(req: Request) {
 
   // CSRF defense-in-depth: when AUTH_URL is configured, require Origin/Referer to match.
   // SameSite=Lax cookies already block classic CSRF; this catches edge cases (e.g. iframes).
-  const expectedOrigin = process.env.AUTH_URL;
+  // Comparison is case-insensitive per RFC 3986 (scheme+host are case-insensitive).
+  const expectedOrigin = process.env.AUTH_URL?.toLowerCase();
   if (expectedOrigin) {
-    const origin = req.headers.get("origin");
-    const referer = req.headers.get("referer");
-    const matchesOrigin = origin && origin === expectedOrigin;
-    const matchesReferer = !origin && referer && referer.startsWith(expectedOrigin);
+    const origin = req.headers.get("origin")?.toLowerCase();
+    const referer = req.headers.get("referer")?.toLowerCase();
+    const matchesOrigin = !!origin && origin === expectedOrigin;
+    const matchesReferer = !origin && !!referer && referer.startsWith(expectedOrigin);
     if (!matchesOrigin && !matchesReferer) {
       audit({ action: "connect", ip, ok: false, errCode: "BAD_ORIGIN" });
       return jsonError("FORBIDDEN", "Bad origin", 403);
