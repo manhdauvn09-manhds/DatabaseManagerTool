@@ -33,6 +33,10 @@ COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
 
+# Persistent data dir for saved-connection profiles (mounted via volume in compose).
+# Pre-create so the named volume inherits ownership on first mount.
+RUN mkdir -p /data && chown nextjs:nodejs /data
+
 USER nextjs
 EXPOSE 3000
 

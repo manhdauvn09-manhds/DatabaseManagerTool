@@ -4,7 +4,8 @@ import { getClientIp, rateLimit } from "@/lib/security/rateLimit";
 import { audit } from "@/lib/security/auditLog";
 import { getConnectionRecord, type ConnectionRecord } from "@/lib/connections/store";
 
-export type RouteCtx = { email: string; ip: string; rec: ConnectionRecord };
+export type UserCtx = { email: string; ip: string };
+export type RouteCtx = UserCtx & { rec: ConnectionRecord };
 
 const UUID_REGEX = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/i;
 
@@ -18,16 +19,17 @@ function originOk(req: Request): boolean {
   return false;
 }
 
-export type AuthorizeResult =
-  | { ok: true; ctx: RouteCtx }
-  | { ok: false; response: NextResponse };
+export type AuthorizeResult<T> = { ok: true; ctx: T } | { ok: false; response: NextResponse };
 
-export async function authorize(
+/**
+ * Authorize a request as an authenticated user — checks session + Origin/Referer + rate limit.
+ * Returns email + ip. Use this for endpoints that don't operate on a specific connection.
+ */
+export async function authorizeUser(
   req: Request,
-  connectionId: string,
   action: string,
-  opts: { rateLimitMax?: number; rateLimitWindowMs?: number } = {}
-): Promise<AuthorizeResult> {
+  opts: { rateLimitMax?: number; rateLimitWindowMs?: number; rateLimitBucket?: string } = {}
+): Promise<AuthorizeResult<UserCtx>> {
   const ip = getClientIp(req);
 
   const session = await auth();
@@ -42,7 +44,8 @@ export async function authorize(
     return { ok: false, response: jerr("FORBIDDEN", "Bad origin", 403) };
   }
 
-  const rl = rateLimit(`dbapi:${email}`, opts.rateLimitMax ?? 60, opts.rateLimitWindowMs ?? 60_000);
+  const bucket = opts.rateLimitBucket ?? "dbapi";
+  const rl = rateLimit(`${bucket}:${email}`, opts.rateLimitMax ?? 60, opts.rateLimitWindowMs ?? 60_000);
   if (!rl.ok) {
     audit({ action, email, ip, ok: false, errCode: "RATE_LIMIT" });
     return {
@@ -50,6 +53,22 @@ export async function authorize(
       response: jerr("RATE_LIMIT", "Too many requests", 429, { "Retry-After": String(rl.retryAfter) })
     };
   }
+
+  return { ok: true, ctx: { email, ip } };
+}
+
+/**
+ * Authorize a request + resolve a connection record by id + ownership.
+ */
+export async function authorize(
+  req: Request,
+  connectionId: string,
+  action: string,
+  opts: { rateLimitMax?: number; rateLimitWindowMs?: number } = {}
+): Promise<AuthorizeResult<RouteCtx>> {
+  const u = await authorizeUser(req, action, opts);
+  if (!u.ok) return u;
+  const { email, ip } = u.ctx;
 
   if (typeof connectionId !== "string" || !UUID_REGEX.test(connectionId)) {
     audit({ action, email, ip, ok: false, errCode: "BAD_CONNECTION_ID" });

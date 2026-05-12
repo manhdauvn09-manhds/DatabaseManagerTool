@@ -28,6 +28,8 @@ services:
       - "127.0.0.1:${HOST_PORT:-13000}:3000"
     env_file:
       - ./SecureConnect/.env.production
+    volumes:
+      - dbmanager_data:/data
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://localhost:3000/api/health"]
       interval: 30s
@@ -59,6 +61,11 @@ services:
     # networks:
     #   - default
     #   - proxy
+
+volumes:
+  dbmanager_data:
+    # Persists encrypted saved-connection profiles under /data/saved-connections.json
+    # (file owned by container's `nextjs` user, mode 600).
 
 # networks:
 #   proxy:
