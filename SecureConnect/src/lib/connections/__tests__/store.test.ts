@@ -76,4 +76,25 @@ describe("connections store", () => {
     deleteConnectionRecord(a.id);
     deleteConnectionRecord(b.id);
   });
+
+  test("get bumps expiresAt forward (sliding TTL)", () => {
+    const rec = createConnectionRecord(makeInput());
+    const initialExpiry = rec.expiresAt;
+    vi.advanceTimersByTime(60_000);
+    const got = getConnectionRecord(rec.id, "alice@example.com");
+    expect(got).not.toBeNull();
+    expect(got!.expiresAt).toBeGreaterThan(initialExpiry);
+    deleteConnectionRecord(rec.id);
+  });
+
+  test("sliding TTL is capped by MAX_SESSION_MS (2h default)", () => {
+    const rec = createConnectionRecord(makeInput());
+    // Bump just under 2h then again — second bump should not exceed createdAt + 2h.
+    vi.advanceTimersByTime(115 * 60_000); // 1h 55m
+    const first = getConnectionRecord(rec.id, "alice@example.com");
+    expect(first).not.toBeNull();
+    const maxSessionEnd = rec.createdAt + 2 * 60 * 60_000;
+    expect(first!.expiresAt).toBeLessThanOrEqual(maxSessionEnd);
+    deleteConnectionRecord(rec.id);
+  });
 });

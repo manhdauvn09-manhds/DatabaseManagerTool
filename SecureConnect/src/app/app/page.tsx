@@ -1,12 +1,14 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
+import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { encryptPasswordRSAOAEP, type PublicKeyResponse } from "@/lib/crypto/client";
 
 type DbType = "auto" | "mysql" | "postgresql" | "mssql";
 
 export default function AppPage() {
+  const router = useRouter();
   const [dbType, setDbType] = useState<DbType>("auto");
   const [host, setHost] = useState("");
   const [port, setPort] = useState<number>(3306);
@@ -59,7 +61,9 @@ export default function AppPage() {
       }
 
       setConnectionId(data.connectionId);
-      setMessage(`Connected OK. connectionId=${data.connectionId} (type=${data.dbType})`);
+      setMessage(`Connected. Mở explorer…`);
+      // Navigate to the explorer view.
+      router.push(`/app/explorer?cid=${encodeURIComponent(data.connectionId)}`);
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Unexpected error";
       setMessage(msg);

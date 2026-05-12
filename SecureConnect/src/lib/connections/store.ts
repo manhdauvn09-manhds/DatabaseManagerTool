@@ -23,11 +23,21 @@ export type ConnectionRecord = {
   password: string;
 };
 
-const DEFAULT_TTL_MS = 5 * 60 * 1000; // 5 minutes
+// Per-request TTL bump (sliding window). On each successful get, expiresAt is set
+// to min(now + TTL_MS, createdAt + MAX_SESSION_MS).
+const DEFAULT_TTL_MS = 30 * 60 * 1000; // 30 min
 const TTL_MS = Math.max(
   60_000,
   Number(process.env.CONNECTION_TTL_MS ?? DEFAULT_TTL_MS)
 );
+
+// Hard cap on total session duration regardless of activity.
+const DEFAULT_MAX_SESSION_MS = 2 * 60 * 60 * 1000; // 2 hours
+const MAX_SESSION_MS = Math.max(
+  TTL_MS,
+  Number(process.env.CONNECTION_MAX_SESSION_MS ?? DEFAULT_MAX_SESSION_MS)
+);
+
 const MAX_RECORDS = Math.max(
   10,
   Number(process.env.CONNECTION_MAX_RECORDS ?? "1000")
@@ -68,18 +78,22 @@ export function createConnectionRecord(
 }
 
 /**
- * Returns the record only if it belongs to `ownerEmail`. Prevents another signed-in
- * user from using someone else's connectionId.
+ * Returns the record only if it belongs to `ownerEmail`.
+ * Side effect: on success, slides expiresAt forward (TTL_MS) — capped at createdAt + MAX_SESSION_MS.
  */
 export function getConnectionRecord(id: string, ownerEmail: string): ConnectionRecord | null {
   const rec = store.get(id);
   if (!rec) return null;
-  if (Date.now() > rec.expiresAt) {
+  const now = Date.now();
+  if (now > rec.expiresAt) {
     clearSecret(rec);
     store.delete(id);
     return null;
   }
   if (rec.ownerEmail !== ownerEmail) return null;
+  // Sliding TTL with session cap.
+  const sessionCap = rec.createdAt + MAX_SESSION_MS;
+  rec.expiresAt = Math.min(now + TTL_MS, sessionCap);
   return rec;
 }
 
@@ -104,7 +118,6 @@ const sweepTimer = setInterval(cleanupExpired, 60_000);
 const unrefable = sweepTimer as unknown as { unref?: () => void };
 if (typeof unrefable.unref === "function") unrefable.unref();
 
-// Graceful shutdown — wipe store on SIGTERM/SIGINT to release secrets and stop timer.
 function shutdown(): void {
   clearInterval(sweepTimer);
   for (const [id, rec] of store) {
