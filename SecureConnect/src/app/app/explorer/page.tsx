@@ -374,6 +374,16 @@ function ExplorerInner() {
     router.replace("/app");
   }
 
+  function unselectTable() {
+    setSelectedTable(null);
+    setSelectedDb(null);
+    setColumns([]);
+    setRowsData(null);
+    setOffset(0);
+    setView("data");
+    setError(null);
+  }
+
   if (!cid) return null;
 
   return (
@@ -386,8 +396,12 @@ function ExplorerInner() {
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button onClick={disconnect} className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-zinc-50">
-            Disconnect
+          <button
+            onClick={disconnect}
+            className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-zinc-50"
+            title="Quay lại màn hình Connect"
+          >
+            ← Back to connect
           </button>
           <button onClick={() => signOut({ callbackUrl: "/signin" })} className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-zinc-50">
             Sign out
@@ -447,9 +461,18 @@ function ExplorerInner() {
           {selectedTable && (
             <>
               <div className="border-b bg-white px-5 py-3 flex items-center justify-between">
-                <div>
-                  <div className="text-xs text-zinc-500">{selectedDb}</div>
-                  <div className="text-base font-semibold">{selectedTable}</div>
+                <div className="flex items-center gap-3">
+                  <button
+                    onClick={unselectTable}
+                    className="text-sm px-2 py-1 rounded-xl border bg-white hover:bg-zinc-50"
+                    title="Bỏ chọn bảng / quay lại danh sách"
+                  >
+                    ←
+                  </button>
+                  <div>
+                    <div className="text-xs text-zinc-500">{selectedDb}</div>
+                    <div className="text-base font-semibold">{selectedTable}</div>
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   {view === "data" && columns.length > 0 && (
