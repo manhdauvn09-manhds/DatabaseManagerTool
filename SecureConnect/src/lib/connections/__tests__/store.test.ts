@@ -44,7 +44,7 @@ describe("connections store", () => {
 
   test("TTL: get returns null after expiry and clears the record", () => {
     const rec = createConnectionRecord(makeInput());
-    vi.advanceTimersByTime(6 * 60_000); // > default 5-min TTL
+    vi.advanceTimersByTime(31 * 60_000); // > default 30-min TTL
     expect(getConnectionRecord(rec.id, "alice@example.com")).toBeNull();
     // Re-get is also null (record was deleted by the first call).
     expect(getConnectionRecord(rec.id, "alice@example.com")).toBeNull();
@@ -52,7 +52,7 @@ describe("connections store", () => {
 
   test("cleanupExpired removes only expired records", () => {
     const a = createConnectionRecord(makeInput({ ownerEmail: "a@x.com" }));
-    vi.advanceTimersByTime(6 * 60_000);
+    vi.advanceTimersByTime(31 * 60_000); // > 30-min TTL
     const b = createConnectionRecord(makeInput({ ownerEmail: "b@x.com" }));
     cleanupExpired();
     expect(getConnectionRecord(a.id, "a@x.com")).toBeNull();
@@ -89,12 +89,14 @@ describe("connections store", () => {
 
   test("sliding TTL is capped by MAX_SESSION_MS (2h default)", () => {
     const rec = createConnectionRecord(makeInput());
-    // Bump just under 2h then again — second bump should not exceed createdAt + 2h.
-    vi.advanceTimersByTime(115 * 60_000); // 1h 55m
-    const first = getConnectionRecord(rec.id, "alice@example.com");
-    expect(first).not.toBeNull();
-    const maxSessionEnd = rec.createdAt + 2 * 60 * 60_000;
-    expect(first!.expiresAt).toBeLessThanOrEqual(maxSessionEnd);
+    // Slide multiple times to stay alive past initial 30m TTL, then verify cap.
+    for (let i = 0; i < 4; i++) {
+      vi.advanceTimersByTime(20 * 60_000); // 20m steps → total 80m, then 100m, 120m
+      const got = getConnectionRecord(rec.id, "alice@example.com");
+      expect(got).not.toBeNull();
+      const maxSessionEnd = rec.createdAt + 2 * 60 * 60_000;
+      expect(got!.expiresAt).toBeLessThanOrEqual(maxSessionEnd);
+    }
     deleteConnectionRecord(rec.id);
   });
 });
