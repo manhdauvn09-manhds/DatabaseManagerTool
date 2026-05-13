@@ -70,9 +70,11 @@ export async function withConnection<T>(
 }
 
 async function withMysql<T>(rec: ConnectionRecord, fn: (q: QueryFn, ctx: { driver: DriverType }) => Promise<T>): Promise<T> {
+  // DNS-rebind defense: prefer the IP we already vetted on /api/connect.
+  const connectHost = rec.resolvedIp ?? rec.host;
   const conn = await withTimeout(
     mysql.createConnection({
-      host: rec.host,
+      host: connectHost,
       port: rec.port,
       user: rec.user ?? "root",
       password: rec.password,
@@ -114,14 +116,15 @@ async function withMysql<T>(rec: ConnectionRecord, fn: (q: QueryFn, ctx: { drive
 }
 
 async function withPg<T>(rec: ConnectionRecord, fn: (q: QueryFn, ctx: { driver: DriverType }) => Promise<T>): Promise<T> {
+  const connectHost = rec.resolvedIp ?? rec.host;
   const client = new pg.Client({
-    host: rec.host,
+    host: connectHost,
     port: rec.port,
     user: rec.user ?? "postgres",
     password: rec.password,
     connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
     statement_timeout: QUERY_TIMEOUT_MS,
-    ssl: SSL_STRICT ? { rejectUnauthorized: true } : undefined
+    ssl: SSL_STRICT ? { rejectUnauthorized: true, servername: rec.host } : undefined
   });
   await withTimeout(client.connect(), CONNECT_TIMEOUT_MS + 500, "pg connect");
   try {
@@ -149,9 +152,10 @@ async function withPg<T>(rec: ConnectionRecord, fn: (q: QueryFn, ctx: { driver: 
 }
 
 async function withMssql<T>(rec: ConnectionRecord, fn: (q: QueryFn, ctx: { driver: DriverType }) => Promise<T>): Promise<T> {
+  const connectHost = rec.resolvedIp ?? rec.host;
   const pool = await withTimeout(
     new mssql.ConnectionPool({
-      server: rec.host,
+      server: connectHost,
       port: rec.port,
       user: rec.user ?? "sa",
       password: rec.password,

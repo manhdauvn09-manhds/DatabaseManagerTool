@@ -101,12 +101,16 @@ export async function POST(req: Request) {
   }
 
   const result = await testConnection({
+    ownerEmail: email,
     dbType,
     host,
     port,
     user,
     password,
     ssl,
+    // Pass the IP we already vetted so the driver connects to the SAME address,
+    // closing the DNS-rebinding window between SSRF check and driver lookup.
+    resolvedIp: safe.ip,
     mssqlTrustServerCertificate: process.env.MSSQL_TRUST_SERVER_CERT === "true"
   });
 
@@ -126,7 +130,8 @@ export async function POST(req: Request) {
     host,
     port,
     user,
-    password
+    password,
+    resolvedIp: safe.ip
   });
   password = "";
 

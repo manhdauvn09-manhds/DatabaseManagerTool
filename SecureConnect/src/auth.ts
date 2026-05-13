@@ -44,7 +44,11 @@ export const { handlers, auth, signIn, signOut } = NextAuth({
       clientSecret: process.env.AUTH_GOOGLE_SECRET!
     })
   ],
-  session: { strategy: "jwt" },
+  session: {
+    strategy: "jwt",
+    // 24h — shorter for public multi-tenant tool (smaller window if cookie steals).
+    maxAge: Math.max(60, Number(process.env.SESSION_MAXAGE_SEC ?? 24 * 60 * 60))
+  },
   trustHost: process.env.AUTH_TRUST_HOST === "true",
   callbacks: {
     async signIn({ user, profile }) {

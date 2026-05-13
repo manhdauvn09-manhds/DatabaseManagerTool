@@ -21,6 +21,10 @@ export type ConnectionRecord = {
   user?: string;
   // Stored in-memory only; never persisted.
   password: string;
+  // Optional: IP that the SSRF check already validated. Drivers should use this
+  // (not `host`) when opening sockets — defends against DNS rebinding between
+  // the safety check and the actual connection.
+  resolvedIp?: string;
 };
 
 // Per-request TTL bump (sliding window). On each successful get, expiresAt is set

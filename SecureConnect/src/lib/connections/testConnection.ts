@@ -2,15 +2,20 @@ import type { DbType } from "./store";
 import mysql from "mysql2/promise";
 import pg from "pg";
 import mssql from "mssql";
+import { ensureSafeHost } from "@/lib/security/ssrfGuard";
 
 export type TestResult =
   | { ok: true; dbType: Exclude<DbType, "auto"> }
   | { ok: false; message: string; internalReason?: string };
 
 const CONNECT_TIMEOUT_MS = 5000;
-const MAX_CONCURRENT = Math.max(
+const MAX_GLOBAL = Math.max(
   1,
-  Number(process.env.DB_MAX_CONCURRENT_CONNECTS ?? "5")
+  Number(process.env.DB_MAX_CONCURRENT_CONNECTS ?? "10")
+);
+const MAX_PER_USER = Math.max(
+  1,
+  Number(process.env.DB_MAX_PER_USER_CONNECTS ?? "2")
 );
 const SSL_STRICT = process.env.DB_SSL_STRICT === "true";
 const RETRY_BACKOFF_MS = 200;
@@ -26,24 +31,47 @@ const TRANSIENT_CODES = new Set([
 // Pooling would retain decrypted credentials in memory beyond the request lifetime,
 // which contradicts the "no secret persistence" goal. test-then-close is by design.
 
-// --------------------------- semaphore -----------------------------
+// --------------------------- semaphore (per-user + global) ----------
 let active = 0;
 let shuttingDown = false;
-const waiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
+const perUser = new Map<string, number>();
+const waiters: Array<{ key: string; resolve: () => void; reject: (err: Error) => void }> = [];
 
-async function acquireSlot(): Promise<void> {
-  if (shuttingDown) throw new Error("Server shutting down");
-  if (active < MAX_CONCURRENT) {
-    active++;
-    return;
-  }
-  await new Promise<void>((resolve, reject) => waiters.push({ resolve, reject }));
+function canAcquire(email: string): boolean {
+  return active < MAX_GLOBAL && (perUser.get(email) ?? 0) < MAX_PER_USER;
+}
+function incrementSlot(email: string): void {
+  active++;
+  perUser.set(email, (perUser.get(email) ?? 0) + 1);
+}
+function decrementSlot(email: string): void {
+  active = Math.max(0, active - 1);
+  const cur = perUser.get(email) ?? 0;
+  if (cur <= 1) perUser.delete(email);
+  else perUser.set(email, cur - 1);
 }
 
-function releaseSlot(): void {
-  const next = waiters.shift();
-  if (next) next.resolve();
-  else active--;
+async function acquireSlot(email: string): Promise<void> {
+  if (shuttingDown) throw new Error("Server shutting down");
+  if (canAcquire(email)) {
+    incrementSlot(email);
+    return;
+  }
+  await new Promise<void>((resolve, reject) => waiters.push({ key: email, resolve, reject }));
+}
+
+function releaseSlot(email: string): void {
+  decrementSlot(email);
+  // Wake the first waiter that fits BOTH global + per-user limits.
+  for (let i = 0; i < waiters.length; i++) {
+    const w = waiters[i];
+    if (canAcquire(w.key)) {
+      waiters.splice(i, 1);
+      incrementSlot(w.key);
+      w.resolve();
+      return;
+    }
+  }
 }
 
 // --------------------------- helpers -------------------------------
@@ -131,18 +159,21 @@ function guessDbTypeByPort(port: number): Exclude<DbType, "auto"> | null {
 }
 
 // --------------------------- SSL config ----------------------------
-function mysqlSslOption(useSsl: boolean | undefined): mysql.ConnectionOptions["ssl"] {
+// `servername` ensures the SNI / TLS hostname check uses the user-supplied
+// hostname, even though we connect to a pre-resolved IP (DNS-rebind defense).
+function mysqlSslOption(useSsl: boolean | undefined, serverName: string): mysql.ConnectionOptions["ssl"] {
   if (!useSsl) return undefined;
-  return { rejectUnauthorized: SSL_STRICT };
+  return { rejectUnauthorized: SSL_STRICT, servername: serverName } as unknown as mysql.ConnectionOptions["ssl"];
 }
 
-function pgSslOption(useSsl: boolean | undefined): pg.ClientConfig["ssl"] {
+function pgSslOption(useSsl: boolean | undefined, serverName: string): pg.ClientConfig["ssl"] {
   if (!useSsl) return false;
-  return { rejectUnauthorized: SSL_STRICT };
+  return { rejectUnauthorized: SSL_STRICT, servername: serverName };
 }
 
 // --------------------------- entry ---------------------------------
 export type TestConnectionInput = {
+  ownerEmail: string;
   dbType: DbType;
   host: string;
   port: number;
@@ -150,19 +181,34 @@ export type TestConnectionInput = {
   password: string;
   ssl?: boolean;
   mssqlTrustServerCertificate?: boolean;
+  // Pre-resolved IP from ssrfGuard. When provided, drivers connect to this IP
+  // instead of re-resolving the hostname (defense against DNS rebinding).
+  resolvedIp?: string;
 };
 
 export async function testConnection(input: TestConnectionInput): Promise<TestResult> {
-  await acquireSlot();
+  await acquireSlot(input.ownerEmail);
   try {
     return await runTest(input);
   } finally {
-    releaseSlot();
+    releaseSlot(input.ownerEmail);
   }
 }
 
 // --------------------------- core ----------------------------------
 async function runTest(input: TestConnectionInput): Promise<TestResult> {
+  // Resolve + SSRF-check here if caller hasn't pre-resolved. This guarantees
+  // the driver connects to the SAME IP we vetted (DNS rebinding defense).
+  let connectHost = input.resolvedIp;
+  if (!connectHost) {
+    const allowPrivate = process.env.ALLOW_PRIVATE_HOSTS === "true";
+    const safe = await ensureSafeHost(input.host, { allowPrivate });
+    if (!safe.ok) {
+      return { ok: false, message: "Host not allowed", internalReason: safe.reason };
+    }
+    connectHost = safe.ip;
+  }
+
   const candidates: Exclude<DbType, "auto">[] = [];
   if (input.dbType !== "auto") {
     candidates.push(input.dbType);
@@ -178,15 +224,15 @@ async function runTest(input: TestConnectionInput): Promise<TestResult> {
   for (const t of candidates) {
     try {
       if (t === "mysql") {
-        await tryWithRetry(() => connectMysql(input));
+        await tryWithRetry(() => connectMysql(input, connectHost!));
         return { ok: true, dbType: "mysql" };
       }
       if (t === "postgresql") {
-        await tryWithRetry(() => connectPg(input));
+        await tryWithRetry(() => connectPg(input, connectHost!));
         return { ok: true, dbType: "postgresql" };
       }
       if (t === "mssql") {
-        await tryWithRetry(() => connectMssql(input));
+        await tryWithRetry(() => connectMssql(input, connectHost!));
         return { ok: true, dbType: "mssql" };
       }
     } catch (e) {
@@ -201,15 +247,15 @@ async function runTest(input: TestConnectionInput): Promise<TestResult> {
   };
 }
 
-async function connectMysql(input: TestConnectionInput): Promise<void> {
+async function connectMysql(input: TestConnectionInput, connectHost: string): Promise<void> {
   const conn = await safelyConnect(
     () => mysql.createConnection({
-      host: input.host,
+      host: connectHost,
       port: input.port,
       user: input.user ?? "root",
       password: input.password,
       connectTimeout: CONNECT_TIMEOUT_MS,
-      ssl: mysqlSslOption(input.ssl)
+      ssl: mysqlSslOption(input.ssl, input.host)
     }),
     (c) => c.end(),
     CONNECT_TIMEOUT_MS + 500,
@@ -222,17 +268,17 @@ async function connectMysql(input: TestConnectionInput): Promise<void> {
   }
 }
 
-async function connectPg(input: TestConnectionInput): Promise<void> {
+async function connectPg(input: TestConnectionInput, connectHost: string): Promise<void> {
   const client = await safelyConnect(
     async () => {
       const c = new pg.Client({
-        host: input.host,
+        host: connectHost,
         port: input.port,
         user: input.user ?? "postgres",
         password: input.password,
         connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
         statement_timeout: CONNECT_TIMEOUT_MS,
-        ssl: pgSslOption(input.ssl)
+        ssl: pgSslOption(input.ssl, input.host)
       });
       await c.connect();
       return c;
@@ -248,10 +294,10 @@ async function connectPg(input: TestConnectionInput): Promise<void> {
   }
 }
 
-async function connectMssql(input: TestConnectionInput): Promise<void> {
+async function connectMssql(input: TestConnectionInput, connectHost: string): Promise<void> {
   const pool = await safelyConnect(
     () => new mssql.ConnectionPool({
-      server: input.host,
+      server: connectHost,
       port: input.port,
       user: input.user ?? "sa",
       password: input.password,
