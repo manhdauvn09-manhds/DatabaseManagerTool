@@ -44,6 +44,6 @@ EXPOSE 3000
 # exports GET for /api/health; HEAD would return 405 and flip the container
 # to (unhealthy) even though the app is fine.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-  CMD wget -q -O /dev/null --tries=1 http://localhost:3000/api/health || exit 1
+  CMD wget -q -O /dev/null --tries=1 http://127.0.0.1:3000/api/health || exit 1
 
 CMD ["node", "server.js"]
