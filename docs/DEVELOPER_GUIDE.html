@@ -1,0 +1,895 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<meta name="robots" content="noindex, nofollow" />
+<title>DatabaseManager — Developer Guide</title>
+<style>
+  :root {
+    --bg: #fafafa; --fg: #111827; --muted: #6b7280;
+    --border: #e5e7eb; --card: #ffffff;
+    --code-bg: #f3f4f6; --code-fg: #111;
+    --accent: #047857; --danger: #b91c1c; --warn: #b45309;
+    --link: #1d4ed8;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+               font: 15px/1.6 -apple-system, BlinkMacSystemFont, Segoe UI, Roboto, sans-serif; }
+  body { display: grid; grid-template-columns: 280px 1fr; min-height: 100vh; }
+  nav.toc { position: sticky; top: 0; max-height: 100vh; overflow: auto;
+            background: #111827; color: #e5e7eb; padding: 16px 18px; }
+  nav.toc h2 { font-size: 13px; text-transform: uppercase; letter-spacing: 0.08em;
+                color: #9ca3af; margin: 18px 0 8px; }
+  nav.toc h2:first-child { margin-top: 0; }
+  nav.toc a { display: block; color: #e5e7eb; text-decoration: none;
+              padding: 4px 0; font-size: 13px; border-bottom: 1px solid transparent; }
+  nav.toc a:hover { color: #fff; border-bottom-color: #374151; }
+  nav.toc .brand { font-weight: 700; color: #fff; font-size: 16px; margin-bottom: 4px; }
+  nav.toc .sub { color: #9ca3af; font-size: 11px; margin-bottom: 16px; }
+
+  main { padding: 32px 48px 96px; max-width: 980px; }
+  h1, h2, h3, h4 { line-height: 1.25; }
+  h1 { font-size: 28px; margin: 8px 0 6px; }
+  h2 { font-size: 22px; margin: 36px 0 12px; padding-bottom: 6px;
+       border-bottom: 1px solid var(--border); }
+  h3 { font-size: 17px; margin: 24px 0 8px; color: #111827; }
+  h4 { font-size: 14px; margin: 16px 0 6px; color: #374151; }
+  p { margin: 8px 0; }
+  ul, ol { margin: 8px 0; padding-left: 22px; }
+  li { margin: 4px 0; }
+  code { background: var(--code-bg); color: var(--code-fg);
+         padding: 1px 6px; border-radius: 4px; font-size: 13px;
+         font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+  pre { background: var(--code-bg); padding: 12px 14px; border-radius: 8px;
+        overflow: auto; font-size: 12.5px; line-height: 1.5; border: 1px solid var(--border); }
+  pre code { background: transparent; padding: 0; }
+
+  table { width: 100%; border-collapse: collapse; margin: 12px 0; font-size: 14px; }
+  th, td { padding: 8px 10px; text-align: left; border-bottom: 1px solid var(--border);
+           vertical-align: top; }
+  th { background: #f9fafb; font-weight: 600; }
+  tbody tr:hover { background: #fafafa; }
+
+  .card { background: var(--card); border: 1px solid var(--border);
+          border-radius: 10px; padding: 16px 18px; margin: 12px 0; }
+  .pill { display: inline-block; padding: 2px 8px; border-radius: 999px;
+          font-size: 11px; font-weight: 600; border: 1px solid; }
+  .pill.ok { color: var(--accent); border-color: var(--accent); }
+  .pill.warn { color: var(--warn); border-color: var(--warn); }
+  .pill.danger { color: var(--danger); border-color: var(--danger); }
+
+  .note, .warn, .danger {
+    border-left: 4px solid; padding: 10px 14px; margin: 12px 0;
+    border-radius: 0 6px 6px 0; font-size: 14px;
+  }
+  .note   { background: #eff6ff; border-color: #2563eb; }
+  .warn   { background: #fffbeb; border-color: var(--warn); }
+  .danger { background: #fef2f2; border-color: var(--danger); }
+
+  a { color: var(--link); }
+  hr { border: 0; border-top: 1px solid var(--border); margin: 24px 0; }
+
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 1100px) { body { grid-template-columns: 1fr; }
+    nav.toc { position: static; max-height: none; }
+    .grid2 { grid-template-columns: 1fr; }
+  }
+
+  .filetree { font-family: ui-monospace, Menlo, monospace; font-size: 12.5px;
+              white-space: pre; background: var(--code-bg); padding: 12px;
+              border-radius: 8px; border: 1px solid var(--border); overflow: auto; }
+</style>
+</head>
+<body>
+
+<nav class="toc">
+  <div class="brand">DatabaseManager</div>
+  <div class="sub">Developer guide · v0.1 · multi-tenant</div>
+
+  <h2>Tổng quan</h2>
+  <a href="#mission">Mission & scope</a>
+  <a href="#stack">Tech stack</a>
+  <a href="#architecture">Architecture</a>
+  <a href="#layout">File layout</a>
+
+  <h2>Luồng chính</h2>
+  <a href="#auth">Authentication</a>
+  <a href="#secure-connect">Secure Connect</a>
+  <a href="#explorer">Explorer (CRUD)</a>
+  <a href="#confirm-tokens">3-layer confirm</a>
+  <a href="#export">Export</a>
+  <a href="#saved-profiles">Saved profiles</a>
+
+  <h2>Security layers</h2>
+  <a href="#sec-summary">Tổng quan</a>
+  <a href="#ssrf">SSRF + DNS rebind</a>
+  <a href="#ratelimit">Rate limit & semaphore</a>
+  <a href="#audit">Audit log</a>
+  <a href="#headers">Headers & CSRF</a>
+  <a href="#anti-index">Anti-indexing</a>
+
+  <h2>Backend reference</h2>
+  <a href="#api">API endpoints</a>
+  <a href="#env">Env vars</a>
+  <a href="#tests">Test suite</a>
+
+  <h2>DevOps</h2>
+  <a href="#dockerfile">Dockerfile</a>
+  <a href="#compose">docker-compose</a>
+  <a href="#nginx">Nginx layout</a>
+  <a href="#deploy">Deploy flow</a>
+  <a href="#gotchas">Gotchas / pitfalls</a>
+
+  <h2>Cho Claude</h2>
+  <a href="#claude-cheats">Cheat sheet</a>
+  <a href="#memory-links">Memory references</a>
+</nav>
+
+<main>
+
+<h1>DatabaseManager — Developer Guide</h1>
+<p style="color:var(--muted)">
+  Tham chiếu chi tiết về kiến trúc, security model và quy trình deploy.
+  Dành cho developer onboarding và cho Claude session sau (lấy info nhanh để fix / build feature đúng).
+</p>
+
+<div class="card">
+  <strong>Live</strong>
+  <ul>
+    <li>Domain: <code>https://DBManager.allin1site.com</code></li>
+    <li>Server: <code>root@62.238.28.106</code> (Hetzner, shared box với nhiều app khác)</li>
+    <li>Repo: <code>https://github.com/manhdauvn09-manhds/DatabaseManagerTool</code></li>
+    <li>Branch: <code>main</code> · Latest: <code>cab72b5</code> (healthcheck IPv4 fix)</li>
+  </ul>
+</div>
+
+<h2 id="mission">1. Mission & Scope</h2>
+<p>
+  Tool web cho phép <strong>bất kỳ ai có Google account</strong> login, kết nối tới DB của họ
+  (MySQL / PostgreSQL / MSSQL), browse + CRUD + export, có thể save credential để dùng lại.
+  <strong>Multi-tenant public</strong> — tách biệt per user qua hashed email.
+</p>
+<div class="warn">
+  <strong>⛔ CORE FACT — không lock-out:</strong>
+  Default <code>AUTH_ALLOW_ANY=true</code>, allowlist trống. Tool công khai.
+  KHÔNG set <code>ALLOWED_EMAILS</code> / <code>ALLOWED_EMAIL_DOMAINS</code> trừ khi user explicit yêu cầu.
+</div>
+
+<h3>Non-goals</h3>
+<ul>
+  <li>Không phải SQL editor (chỉ click-to-browse). User crud từng row qua UI form.</li>
+  <li>Không pool DB connection qua request (để KHÔNG retain plaintext credential).</li>
+  <li>Không trở thành internal-only tool.</li>
+</ul>
+
+<h2 id="stack">2. Tech stack</h2>
+<table>
+  <thead><tr><th>Layer</th><th>Tech</th><th>Version</th></tr></thead>
+  <tbody>
+    <tr><td>Framework</td><td>Next.js (App Router, standalone)</td><td>14.2.5</td></tr>
+    <tr><td>Auth</td><td>NextAuth (Auth.js v5 beta)</td><td>5.0.0-beta.19</td></tr>
+    <tr><td>UI</td><td>React + Tailwind CSS</td><td>18.3 / 3.4</td></tr>
+    <tr><td>Validation</td><td>Zod</td><td>3.23.8</td></tr>
+    <tr><td>DB drivers</td><td>mysql2, pg, mssql</td><td>3.11 / 8.12 / 10.0</td></tr>
+    <tr><td>Tests</td><td>Vitest</td><td>1.6</td></tr>
+    <tr><td>Runtime</td><td>Node.js</td><td>20-alpine</td></tr>
+    <tr><td>Container</td><td>Docker + docker compose</td><td>v2.x</td></tr>
+    <tr><td>Reverse proxy</td><td>nginx + Cloudflare</td><td>host-level</td></tr>
+  </tbody>
+</table>
+
+<h2 id="architecture">3. Architecture</h2>
+<pre><code>┌────────────────────┐   HTTPS   ┌──────────────────┐
+│  Browser (Google)  │ ────────► │   Cloudflare     │
+│  ─ /signin → OAuth │           │   (Full SSL)     │
+│  ─ /app  → connect │           └────────┬─────────┘
+│  ─ /app/explorer   │                    │
+└────────────────────┘                    ▼
+                                ┌──────────────────────┐
+                                │  nginx on host       │
+                                │  zzz-DBManager...    │
+                                │  443 → 127.0.0.1:13000│
+                                └────────────┬──────────┘
+                                             │
+                          ┌──────────────────▼───────────────────┐
+                          │  Docker container dbmanager-app      │
+                          │  Next.js 14 (standalone, node:20)    │
+                          │                                       │
+                          │  ┌─ Middleware (Edge) ─ Origin/CF/auth│
+                          │  ├─ /api/auth/*    NextAuth Google    │
+                          │  ├─ /api/connect   RSA-OAEP decrypt + │
+                          │  │                  SSRF + DB test    │
+                          │  ├─ /api/db/[id]/* browse/CRUD/export │
+                          │  ├─ /api/saved-connections (vault)    │
+                          │  ├─ /api/health    public liveness    │
+                          │  │                                     │
+                          │  └─ In-memory stores:                  │
+                          │     • RSA keypair (ephemeral)         │
+                          │     • Connection records (TTL 30m)    │
+                          │     • Rate-limit buckets              │
+                          │     • Confirm tokens (TTL 2m)         │
+                          │                                       │
+                          │  Volume /data (persistent):           │
+                          │     • saved-connections.json          │
+                          │       (AES-GCM, mode 600)             │
+                          └────────────────┬──────────────────────┘
+                                           │ TCP (resolved IP)
+                          ┌────────────────▼──────────────────┐
+                          │  Target DB (mysql/pg/mssql)       │
+                          │  User-supplied, public internet    │
+                          └────────────────────────────────────┘
+</code></pre>
+
+<div class="note">
+  <strong>Quan trọng:</strong> Container bind <code>127.0.0.1:13000</code> — không expose internet trực tiếp.
+  Nginx host route domain → upstream loopback. Server có nhiều docker khác cùng box,
+  symlink site <code>zzz-DBManager.allin1site.com.conf</code> ở vị trí <em>cuối</em>
+  trong <code>sites-enabled/</code> để KHÔNG bị làm fallback default cho HTTPS unknown server_name.
+</div>
+
+<h2 id="layout">4. File layout</h2>
+<div class="filetree">DatabaseManager/
+├── BMAD_SDD_Skills_v2/        skill pack + artifacts (spec/PRD/stories/QA)
+├── SecureConnect/             Next.js app
+│   ├── src/
+│   │   ├── auth.ts                  NextAuth config (Google + multi-tenant signIn callback + events)
+│   │   ├── middleware.ts            Auth gate, Origin / CF check, 401 JSON for /api/*
+│   │   │
+│   │   ├── app/                     App Router pages + API routes
+│   │   │   ├── layout.tsx              metadata.robots = noindex
+│   │   │   ├── page.tsx                root → redirect /app
+│   │   │   ├── signin/page.tsx         Google sign-in
+│   │   │   ├── app/page.tsx            Connect form + Saved-profile panel
+│   │   │   ├── app/explorer/page.tsx   Sidebar tree + Data/Columns + Insert/Edit/Delete + Export
+│   │   │   │
+│   │   │   └── api/
+│   │   │       ├── auth/[...nextauth]/route.ts   NextAuth handlers
+│   │   │       ├── health/route.ts               public liveness (force-dynamic)
+│   │   │       ├── crypto/public-key/route.ts    RSA public key
+│   │   │       ├── connect/route.ts              decrypt + test + create connectionId
+│   │   │       ├── saved-connections/route.ts    GET list / POST save
+│   │   │       ├── saved-connections/[id]/route.ts  GET decrypt / DELETE
+│   │   │       └── db/[id]/
+│   │   │           ├── databases/route.ts      GET
+│   │   │           ├── tables/route.ts         GET ?database=
+│   │   │           ├── columns/route.ts        GET ?database=&table=
+│   │   │           ├── rows/route.ts           GET browse / POST insert / PUT update / DELETE
+│   │   │           ├── rows/preview/route.ts   POST preview (issue confirm token)
+│   │   │           └── export/route.ts         GET csv|json|sql download
+│   │   │
+│   │   ├── lib/
+│   │   │   ├── crypto/
+│   │   │   │   ├── client.ts            FE: RSA-OAEP encrypt password
+│   │   │   │   ├── serverKeyStore.ts    server RSA keypair (in-memory, ephemeral)
+│   │   │   │   └── serverVault.ts       HKDF + AES-256-GCM cho saved profiles + backups
+│   │   │   │
+│   │   │   ├── connections/
+│   │   │   │   ├── store.ts             in-memory connection records (TTL 30m, sliding, MAX 1000)
+│   │   │   │   ├── testConnection.ts    open+ping+close, semaphore (2/user, 10 global)
+│   │   │   │   ├── dbConnector.ts       withConnection helper for CRUD (resolvedIp, SNI servername)
+│   │   │   │   ├── introspection.ts     listDatabases/Tables/Columns/Rows per driver
+│   │   │   │   ├── mutate.ts            insertRow / previewMatch / executeUpdate / executeDelete
+│   │   │   │   ├── exporters.ts         CSV / JSON / SQL formatters
+│   │   │   │   └── backup.ts            encrypted snapshot before DELETE
+│   │   │   │
+│   │   │   ├── saved/
+│   │   │   │   ├── store.ts             file JSON store keyed by sha256(email)
+│   │   │   │   └── schemas.ts           Zod for profile request
+│   │   │   │
+│   │   │   ├── schemas/connect.ts       Zod cho /api/connect payload
+│   │   │   │
+│   │   │   ├── security/
+│   │   │   │   ├── ssrfGuard.ts         IPv4/IPv6 classification + DNS resolve check
+│   │   │   │   ├── rateLimit.ts         sliding-window per-key limiter
+│   │   │   │   ├── auditLog.ts          structured JSON, field whitelist
+│   │   │   │   └── confirmTokens.ts     single-use 8-char token, payload-bound
+│   │   │   │
+│   │   │   └── db-api/route-helper.ts   authorizeUser / authorize + jerr + logInternal
+│   │   │
+│   │   └── types/mssql.d.ts             type shim (mssql v10 not auto-discovered)
+│   │
+│   ├── Dockerfile                  multi-stage; npm test gate; non-root nextjs:nodejs
+│   ├── next.config.mjs             standalone output + headers + CSP
+│   ├── postcss.config.cjs          MUST be .cjs (package.json type=module)
+│   ├── vitest.config.ts
+│   └── .env.example
+│
+├── deploy/
+│   ├── nginx/DBManager.allin1site.com.conf   site config (CF Full SSL → self-signed)
+│   ├── nginx/setup-nginx-site.sh             zzz- prefix symlink + self-signed cert
+│   └── .env.production.template              local-only template (gitignored)
+│
+├── docker-compose.yml             named volume dbmanager_data, healthcheck, resource limits
+├── deploy.ps1                     local commit→push→ssh→build→verify
+├── deploy.config.json             local-only SSH params (gitignored)
+├── server-setup.sh                one-time server bootstrap
+├── setup-cloudflare-firewall.sh   optional, warning: shared server
+├── docs/DEVELOPER_GUIDE.html      this file
+└── README.md
+</div>
+
+<h2 id="auth">5. Authentication</h2>
+
+<h3>Sign-in flow</h3>
+<pre><code>1. User vào /signin → click "Sign in with Google"
+2. NextAuth redirect → accounts.google.com (OAuth 2.0 code flow)
+3. Google → callback https://DBManager.allin1site.com/api/auth/callback/google
+4. NextAuth verify code → exchange token → user info
+5. callbacks.signIn(user, profile) {
+     allowEmails = ALLOWED_EMAILS;
+     allowDomains = ALLOWED_EMAIL_DOMAINS;
+     if (both empty) return AUTH_ALLOW_ANY === "true";  // public mode
+     else return email matches allowlist;
+   }
+6. NextAuth issues JWT cookie (SameSite=Lax, Secure, HttpOnly), maxAge = SESSION_MAXAGE_SEC (24h default)
+7. events.signIn → audit log (action: "auth.signIn", ok: true)
+</code></pre>
+
+<h3>Middleware enforcement</h3>
+<p>
+  <code>src/middleware.ts</code> chạy ở Edge runtime trên mọi request match
+  <code>/app/:path*</code> và <code>/api/:path*</code>:
+</p>
+<ul>
+  <li>Public bypass: <code>/api/auth/*</code>, <code>/api/health</code>, <code>/signin</code></li>
+  <li>Optional CF gate: <code>REQUIRE_CLOUDFLARE=true</code> → reject nếu thiếu <code>cf-connecting-ip</code></li>
+  <li>Unauthenticated: API → 401 JSON; pages → redirect <code>/signin?next=...</code></li>
+</ul>
+
+<div class="note">
+  Google Cloud Console OAuth Consent Screen phải ở <strong>"In production"</strong>.
+  "Testing" chỉ cho phép Test users đã whitelist (≤100 users).
+</div>
+
+<h2 id="secure-connect">6. Secure Connect flow</h2>
+<p>Mục tiêu: password DB không bao giờ tới server ở dạng plaintext qua HTTP body, kể cả qua TLS (defense-in-depth).</p>
+
+<pre><code>// Client side (src/app/app/page.tsx onConnect)
+1. GET /api/crypto/public-key → { keyId, publicJwk } (auth required)
+2. WebCrypto: importKey(publicJwk, RSA-OAEP-SHA256)
+3. ciphertext = encrypt(password) → base64
+4. setPassword("")  // clear React state
+5. POST /api/connect {
+     dbType, host, port, user?, passwordEncrypted, keyId, ssl?
+   }
+
+// Server side (api/connect/route.ts)
+1. auth() → email
+2. Origin/Referer === AUTH_URL (case-insensitive, RFC 3986)
+3. rateLimit("connect:&lt;email&gt;", 10/min)
+4. body.length ≤ 4096
+5. Zod ConnectRequestSchema
+6. ssrfGuard.ensureSafeHost(host)  // blocks loopback/metadata always,
+                                    // RFC1918 unless ALLOW_PRIVATE_HOSTS
+7. if (keyId !== currentKeyId) → 409 KEY_ROTATED
+8. RSA decrypt password (in-memory only)
+9. testConnection({ ownerEmail, ...input, resolvedIp: safe.ip })
+   ↳ semaphore acquire (per-user 2, global 10)
+   ↳ try mysql / pg / mssql with timeout + retry transient
+   ↳ on success: ping/SELECT 1
+   ↳ close
+10. createConnectionRecord({ ownerEmail, ..., resolvedIp, password })
+11. password = ""
+12. return { connectionId, dbType }
+13. audit({ action: "connect", email, host, port, ok: true })
+</code></pre>
+
+<div class="warn">
+  Server keypair là <strong>ephemeral in-memory</strong> per container.
+  Restart → KEY_ROTATED cho mọi session đang active. Multi-instance prod cần KMS (chưa làm).
+</div>
+
+<h2 id="explorer">7. Explorer (CRUD)</h2>
+<p>Sau <code>/api/connect</code> thành công, FE navigate sang <code>/app/explorer?cid=&lt;uuid&gt;</code>.</p>
+
+<h3>API endpoints (browse)</h3>
+<table>
+  <thead><tr><th>Endpoint</th><th>Method</th><th>Mô tả</th></tr></thead>
+  <tbody>
+    <tr><td><code>/api/db/:id/databases</code></td><td>GET</td><td>List databases / schemas</td></tr>
+    <tr><td><code>/api/db/:id/tables?database=X</code></td><td>GET</td><td>List tables</td></tr>
+    <tr><td><code>/api/db/:id/columns?database=X&amp;table=Y</code></td><td>GET</td><td>Column metadata + PK flag</td></tr>
+    <tr><td><code>/api/db/:id/rows?...&amp;limit=50&amp;offset=0</code></td><td>GET</td><td>Paginated rows + total count</td></tr>
+  </tbody>
+</table>
+
+<h3>API endpoints (mutate)</h3>
+<table>
+  <thead><tr><th>Endpoint</th><th>Method</th><th>Mô tả</th></tr></thead>
+  <tbody>
+    <tr><td><code>/api/db/:id/rows</code></td><td>POST</td><td>Insert 1 row <code>{database, table, data}</code></td></tr>
+    <tr><td><code>/api/db/:id/rows/preview</code></td><td>POST</td><td>Match preview + issue confirm token (action=update|delete)</td></tr>
+    <tr><td><code>/api/db/:id/rows</code></td><td>PUT</td><td>Execute UPDATE with token</td></tr>
+    <tr><td><code>/api/db/:id/rows</code></td><td>DELETE</td><td>Execute DELETE with token (+ encrypted backup)</td></tr>
+    <tr><td><code>/api/db/:id/export?format=csv|json|sql</code></td><td>GET</td><td>Download (≤ MAX_EXPORT_ROWS)</td></tr>
+  </tbody>
+</table>
+
+<h3>Identifier safety</h3>
+<p>Tên database/table/column đến từ user → KHÔNG thể parametrize trong SQL.
+   <code>validateIdent(name)</code> chỉ cho phép <code>[a-zA-Z0-9_]{1,64}</code>.
+   <code>quoteIdent(name, driver)</code> wrap đúng theo driver:
+</p>
+<ul>
+  <li>mysql: <code>`name`</code></li>
+  <li>postgresql: <code>"name"</code></li>
+  <li>mssql: <code>[name]</code></li>
+</ul>
+<p>Values luôn parametrize (<code>?</code> hoặc <code>$1</code> tuỳ driver — wrapper pg tự translate).</p>
+
+<h2 id="confirm-tokens">8. 3-layer confirm cho UPDATE/DELETE</h2>
+<pre><code>// FE flow
+Step 1: Click ✏️/🗑️ trên row → modal mở
+Step 2: (UPDATE) Edit values → "Preview update"
+        (DELETE) → server preview ngay
+Step 3: POST /api/db/:id/rows/preview { action, database, table, where, set? }
+        Server response: { token: "ABCD2345", total, sample: [...rows], hasPrimaryKey }
+Step 4: FE hiện sample + total + warning (no-PK / multi-row) + ô gõ token
+Step 5: User gõ đúng 8 ký tự token
+Step 6: PUT /api/db/:id/rows { ..., token } (hoặc DELETE)
+
+// Server validation (consumeToken)
+- Token regex: /^[A-Z2-9]{8}$/  (chữ + số, loại 0/O/1/I/L cho dễ đọc)
+- Single-use (delete on access regardless of validity)
+- TTL 2 phút
+- SHA-256 hash của payload {action, connectionId, database, table, where, set?}
+  → nếu user đổi where/set giữa preview và execute → token mismatch → 400</code></pre>
+
+<h3>Server safety nets</h3>
+<ul>
+  <li><code>MAX_AFFECT_ROWS=100</code> — UPDATE/DELETE refuse nếu match &gt; cap (env override)</li>
+  <li><code>WHERE</code> mandatory — empty → 400 "WHERE clause is mandatory"</li>
+  <li>FE cảnh báo nếu <code>!hasPrimaryKey</code> hoặc <code>total &gt; 1</code></li>
+  <li>DELETE + <code>BACKUP_BEFORE_DELETE=true</code> → encrypted JSON snapshot vào
+      <code>/tmp/dbmanager-backups/</code> (GC 24h)</li>
+</ul>
+
+<h2 id="export">9. Export</h2>
+<p><code>GET /api/db/:id/export?database=X&amp;table=Y&amp;format=csv|json|sql&amp;limit=10000</code></p>
+<ul>
+  <li><strong>CSV</strong>: RFC 4180 quoting (escape <code>, " \n \r</code>), BigInt/Date/Buffer as text</li>
+  <li><strong>JSON</strong>: array of rows, BigInt → string, Date → ISO, Buffer → <code>0x&lt;hex&gt;</code></li>
+  <li><strong>SQL</strong>: per-driver quoted identifiers + <code>INSERT INTO ... VALUES (...)</code> statements</li>
+</ul>
+<p>Response: <code>Content-Disposition: attachment</code> + <code>Cache-Control: no-store</code>.
+   Rate limit 10/phút/email. Cap default 10 000 rows (env <code>MAX_EXPORT_ROWS</code>).</p>
+
+<h2 id="saved-profiles">10. Saved profiles (server-encrypted)</h2>
+<p>Tool công khai, mỗi user có vault riêng. Server lưu CIPHERTEXT, không thấy plaintext qua disk.</p>
+
+<pre><code>// Save
+POST /api/saved-connections { name, data: {dbType, host, port, user, password, ssl?} }
+  ↳ serverVault.encryptForUser(email, JSON.stringify(data))
+     • salt = randomBytes(16)
+     • iv = randomBytes(12)
+     • key = HKDF-SHA256(VAULT_MASTER_SECRET, salt, info="dbmanager:saved:v2:"+sha256(email))
+     • ciphertext = AES-256-GCM.encrypt(plaintext)
+  ↳ Persist /data/saved-connections.json:
+     { version: 2, users: { sha256(email): { profiles: [{id, name, salt, iv, ciphertext, createdAt}] } } }
+     File mode 600, atomic write (.tmp + rename)
+
+// Load
+GET /api/saved-connections/:id
+  ↳ Validate UUID + ownership
+  ↳ serverVault.decryptForUser(email, blob) → JSON.parse → plaintext
+  ↳ Response { profile: meta, data: plaintext }
+
+// Delete
+DELETE /api/saved-connections/:id
+</code></pre>
+
+<div class="card">
+  <strong>Threat model:</strong>
+  <table>
+    <thead><tr><th>Scenario</th><th>Decryptable?</th></tr></thead>
+    <tbody>
+      <tr><td>File <code>/data/saved-connections.json</code> leak alone</td><td>❌ (cần master key)</td></tr>
+      <tr><td><code>.env.production</code> leak alone</td><td>❌ (cần ciphertext)</td></tr>
+      <tr><td>Full server compromise (cả 2)</td><td>✅ (operator-level — accepted)</td></tr>
+      <tr><td>Operator (root)</td><td>✅ (đúng người sở hữu infra)</td></tr>
+      <tr><td>User A đọc vault user B</td><td>❌ (HKDF info gắn với email khác → key khác)</td></tr>
+    </tbody>
+  </table>
+</div>
+
+<h2 id="sec-summary">11. Security layers — tổng quan</h2>
+<table>
+  <thead><tr><th>Layer</th><th>Where</th><th>Notes</th></tr></thead>
+  <tbody>
+    <tr><td>Google OAuth + email gating</td><td><code>auth.ts</code></td><td>Multi-tenant: AUTH_ALLOW_ANY=true</td></tr>
+    <tr><td>JWT session 24h</td><td><code>auth.ts session.maxAge</code></td><td>Env <code>SESSION_MAXAGE_SEC</code></td></tr>
+    <tr><td>Origin/Referer (CSRF)</td><td><code>route-helper.ts</code></td><td>Case-insensitive vs <code>AUTH_URL</code></td></tr>
+    <tr><td>Per-user rate limit</td><td><code>security/rateLimit.ts</code></td><td>10/min connect, 30/min saved, 60/min reads</td></tr>
+    <tr><td>Per-user + global semaphore</td><td><code>testConnection.ts</code></td><td>2/user + 10 global</td></tr>
+    <tr><td>SSRF guard + DNS rebind</td><td><code>ssrfGuard.ts</code></td><td>Block loopback/metadata always; resolvedIp passed to driver</td></tr>
+    <tr><td>Body size cap</td><td>route handlers</td><td>4 KiB connect, 8–64 KiB others</td></tr>
+    <tr><td>Zod input validation</td><td><code>schemas/*</code></td><td>Host regex, port range, length caps</td></tr>
+    <tr><td>Generic error to client</td><td>route catch</td><td>Driver detail only in server logs</td></tr>
+    <tr><td>Confirmation tokens (UPDATE/DELETE)</td><td><code>confirmTokens.ts</code></td><td>Single-use, 2-min TTL, payload-hash bound</td></tr>
+    <tr><td>Backup encryption</td><td><code>backup.ts</code></td><td>AES-GCM via serverVault</td></tr>
+    <tr><td>Saved-profile vault</td><td><code>serverVault.ts</code></td><td>HKDF + AES-256-GCM</td></tr>
+    <tr><td>Security headers</td><td><code>next.config.mjs</code></td><td>HSTS, CSP, X-Frame-Options, X-CTO, Referrer, Permissions</td></tr>
+    <tr><td>Anti-indexing</td><td>multiple layers</td><td>robots.txt + X-Robots-Tag + meta robots</td></tr>
+    <tr><td>Audit log (stdout JSON)</td><td><code>auditLog.ts</code></td><td>Field whitelist — password fields impossible</td></tr>
+    <tr><td>Cloudflare front + nginx host</td><td>infra</td><td>CF Full SSL, nginx self-signed origin cert</td></tr>
+  </tbody>
+</table>
+
+<h2 id="ssrf">11.1 SSRF + DNS rebinding</h2>
+<pre><code>// src/lib/security/ssrfGuard.ts
+ALWAYS BLOCKED (kể cả allowPrivate):
+  127.0.0.0/8       loopback
+  169.254.0.0/16    link-local / AWS&GCE metadata
+  0.0.0.0/8         unspecified
+  224.0.0.0/4       multicast
+  240.0.0.0/4       reserved
+  ::1               IPv6 loopback
+  ::ffff:0.0.0.0/8  IPv4-mapped of above
+
+BLOCKED unless ALLOW_PRIVATE_HOSTS=true:
+  10.0.0.0/8
+  172.16.0.0/12
+  192.168.0.0/16
+  fc00::/7
+  fe80::/10
+
+DNS resolve (timeout 3s) → check ALL returned addresses.
+Return { ok: true, ip } — drivers connect to THIS IP (not hostname) → DNS-rebind defense.
+SSL: pass `servername: input.host` to driver so SNI / cert verify uses hostname.</code></pre>
+
+<h2 id="ratelimit">11.2 Rate limit & semaphore</h2>
+<pre><code>// Rate limit (per-key sliding window, in-memory Map)
+key example: "connect:user@x.com" or "pubkey:1.2.3.4"
+window: 60_000 ms, limit: varies by endpoint
+429 + Retry-After header
+
+// Semaphore (testConnection only)
+let active = 0;
+const perUser = new Map&lt;email, count&gt;();
+const waiters = [];
+canAcquire(email) := active &lt; MAX_GLOBAL && perUser[email] &lt; MAX_PER_USER
+Default: 10 / 2 (env DB_MAX_CONCURRENT_CONNECTS / DB_MAX_PER_USER_CONNECTS)</code></pre>
+
+<h2 id="audit">11.3 Audit log</h2>
+<p>Mỗi event ghi 1 dòng JSON ra stdout → Docker logs (rotation 10m × 5 file).
+   Field whitelist hardcoded — caller passing extra fields (e.g. password) sẽ bị filter trước khi serialize.</p>
+<pre><code>{"ts":"2026-05-13T...","action":"connect","email":"u@x.com","ip":"1.2.3.4","host":"db.example.com","port":3306,"dbType":"mysql","ok":true,"ms":342}</code></pre>
+<p>Action codes hiện có: <code>connect</code>, <code>db.databases</code>, <code>db.tables</code>, <code>db.columns</code>,
+   <code>db.rows</code>, <code>db.rows.insert</code>, <code>db.rows.preview</code>, <code>db.rows.update</code>,
+   <code>db.rows.delete</code>, <code>db.export</code>, <code>saved.list</code>, <code>saved.create</code>,
+   <code>saved.load</code>, <code>saved.delete</code>, <code>auth.signIn</code>, <code>auth.signOut</code>.</p>
+
+<h2 id="headers">11.4 Headers & CSRF</h2>
+<pre><code>// next.config.mjs SECURITY_HEADERS (apply mọi route)
+Strict-Transport-Security: max-age=31536000; includeSubDomains
+X-Frame-Options: DENY               // CF có thể override → SAMEORIGIN, vẫn safe
+X-Content-Type-Options: nosniff
+Referrer-Policy: strict-origin-when-cross-origin
+Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=()
+Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline'; ...
+X-DNS-Prefetch-Control: off
+X-Robots-Tag: noindex, nofollow, noarchive
+
+// /api/:path* additional
+Cache-Control: no-store, no-cache, must-revalidate, max-age=0
+Pragma: no-cache
+
+// CSRF defenses (cumulative)
+1. SameSite=Lax cookie (NextAuth default)
+2. Origin / Referer must match AUTH_URL (route-helper authorize/authorizeUser)
+3. Content-Type: application/json check by parsing JSON body</code></pre>
+
+<h2 id="anti-index">11.5 Anti-indexing</h2>
+<ol>
+  <li><code>public/robots.txt</code> → <code>User-agent: * / Disallow: /</code></li>
+  <li>Global header <code>X-Robots-Tag: noindex, nofollow, noarchive</code></li>
+  <li><code>layout.tsx metadata.robots = { index: false, follow: false, nocache: true }</code></li>
+  <li>Auth-gated <code>/api/*</code> trừ <code>/api/health</code> + <code>/api/auth/*</code></li>
+</ol>
+
+<h2 id="api">12. API reference (đầy đủ)</h2>
+<table>
+  <thead><tr><th>Path</th><th>Method</th><th>Auth</th><th>Rate limit</th><th>Body cap</th></tr></thead>
+  <tbody>
+    <tr><td><code>/api/health</code></td><td>GET</td><td>none (public)</td><td>—</td><td>—</td></tr>
+    <tr><td><code>/api/auth/...</code></td><td>GET/POST</td><td>NextAuth</td><td>NextAuth internal</td><td>—</td></tr>
+    <tr><td><code>/api/crypto/public-key</code></td><td>GET</td><td>session</td><td>30/min/IP</td><td>—</td></tr>
+    <tr><td><code>/api/connect</code></td><td>POST</td><td>session + Origin</td><td>10/min/email</td><td>4 KiB</td></tr>
+    <tr><td><code>/api/db/:id/databases</code></td><td>GET</td><td>session + ownership</td><td>60/min/email</td><td>—</td></tr>
+    <tr><td><code>/api/db/:id/tables</code></td><td>GET</td><td>session + ownership</td><td>60/min/email</td><td>—</td></tr>
+    <tr><td><code>/api/db/:id/columns</code></td><td>GET</td><td>session + ownership</td><td>60/min/email</td><td>—</td></tr>
+    <tr><td><code>/api/db/:id/rows</code></td><td>GET</td><td>session + ownership</td><td>60/min/email</td><td>—</td></tr>
+    <tr><td><code>/api/db/:id/rows</code></td><td>POST</td><td>session + ownership</td><td>30/min/email</td><td>64 KiB</td></tr>
+    <tr><td><code>/api/db/:id/rows/preview</code></td><td>POST</td><td>session + ownership</td><td>30/min/email</td><td>64 KiB</td></tr>
+    <tr><td><code>/api/db/:id/rows</code></td><td>PUT</td><td>session + ownership + token</td><td>30/min/email</td><td>64 KiB</td></tr>
+    <tr><td><code>/api/db/:id/rows</code></td><td>DELETE</td><td>session + ownership + token</td><td>30/min/email</td><td>64 KiB</td></tr>
+    <tr><td><code>/api/db/:id/export</code></td><td>GET</td><td>session + ownership</td><td>10/min/email</td><td>—</td></tr>
+    <tr><td><code>/api/saved-connections</code></td><td>GET</td><td>session</td><td>60/min/email</td><td>—</td></tr>
+    <tr><td><code>/api/saved-connections</code></td><td>POST</td><td>session + vault configured</td><td>15/min/email</td><td>8 KiB</td></tr>
+    <tr><td><code>/api/saved-connections/:id</code></td><td>GET</td><td>session + ownership</td><td>30/min/email</td><td>—</td></tr>
+    <tr><td><code>/api/saved-connections/:id</code></td><td>DELETE</td><td>session</td><td>15/min/email</td><td>—</td></tr>
+  </tbody>
+</table>
+
+<h3>Error codes</h3>
+<table>
+  <thead><tr><th>Code</th><th>HTTP</th><th>Khi nào</th></tr></thead>
+  <tbody>
+    <tr><td>UNAUTH</td><td>401</td><td>Không có session</td></tr>
+    <tr><td>FORBIDDEN</td><td>403</td><td>Origin/Referer mismatch / direct origin (REQUIRE_CLOUDFLARE)</td></tr>
+    <tr><td>HOST_BLOCKED</td><td>403</td><td>SSRF guard reject</td></tr>
+    <tr><td>BAD_REQUEST</td><td>400</td><td>Zod fail, missing field</td></tr>
+    <tr><td>BAD_CONNECTION_ID</td><td>400</td><td>UUID format invalid</td></tr>
+    <tr><td>CONNECTION_NOT_FOUND</td><td>404</td><td>Hết TTL / cross-user</td></tr>
+    <tr><td>KEY_ROTATED</td><td>409</td><td>RSA keypair đổi (restart)</td></tr>
+    <tr><td>DECRYPT_FAIL</td><td>400</td><td>RSA decrypt fail</td></tr>
+    <tr><td>BAD_PASSWORD</td><td>400</td><td>Decrypted empty</td></tr>
+    <tr><td>CONNECT_FAIL</td><td>400/500</td><td>Driver error (generic message)</td></tr>
+    <tr><td>BODY_TOO_LARGE</td><td>413</td><td>Body vượt cap</td></tr>
+    <tr><td>RATE_LIMIT</td><td>429</td><td>Vượt rate limit</td></tr>
+    <tr><td>BAD_TOKEN</td><td>400</td><td>Confirm token missing/expired/mismatch</td></tr>
+    <tr><td>BAD_ORIGIN</td><td>403</td><td>Origin != AUTH_URL</td></tr>
+    <tr><td>VAULT_NOT_CONFIGURED</td><td>503</td><td>VAULT_MASTER_SECRET unset</td></tr>
+    <tr><td>PROFILE_LIMIT</td><td>400</td><td>Saved profiles vượt 50/user</td></tr>
+  </tbody>
+</table>
+
+<h2 id="env">13. Environment variables</h2>
+<table>
+  <thead><tr><th>Var</th><th>Default</th><th>Mô tả</th></tr></thead>
+  <tbody>
+    <tr><td><code>AUTH_GOOGLE_ID</code></td><td>—</td><td>Google OAuth Client ID (required)</td></tr>
+    <tr><td><code>AUTH_GOOGLE_SECRET</code></td><td>—</td><td>Google OAuth Client Secret (required)</td></tr>
+    <tr><td><code>AUTH_SECRET</code></td><td>—</td><td>NextAuth JWT signing key (required)</td></tr>
+    <tr><td><code>AUTH_TRUST_HOST</code></td><td><code>true</code></td><td>Trust X-Forwarded-Host (behind proxy)</td></tr>
+    <tr><td><code>AUTH_URL</code></td><td>—</td><td>Public URL — OAuth callback + Origin check</td></tr>
+    <tr><td><code>ALLOWED_EMAILS</code></td><td>(empty)</td><td>Comma list — leave empty for multi-tenant</td></tr>
+    <tr><td><code>ALLOWED_EMAIL_DOMAINS</code></td><td>(empty)</td><td>Comma list</td></tr>
+    <tr><td><code>AUTH_ALLOW_ANY</code></td><td><code>false</code></td><td><strong>Set <code>true</code> cho multi-tenant public</strong></td></tr>
+    <tr><td><code>SESSION_MAXAGE_SEC</code></td><td><code>86400</code></td><td>JWT cookie lifetime (24h default)</td></tr>
+    <tr><td><code>REQUIRE_CLOUDFLARE</code></td><td><code>false</code></td><td>Block requests without CF-Connecting-IP</td></tr>
+    <tr><td><code>ALLOW_PRIVATE_HOSTS</code></td><td><code>false</code></td><td>Allow RFC1918 in SSRF guard</td></tr>
+    <tr><td><code>MSSQL_TRUST_SERVER_CERT</code></td><td><code>false</code></td><td>Accept self-signed MSSQL cert</td></tr>
+    <tr><td><code>DB_SSL_STRICT</code></td><td><code>false</code></td><td>Strict TLS cert verify for mysql/pg</td></tr>
+    <tr><td><code>DB_MAX_CONCURRENT_CONNECTS</code></td><td><code>10</code></td><td>Global semaphore cap</td></tr>
+    <tr><td><code>DB_MAX_PER_USER_CONNECTS</code></td><td><code>2</code></td><td>Per-user semaphore cap</td></tr>
+    <tr><td><code>CONNECTION_TTL_MS</code></td><td><code>1800000</code></td><td>Sliding TTL initial (30 min)</td></tr>
+    <tr><td><code>CONNECTION_MAX_SESSION_MS</code></td><td><code>7200000</code></td><td>Hard cap (2h)</td></tr>
+    <tr><td><code>CONNECTION_MAX_RECORDS</code></td><td><code>1000</code></td><td>Global record cap</td></tr>
+    <tr><td><code>SAVED_CONNECTIONS_PATH</code></td><td><code>/data/saved-connections.json</code></td><td>Vault file path</td></tr>
+    <tr><td><code>VAULT_MASTER_SECRET</code></td><td>—</td><td>≥32 bytes base64 (saved profiles)</td></tr>
+    <tr><td><code>BACKUP_BEFORE_DELETE</code></td><td><code>false</code></td><td>Write encrypted JSON before DELETE</td></tr>
+    <tr><td><code>BACKUP_DIR</code></td><td><code>/tmp/dbmanager-backups</code></td><td>Backup output dir</td></tr>
+    <tr><td><code>MAX_AFFECT_ROWS</code></td><td><code>100</code></td><td>UPDATE/DELETE row cap</td></tr>
+    <tr><td><code>MAX_EXPORT_ROWS</code></td><td><code>10000</code></td><td>Export row cap</td></tr>
+    <tr><td><code>HOST_PORT</code></td><td><code>13000</code></td><td>Host loopback port (docker-compose)</td></tr>
+  </tbody>
+</table>
+
+<h2 id="tests">14. Test suite (100 vitest cases)</h2>
+<p>Build gate: <code>npm run test</code> chạy trước <code>npm run build</code> trong Dockerfile builder stage.
+   Test fail → image không build → deploy abort.</p>
+<table>
+  <thead><tr><th>File</th><th>Cases</th><th>Coverage</th></tr></thead>
+  <tbody>
+    <tr><td><code>security/ssrfGuard.test.ts</code></td><td>22</td><td>IPv4/IPv6 classification, allowPrivate, AWS metadata</td></tr>
+    <tr><td><code>connections/mutate.test.ts</code></td><td>15</td><td>SQL build, identifier safety, cap, WHERE mandatory</td></tr>
+    <tr><td><code>schemas/connect.test.ts</code></td><td>10</td><td>Zod validation, shell metachars, oversized ciphertext</td></tr>
+    <tr><td><code>connections/store.test.ts</code></td><td>9</td><td>TTL, sliding cap, ownership, isolation</td></tr>
+    <tr><td><code>security/rateLimit.test.ts</code></td><td>9</td><td>Sliding window, reset, IP precedence</td></tr>
+    <tr><td><code>crypto/serverVault.test.ts</code></td><td>8</td><td>HKDF round-trip, isolation, tamper, missing master</td></tr>
+    <tr><td><code>connections/dbConnector.test.ts</code></td><td>7</td><td>quoteIdent / validateIdent injection</td></tr>
+    <tr><td><code>connections/exporters.test.ts</code></td><td>6</td><td>CSV escape, BigInt JSON, SQL safety</td></tr>
+    <tr><td><code>saved/store.test.ts</code></td><td>6</td><td>v2 round-trip, no plaintext on disk, isolation</td></tr>
+    <tr><td><code>security/confirmTokens.test.ts</code></td><td>5</td><td>Single-use, payload binding, malformed</td></tr>
+    <tr><td><code>security/auditLog.test.ts</code></td><td>3</td><td>JSON format, field whitelist, undefined drop</td></tr>
+    <tr><td><strong>TOTAL</strong></td><td><strong>100</strong></td><td>—</td></tr>
+  </tbody>
+</table>
+<p>Chạy local (cần Node ≥18.17): <code>cd SecureConnect &amp;&amp; npm test</code></p>
+
+<h2 id="dockerfile">15. Dockerfile</h2>
+<pre><code>FROM node:20-alpine AS deps      # cache npm install
+FROM node:20-alpine AS builder
+  RUN npm run test               # GATE — fail = no image
+  RUN npm run build              # next build (standalone)
+FROM node:20-alpine AS runner
+  USER nextjs (uid 1001)         # non-root
+  HEALTHCHECK CMD wget -q -O /dev/null --tries=1 http://127.0.0.1:3000/api/health
+  CMD ["node", "server.js"]</code></pre>
+<div class="warn">
+  <strong>Healthcheck gotcha:</strong>
+  ① Đừng dùng <code>--spider</code> (sends HEAD, Next.js returns 405 cho route chỉ export GET).
+  ② Đừng dùng <code>localhost</code> (busybox wget thử IPv6 [::1] trước → refused vì Next bind 0.0.0.0 IPv4).
+  Dùng <code>127.0.0.1</code> + full GET.
+</div>
+
+<h2 id="compose">16. docker-compose.yml</h2>
+<pre><code>services:
+  app:
+    container_name: dbmanager-app
+    ports: ["127.0.0.1:${HOST_PORT:-13000}:3000"]
+    env_file: ./SecureConnect/.env.production
+    volumes: [dbmanager_data:/data]
+    healthcheck: wget 127.0.0.1:3000/api/health
+    logging: json-file, max-size 10m, max-file 5
+    deploy.resources.limits: memory 512M, cpus 1.0
+volumes:
+  dbmanager_data:</code></pre>
+<p>Bind <code>127.0.0.1</code> → chỉ nginx-on-host reach được, không lộ ra public.</p>
+
+<h2 id="nginx">17. Nginx layout (shared box)</h2>
+<pre><code>/etc/nginx/sites-available/DBManager.allin1site.com.conf
+/etc/nginx/sites-enabled/zzz-DBManager.allin1site.com.conf  -&gt; ../sites-available/...
+                          ^^^^                              load LAST trong glob
+                          tránh trở thành implicit default cho HTTPS unmatched
+/etc/ssl/certs/dbmanager.pem      self-signed (CF Full SSL trust)
+/etc/ssl/private/dbmanager.key</code></pre>
+<p>Server config: redirect 80→443, proxy_pass <code>http://127.0.0.1:13000</code>,
+   include <code>cloudflare-realip.conf</code> snippet, security headers ở Next.js layer.</p>
+
+<h2 id="deploy">18. Deploy flow</h2>
+<h3>Local (deploy.ps1)</h3>
+<pre><code>cd E:\SourceCode\DatabaseManager
+.\deploy.ps1 -Message "feat: ..."
+
+# Steps:
+1. git rev-parse  (sanity)
+2. git add -A + commit (skip with -SkipCommit)
+3. git push origin main (skip with -SkipPush)
+4. ssh root@62.238.28.106 →
+   cd /opt/dbmanager
+   git fetch --all --prune
+   git reset --hard origin/main
+   docker compose up -d --build
+5. curl https://DBManager.allin1site.com/api/health (retry 6x5s)
+6. exit 0 / 1</code></pre>
+<p>Config: <code>deploy.config.json</code> (gitignored): <code>Server, User, Path, Branch, HealthUrl, SshKey</code>.</p>
+
+<h3>First-time server bootstrap</h3>
+<p>Đã thực hiện. Để reproduce trên server khác:</p>
+<pre><code>ssh root@&lt;server&gt;
+cd /opt
+git clone https://github.com/manhdauvn09-manhds/DatabaseManagerTool.git dbmanager
+cd dbmanager
+# Tạo .env.production với AUTH_GOOGLE_ID/SECRET, AUTH_SECRET, VAULT_MASTER_SECRET, AUTH_URL
+bash deploy/nginx/setup-nginx-site.sh   # nginx site + self-signed cert (zzz- prefix)
+docker compose up -d --build</code></pre>
+
+<h2 id="gotchas">19. Gotchas / pitfalls đã gặp</h2>
+<table>
+  <thead><tr><th>Symptom</th><th>Cause</th><th>Fix</th></tr></thead>
+  <tbody>
+    <tr>
+      <td>Build fail: <code>module is not defined</code></td>
+      <td><code>postcss.config.js</code> CommonJS với <code>package.json type=module</code></td>
+      <td>Đổi tên <code>.cjs</code></td>
+    </tr>
+    <tr>
+      <td>TS error: <code>Cannot find declaration for 'mssql'</code></td>
+      <td>mssql v10 types không auto-discovered với <code>moduleResolution: bundler</code></td>
+      <td><code>src/types/mssql.d.ts</code> shim</td>
+    </tr>
+    <tr>
+      <td><code>/api/health</code> trả timestamp đứng yên</td>
+      <td>Next.js full-route cache</td>
+      <td><code>export const dynamic = "force-dynamic"</code></td>
+    </tr>
+    <tr>
+      <td>"Bad origin" 403 khi user submit form</td>
+      <td>Origin comparison case-sensitive nhưng browser lowercase host</td>
+      <td><code>.toLowerCase()</code> 2 vế (RFC 3986)</td>
+    </tr>
+    <tr>
+      <td>Site khác trên cùng server bị hiện UI của DBM</td>
+      <td>nginx HTTPS fallback default = first 443 server block (alphabetical)</td>
+      <td>Prefix symlink <code>zzz-</code> → load LAST</td>
+    </tr>
+    <tr>
+      <td>521 từ Cloudflare</td>
+      <td>nginx inactive trên server</td>
+      <td><code>systemctl start nginx</code> + <code>systemctl enable nginx</code></td>
+    </tr>
+    <tr>
+      <td>Docker healthcheck unhealthy (cosmetic)</td>
+      <td>wget --spider sends HEAD → 405 từ Next.js GET-only route<br>
+          + wget resolve localhost → IPv6 [::1] → refused vì bind IPv4</td>
+      <td>wget GET + <code>127.0.0.1</code></td>
+    </tr>
+    <tr>
+      <td>SSH port 22 timeout từ local sau nhiều ops</td>
+      <td>fail2ban ban IP</td>
+      <td>Đợi ~10 phút, đổi mạng, hoặc Hetzner Console <code>fail2ban-client unban</code></td>
+    </tr>
+    <tr>
+      <td>Saved profile v1 cũ ignore</td>
+      <td>Đổi schema v1 (E2E passphrase) → v2 (server-encrypted)</td>
+      <td>Code tự ignore v1 + log warn, save mới ghi v2</td>
+    </tr>
+  </tbody>
+</table>
+
+<h2 id="claude-cheats">20. Cheat sheet — Claude future sessions</h2>
+<div class="card">
+  <strong>Trước khi sửa bất kỳ gì:</strong>
+  <ol>
+    <li>Đọc <code>~/.claude/projects/E--SourceCode-DatabaseManager/memory/project_security_baseline.md</code></li>
+    <li>Đọc <code>~/.claude/projects/E--SourceCode-DatabaseManager/memory/project_deploy_flow.md</code></li>
+    <li>Đọc file này (<code>docs/DEVELOPER_GUIDE.html</code>) — table API + table Env vars</li>
+  </ol>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <strong>Khi user nói "deploy"</strong>
+    <ol>
+      <li><code>.\deploy.ps1 -Message "..."</code></li>
+      <li>Verify <code>dbmanager-app</code> recreated, 9 container khác không đổi uptime</li>
+      <li>Check <code>/api/health</code> trả fresh timestamp</li>
+    </ol>
+  </div>
+  <div class="card">
+    <strong>Khi user nói "fix security X"</strong>
+    <ol>
+      <li>Sửa code + tests cho X</li>
+      <li>Update <code>SECURITY_FIXES.md</code></li>
+      <li>Commit + push (NOT deploy unless user OK)</li>
+      <li>Báo cáo done/not-done + side effects</li>
+    </ol>
+  </div>
+  <div class="card">
+    <strong>Khi build fail trên server</strong>
+    <ol>
+      <li>Check 3 gotchas: postcss.cjs, mssql.d.ts, force-dynamic</li>
+      <li>Check vitest output — 100 cases must pass</li>
+      <li>Run <code>docker compose build</code> local nếu Docker available</li>
+    </ol>
+  </div>
+  <div class="card">
+    <strong>Khi user khác domain bị "shadow"</strong>
+    <ol>
+      <li>Verify <code>ls /etc/nginx/sites-enabled/ | sort</code> — DBM có <code>zzz-</code> prefix?</li>
+      <li>Check nginx config target site có <code>listen 443</code> block không</li>
+    </ol>
+  </div>
+  <div class="card">
+    <strong>Khi user muốn thêm endpoint</strong>
+    <ol>
+      <li>Dùng <code>authorize()</code> hoặc <code>authorizeUser()</code> từ <code>db-api/route-helper</code></li>
+      <li>Set <code>runtime = "nodejs"</code> + <code>dynamic = "force-dynamic"</code></li>
+      <li>Audit log với action prefix phù hợp</li>
+      <li>Rate limit phù hợp</li>
+    </ol>
+  </div>
+  <div class="card">
+    <strong>Không bao giờ làm</strong>
+    <ul>
+      <li>Set <code>ALLOWED_EMAILS</code> hạn chế tool (multi-tenant)</li>
+      <li>Persist plaintext credential vào disk hoặc log</li>
+      <li>Reload nginx trên shared server (ảnh hưởng site khác)</li>
+      <li>Pool DB connection qua request</li>
+      <li>Skip Origin check ở mutation route</li>
+    </ul>
+  </div>
+</div>
+
+<h2 id="memory-links">21. Memory references (cho Claude)</h2>
+<table>
+  <thead><tr><th>File</th><th>Trigger</th></tr></thead>
+  <tbody>
+    <tr><td><code>feedback_response_style.md</code></td><td>Reply style: terse Vietnamese, ≤5 bullets, diff over rewrite</td></tr>
+    <tr><td><code>project_deploy_flow.md</code></td><td>Khi user nói deploy / update / release / sửa code</td></tr>
+    <tr><td><code>project_security_baseline.md</code></td><td>Khi user hỏi security / audit / thêm feature có touch credential</td></tr>
+  </tbody>
+</table>
+
+<hr>
+<p style="color:var(--muted); font-size:13px">
+  Last updated: 2026-05-13 (commit <code>cab72b5</code>).
+  Sau mỗi change lớn (story / security fix), update tài liệu này.
+</p>
+
+</main>
+</body>
+</html>
