@@ -36,6 +36,14 @@ function ExplorerInner() {
   const [sortCol, setSortCol] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
 
+  // Filter state (server-side WHERE). `applied` is what's sent; the draft row is the builder.
+  type FilterOp = "eq" | "ne" | "contains" | "gt" | "lt" | "gte" | "lte";
+  type Filter = { column: string; op: FilterOp; value: string };
+  const [filters, setFilters] = useState<Filter[]>([]);
+  const [draftCol, setDraftCol] = useState("");
+  const [draftOp, setDraftOp] = useState<FilterOp>("contains");
+  const [draftVal, setDraftVal] = useState("");
+
   // Row-detail modal (view full row, untruncated)
   const [detailRow, setDetailRow] = useState<Record<string, unknown> | null>(null);
 
@@ -143,10 +151,57 @@ function ExplorerInner() {
     setOffset(0);
     setSortCol(null);
     setSortDir("asc");
+    setFilters([]);
+    setDraftCol("");
+    setDraftOp("contains");
+    setDraftVal("");
     setColumns([]);
     setRowsData(null);
     setError(null);
   }, []);
+
+  const filtersQs = useMemo(
+    () => (filters.length > 0 ? `&filters=${encodeURIComponent(JSON.stringify(filters))}` : ""),
+    [filters]
+  );
+
+  function addFilter() {
+    if (!draftCol || draftVal === "") return;
+    setFilters((prev) => [...prev, { column: draftCol, op: draftOp, value: draftVal }]);
+    setDraftVal("");
+    setOffset(0);
+  }
+  function removeFilter(idx: number) {
+    setFilters((prev) => prev.filter((_, i) => i !== idx));
+    setOffset(0);
+  }
+
+  // Type-aware value input for Insert/Edit modals. `disabled` reflects the NULL toggle.
+  function renderValueInput(c: ColumnInfo, value: string, disabled: boolean, onChange: (v: string) => void) {
+    const k = inputKindFor(c.dataType);
+    const cls = "w-full rounded-xl border p-2 text-sm disabled:bg-zinc-100 disabled:text-zinc-400";
+    if (k.kind === "enum" || k.kind === "bool") {
+      return (
+        <select className={cls} value={value} disabled={disabled} onChange={(e) => onChange(e.target.value)}>
+          <option value="">{k.kind === "bool" ? "— choose —" : (c.default ?? "— choose —")}</option>
+          {k.options.map((o) => <option key={o} value={o}>{o}</option>)}
+        </select>
+      );
+    }
+    return (
+      <input
+        type={k.kind === "number" ? "number" : "text"}
+        className={cls}
+        placeholder={c.default ?? c.dataType}
+        value={value}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.value)}
+        autoComplete="off"
+        spellCheck={false}
+        maxLength={4096}
+      />
+    );
+  }
 
   // Toggle sort on a column: asc → desc → off.
   function toggleSort(col: string) {
@@ -166,7 +221,7 @@ function ExplorerInner() {
         const sortQs = sortCol ? `&sort=${encodeURIComponent(sortCol)}&dir=${sortDir}` : "";
         const [cRes, rRes] = await Promise.all([
           apiGet<{ columns: ColumnInfo[] }>(`/api/db/${cid}/columns?database=${encodeURIComponent(selectedDb)}&table=${encodeURIComponent(selectedTable)}`),
-          apiGet<RowsResp>(`/api/db/${cid}/rows?database=${encodeURIComponent(selectedDb)}&table=${encodeURIComponent(selectedTable)}&limit=${limit}&offset=${offset}${sortQs}`)
+          apiGet<RowsResp>(`/api/db/${cid}/rows?database=${encodeURIComponent(selectedDb)}&table=${encodeURIComponent(selectedTable)}&limit=${limit}&offset=${offset}${sortQs}${filtersQs}`)
         ]);
         if (cancelled) return;
         setColumns(cRes.columns);
@@ -178,7 +233,7 @@ function ExplorerInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedDb, selectedTable, offset, limit, sortCol, sortDir, apiGet, cid, refreshSeq]);
+  }, [selectedDb, selectedTable, offset, limit, sortCol, sortDir, filtersQs, apiGet, cid, refreshSeq]);
 
   function openInsertModal() {
     const init: Record<string, string> = {};
@@ -507,7 +562,7 @@ function ExplorerInner() {
                           <a
                             key={fmt}
                             href={selectedDb && selectedTable
-                              ? `/api/db/${cid}/export?database=${encodeURIComponent(selectedDb)}&table=${encodeURIComponent(selectedTable)}&format=${fmt}&limit=10000`
+                              ? `/api/db/${cid}/export?database=${encodeURIComponent(selectedDb)}&table=${encodeURIComponent(selectedTable)}&format=${fmt}&limit=10000${sortCol ? `&sort=${encodeURIComponent(sortCol)}&dir=${sortDir}` : ""}${filtersQs}`
                               : "#"}
                             className="px-2 py-1 hover:bg-zinc-100 uppercase border-r last:border-r-0"
                           >
@@ -535,6 +590,45 @@ function ExplorerInner() {
               </div>
 
               {error && <div className="m-4 text-sm text-red-600 border border-red-200 bg-red-50 rounded-xl p-3">{error}</div>}
+
+              {view === "data" && columns.length > 0 && (
+                <div className="border-b bg-zinc-50 px-4 py-2 flex items-center gap-2 flex-wrap text-sm">
+                  <span className="text-xs uppercase text-zinc-500">Filter</span>
+                  <select className="rounded-lg border p-1 text-xs" value={draftCol} onChange={(e) => setDraftCol(e.target.value)}>
+                    <option value="">— column —</option>
+                    {columns.map((c) => <option key={c.name} value={c.name}>{c.name}</option>)}
+                  </select>
+                  <select className="rounded-lg border p-1 text-xs" value={draftOp} onChange={(e) => setDraftOp(e.target.value as FilterOp)}>
+                    <option value="contains">contains</option>
+                    <option value="eq">=</option>
+                    <option value="ne">≠</option>
+                    <option value="gt">&gt;</option>
+                    <option value="lt">&lt;</option>
+                    <option value="gte">≥</option>
+                    <option value="lte">≤</option>
+                  </select>
+                  <input
+                    className="rounded-lg border p-1 text-xs"
+                    placeholder="value"
+                    value={draftVal}
+                    onChange={(e) => setDraftVal(e.target.value)}
+                    onKeyDown={(e) => { if (e.key === "Enter") addFilter(); }}
+                    maxLength={1024}
+                  />
+                  <button onClick={addFilter} disabled={!draftCol || draftVal === ""} className="rounded-lg border px-2 py-1 text-xs bg-white hover:bg-zinc-100 disabled:opacity-40">
+                    + Add
+                  </button>
+                  {filters.map((f, i) => (
+                    <span key={i} className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 text-blue-800 px-2 py-0.5 text-xs">
+                      {f.column} {f.op === "contains" ? "⊃" : f.op === "ne" ? "≠" : f.op === "eq" ? "=" : f.op === "gt" ? ">" : f.op === "lt" ? "<" : f.op === "gte" ? "≥" : "≤"} {f.value}
+                      <button onClick={() => removeFilter(i)} className="text-blue-500 hover:text-blue-900">×</button>
+                    </span>
+                  ))}
+                  {filters.length > 0 && (
+                    <button onClick={() => { setFilters([]); setOffset(0); }} className="text-xs text-zinc-500 underline">clear all</button>
+                  )}
+                </div>
+              )}
 
               <div className="flex-1 overflow-auto">
                 {view === "columns" && (
@@ -715,16 +809,7 @@ function ExplorerInner() {
                       <div className="text-xs text-zinc-500">{c.dataType}{c.nullable ? "" : " · NOT NULL"}</div>
                     </label>
                     <div className="col-span-7">
-                      <input
-                        type="text"
-                        className="w-full rounded-xl border p-2 text-sm disabled:bg-zinc-100 disabled:text-zinc-400"
-                        value={editValues[c.name] ?? ""}
-                        disabled={!!editNulls[c.name]}
-                        onChange={(e) => setEditValues((v) => ({ ...v, [c.name]: e.target.value }))}
-                        autoComplete="off"
-                        spellCheck={false}
-                        maxLength={4096}
-                      />
+                      {renderValueInput(c, editValues[c.name] ?? "", !!editNulls[c.name], (v) => setEditValues((prev) => ({ ...prev, [c.name]: v })))}
                     </div>
                     <label className="col-span-1 text-xs flex items-center gap-1">
                       <input
@@ -889,17 +974,7 @@ function ExplorerInner() {
                     <div className="text-xs text-zinc-500">{c.dataType}{c.nullable ? "" : " · NOT NULL"}</div>
                   </label>
                   <div className="col-span-7">
-                    <input
-                      type="text"
-                      className="w-full rounded-xl border p-2 text-sm disabled:bg-zinc-100 disabled:text-zinc-400"
-                      placeholder={c.default ?? ""}
-                      value={insertValues[c.name] ?? ""}
-                      disabled={!!insertNulls[c.name]}
-                      onChange={(e) => setInsertValues((v) => ({ ...v, [c.name]: e.target.value }))}
-                      autoComplete="off"
-                      spellCheck={false}
-                      maxLength={4096}
-                    />
+                    {renderValueInput(c, insertValues[c.name] ?? "", !!insertNulls[c.name], (v) => setInsertValues((prev) => ({ ...prev, [c.name]: v })))}
                   </div>
                   <label className="col-span-1 text-xs flex items-center gap-1" title={c.nullable ? "Set NULL" : "Column is NOT NULL"}>
                     <input
@@ -943,6 +1018,34 @@ function formatCell(v: unknown): string {
   if (v === null || v === undefined) return "NULL";
   if (typeof v === "object") return JSON.stringify(v);
   return String(v);
+}
+
+type InputKind =
+  | { kind: "text" }
+  | { kind: "number" }
+  | { kind: "enum"; options: string[] }
+  | { kind: "bool"; options: string[] };
+
+// Map a SQL column data type → an appropriate HTML input strategy.
+// Conservative: only specialize cases that don't risk changing the submitted
+// string format (number spinner, enum/bool dropdown with DB-native values).
+// Dates stay as text (with the type as hint) to avoid driver format mismatches.
+function inputKindFor(dataType: string): InputKind {
+  const t = (dataType || "").toLowerCase().trim();
+  const enumMatch = t.match(/^enum\s*\((.*)\)$/);
+  if (enumMatch) {
+    const options = enumMatch[1]
+      .split(",")
+      .map((s) => s.trim().replace(/^'(.*)'$/, "$1"));
+    return { kind: "enum", options };
+  }
+  if (t === "tinyint(1)" || /^bit(\(1\))?$/.test(t)) return { kind: "bool", options: ["1", "0"] };
+  if (/^bool(ean)?$/.test(t)) return { kind: "bool", options: ["true", "false"] };
+  // numeric families — exclude geometry "point" etc.
+  if (/(int|decimal|numeric|float|double|real|^number)/.test(t) && !/(point|polygon|line)/.test(t)) {
+    return { kind: "number" };
+  }
+  return { kind: "text" };
 }
 
 export default function ExplorerPage() {

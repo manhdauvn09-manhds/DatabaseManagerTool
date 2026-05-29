@@ -143,6 +143,11 @@ export async function listColumns(
 
 export type OrderBy = { column: string; dir: "asc" | "desc" };
 
+export type FilterOp = "eq" | "ne" | "contains" | "gt" | "lt" | "gte" | "lte";
+export type Filter = { column: string; op: FilterOp; value: string };
+export const FILTER_OPS: FilterOp[] = ["eq", "ne", "contains", "gt", "lt", "gte", "lte"];
+const MAX_FILTERS = 10;
+
 // Build an `ORDER BY col ASC|DESC` clause from a validated OrderBy, or "" if none.
 // The column identifier is whitelisted + driver-quoted; dir is enum-checked.
 function orderClause(orderBy: OrderBy | undefined, driver: DriverType): string {
@@ -152,6 +157,38 @@ function orderClause(orderBy: OrderBy | undefined, driver: DriverType): string {
   return `ORDER BY ${quoteIdent(orderBy.column, driver)} ${dir}`;
 }
 
+const OP_SQL: Record<Exclude<FilterOp, "contains">, string> = {
+  eq: "=", ne: "<>", gt: ">", lt: "<", gte: ">=", lte: "<="
+};
+
+/**
+ * Build a parametrized WHERE from a list of filters (ANDed). Columns are whitelisted
+ * + driver-quoted; values are always parameters. `contains` → LIKE %value%.
+ * Returns { sql: "WHERE ...", params } or { sql: "", params: [] } when empty.
+ */
+export function buildFilterWhere(
+  filters: Filter[] | undefined,
+  driver: DriverType
+): { sql: string; params: unknown[] } {
+  if (!filters || filters.length === 0) return { sql: "", params: [] };
+  if (filters.length > MAX_FILTERS) throw new Error(`Too many filters (max ${MAX_FILTERS})`);
+  const parts: string[] = [];
+  const params: unknown[] = [];
+  for (const f of filters) {
+    validateIdent(f.column, "filter column");
+    if (!FILTER_OPS.includes(f.op)) throw new Error(`Invalid filter op: ${f.op}`);
+    const col = quoteIdent(f.column, driver);
+    if (f.op === "contains") {
+      parts.push(`${col} LIKE ?`);
+      params.push(`%${f.value}%`);
+    } else {
+      parts.push(`${col} ${OP_SQL[f.op]} ?`);
+      params.push(f.value);
+    }
+  }
+  return { sql: `WHERE ${parts.join(" AND ")}`, params };
+}
+
 export async function listRows(
   q: QueryFn,
   driver: DriverType,
@@ -159,7 +196,8 @@ export async function listRows(
   table: string,
   limit: number,
   offset: number,
-  orderBy?: OrderBy
+  orderBy?: OrderBy,
+  filters?: Filter[]
 ): Promise<{ columns: string[]; rows: Record<string, unknown>[]; total: number }> {
   validateIdent(database, "database");
   validateIdent(table, "table");
@@ -167,29 +205,26 @@ export async function listRows(
   const lim = Math.max(1, Math.min(1000, Math.floor(limit)));
   const off = Math.max(0, Math.floor(offset));
   const order = orderClause(orderBy, driver);
+  const where = buildFilterWhere(filters, driver);
+  // All placeholders use `?` — the pg/mssql query wrappers translate to $N/@pN.
+  const fq = `${quoteIdent(database, driver)}.${quoteIdent(table, driver)}`;
 
-  if (driver === "mysql") {
-    const fq = `${quoteIdent(database, "mysql")}.${quoteIdent(table, "mysql")}`;
-    const totalRes = await q(`SELECT COUNT(*) AS total FROM ${fq}`);
-    const total = Number((totalRes.rows[0] as { total: number | string }).total ?? 0);
-    const data = await q(`SELECT * FROM ${fq} ${order} LIMIT ? OFFSET ?`, [lim, off]);
-    return { columns: data.columns, rows: data.rows, total };
-  }
-  if (driver === "postgresql") {
-    const fq = `${quoteIdent(database, "postgresql")}.${quoteIdent(table, "postgresql")}`;
-    const totalRes = await q(`SELECT COUNT(*) AS total FROM ${fq}`);
-    const total = Number((totalRes.rows[0] as { total: number | string }).total ?? 0);
-    const data = await q(`SELECT * FROM ${fq} ${order} LIMIT $1 OFFSET $2`, [lim, off]);
-    return { columns: data.columns, rows: data.rows, total };
-  }
-  // mssql: OFFSET/FETCH requires ORDER BY — use the requested order, else stable fallback.
-  const fq = `${quoteIdent(database, "mssql")}.${quoteIdent(table, "mssql")}`;
-  const totalRes = await q(`SELECT COUNT(*) AS total FROM ${fq}`);
+  const totalRes = await q(`SELECT COUNT(*) AS total FROM ${fq} ${where.sql}`, where.params);
   const total = Number((totalRes.rows[0] as { total: number | string }).total ?? 0);
-  const mssqlOrder = order || "ORDER BY (SELECT NULL)";
-  const data = await q(
-    `SELECT * FROM ${fq} ${mssqlOrder} OFFSET ? ROWS FETCH NEXT ? ROWS ONLY`,
-    [off, lim]
-  );
+
+  let data;
+  if (driver === "mssql") {
+    // OFFSET/FETCH requires ORDER BY — use requested order, else stable fallback.
+    const mssqlOrder = order || "ORDER BY (SELECT NULL)";
+    data = await q(
+      `SELECT * FROM ${fq} ${where.sql} ${mssqlOrder} OFFSET ? ROWS FETCH NEXT ? ROWS ONLY`,
+      [...where.params, off, lim]
+    );
+  } else {
+    data = await q(
+      `SELECT * FROM ${fq} ${where.sql} ${order} LIMIT ? OFFSET ?`,
+      [...where.params, lim, off]
+    );
+  }
   return { columns: data.columns, rows: data.rows, total };
 }

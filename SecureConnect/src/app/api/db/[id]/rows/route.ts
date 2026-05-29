@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { authorize, jerr, logInternal } from "@/lib/db-api/route-helper";
 import { withConnection } from "@/lib/connections/dbConnector";
-import { listRows, type OrderBy } from "@/lib/connections/introspection";
+import { listRows, type OrderBy, type Filter } from "@/lib/connections/introspection";
+import { parseFiltersParam } from "@/lib/db-api/parseFilters";
 import { insertRow, executeUpdate, executeDelete, type RowMap } from "@/lib/connections/mutate";
 import { consumeToken } from "@/lib/security/confirmTokens";
 import { audit } from "@/lib/security/auditLog";
@@ -31,9 +32,16 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   const sortCol = url.searchParams.get("sort");
   const sortDir = url.searchParams.get("dir") === "desc" ? "desc" : "asc";
   const orderBy: OrderBy | undefined = sortCol ? { column: sortCol, dir: sortDir } : undefined;
+  // Optional filters (URL-encoded JSON array). Bad shape → 400.
+  let filters: Filter[];
+  try {
+    filters = parseFiltersParam(url.searchParams.get("filters"));
+  } catch (e) {
+    return jerr("BAD_REQUEST", e instanceof Error ? e.message : "Invalid filters", 400);
+  }
   const t0 = Date.now();
   try {
-    const data = await withConnection(ctx.rec, async (q, c) => listRows(q, c.driver, database, table, limit, offset, orderBy));
+    const data = await withConnection(ctx.rec, async (q, c) => listRows(q, c.driver, database, table, limit, offset, orderBy, filters));
     audit({ action: "db.rows", email: ctx.email, ip: ctx.ip, host: ctx.rec.host, port: ctx.rec.port, dbType: ctx.rec.dbType, ok: true, ms: Date.now() - t0 });
     return new NextResponse(
       JSON.stringify({ columns: data.columns, rows: data.rows, total: data.total, limit, offset }, replacer),

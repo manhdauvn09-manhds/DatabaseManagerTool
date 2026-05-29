@@ -1,7 +1,8 @@
 import { NextResponse } from "next/server";
 import { authorize, jerr, logInternal } from "@/lib/db-api/route-helper";
 import { withConnection } from "@/lib/connections/dbConnector";
-import { listRows } from "@/lib/connections/introspection";
+import { listRows, type OrderBy, type Filter } from "@/lib/connections/introspection";
+import { parseFiltersParam } from "@/lib/db-api/parseFilters";
 import { toCsv, toJson, toSqlInserts, contentType, fileExtension, type ExportFormat } from "@/lib/connections/exporters";
 import { audit } from "@/lib/security/auditLog";
 
@@ -28,9 +29,20 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   if (!Number.isFinite(requested) || requested <= 0) return jerr("BAD_REQUEST", "Invalid limit", 400);
   const limit = Math.min(requested, MAX_EXPORT_ROWS);
 
+  // Match the on-screen view: same optional sort + filters.
+  const sortCol = url.searchParams.get("sort");
+  const sortDir = url.searchParams.get("dir") === "desc" ? "desc" : "asc";
+  const orderBy: OrderBy | undefined = sortCol ? { column: sortCol, dir: sortDir } : undefined;
+  let filters: Filter[];
+  try {
+    filters = parseFiltersParam(url.searchParams.get("filters"));
+  } catch (e) {
+    return jerr("BAD_REQUEST", e instanceof Error ? e.message : "Invalid filters", 400);
+  }
+
   const t0 = Date.now();
   try {
-    const data = await withConnection(ctx.rec, async (q, c) => listRows(q, c.driver, database, table, limit, offset));
+    const data = await withConnection(ctx.rec, async (q, c) => listRows(q, c.driver, database, table, limit, offset, orderBy, filters));
     let body: string;
     if (format === "csv") body = toCsv(data.columns, data.rows);
     else if (format === "json") body = toJson(data.rows);
