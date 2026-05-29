@@ -32,6 +32,13 @@ function ExplorerInner() {
   const [limit] = useState(50);
   const [offset, setOffset] = useState(0);
 
+  // Sort state (server-side ORDER BY)
+  const [sortCol, setSortCol] = useState<string | null>(null);
+  const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
+
+  // Row-detail modal (view full row, untruncated)
+  const [detailRow, setDetailRow] = useState<Record<string, unknown> | null>(null);
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -134,21 +141,32 @@ function ExplorerInner() {
     setSelectedDb(db);
     setSelectedTable(table);
     setOffset(0);
+    setSortCol(null);
+    setSortDir("asc");
     setColumns([]);
     setRowsData(null);
     setError(null);
   }, []);
 
-  // Load columns + rows when selection changes or pagination changes.
+  // Toggle sort on a column: asc → desc → off.
+  function toggleSort(col: string) {
+    setOffset(0);
+    if (sortCol !== col) { setSortCol(col); setSortDir("asc"); return; }
+    if (sortDir === "asc") { setSortDir("desc"); return; }
+    setSortCol(null); setSortDir("asc");
+  }
+
+  // Load columns + rows when selection / pagination / sort changes.
   useEffect(() => {
     if (!selectedDb || !selectedTable) return;
     let cancelled = false;
     (async () => {
       setLoading(true);
       try {
+        const sortQs = sortCol ? `&sort=${encodeURIComponent(sortCol)}&dir=${sortDir}` : "";
         const [cRes, rRes] = await Promise.all([
           apiGet<{ columns: ColumnInfo[] }>(`/api/db/${cid}/columns?database=${encodeURIComponent(selectedDb)}&table=${encodeURIComponent(selectedTable)}`),
-          apiGet<RowsResp>(`/api/db/${cid}/rows?database=${encodeURIComponent(selectedDb)}&table=${encodeURIComponent(selectedTable)}&limit=${limit}&offset=${offset}`)
+          apiGet<RowsResp>(`/api/db/${cid}/rows?database=${encodeURIComponent(selectedDb)}&table=${encodeURIComponent(selectedTable)}&limit=${limit}&offset=${offset}${sortQs}`)
         ]);
         if (cancelled) return;
         setColumns(cRes.columns);
@@ -160,7 +178,7 @@ function ExplorerInner() {
       }
     })();
     return () => { cancelled = true; };
-  }, [selectedDb, selectedTable, offset, limit, apiGet, cid, refreshSeq]);
+  }, [selectedDb, selectedTable, offset, limit, sortCol, sortDir, apiGet, cid, refreshSeq]);
 
   function openInsertModal() {
     const init: Record<string, string> = {};
@@ -551,9 +569,17 @@ function ExplorerInner() {
                   <table className="w-full text-sm border-separate border-spacing-0">
                     <thead className="sticky top-0 bg-zinc-100 text-left">
                       <tr>
-                        <th className="px-2 py-2 border-b w-20">Actions</th>
+                        <th className="px-2 py-2 border-b w-24">Actions</th>
                         {rowsData.columns.map((c) => (
-                          <th key={c} className="px-3 py-2 border-b whitespace-nowrap">{c}</th>
+                          <th
+                            key={c}
+                            className="px-3 py-2 border-b whitespace-nowrap cursor-pointer select-none hover:bg-zinc-200"
+                            onClick={() => toggleSort(c)}
+                            title="Click để sắp xếp (asc → desc → off)"
+                          >
+                            {c}
+                            {sortCol === c && <span className="ml-1 text-zinc-500">{sortDir === "asc" ? "▲" : "▼"}</span>}
+                          </th>
                         ))}
                       </tr>
                     </thead>
@@ -561,6 +587,13 @@ function ExplorerInner() {
                       {rowsData.rows.map((r, i) => (
                         <tr key={i} className="hover:bg-zinc-50">
                           <td className="px-2 py-1 border-b whitespace-nowrap">
+                            <button
+                              onClick={() => setDetailRow(r)}
+                              className="text-xs px-2 py-0.5 rounded border border-zinc-300 bg-white hover:bg-blue-50 hover:border-blue-400 mr-1"
+                              title="View full row"
+                            >
+                              👁
+                            </button>
                             <button
                               onClick={() => openEditModal(r)}
                               className="text-xs px-2 py-0.5 rounded border border-zinc-300 bg-white hover:bg-amber-50 hover:border-amber-400 mr-1"
@@ -577,7 +610,12 @@ function ExplorerInner() {
                             </button>
                           </td>
                           {rowsData.columns.map((c) => (
-                            <td key={c} className="px-3 py-1 border-b align-top max-w-[420px] overflow-hidden text-ellipsis whitespace-nowrap" title={formatCell(r[c])}>
+                            <td
+                              key={c}
+                              className="px-3 py-1 border-b align-top max-w-[420px] overflow-hidden text-ellipsis whitespace-nowrap cursor-pointer"
+                              title={formatCell(r[c])}
+                              onClick={() => setDetailRow(r)}
+                            >
                               {formatCell(r[c])}
                             </td>
                           ))}
@@ -611,6 +649,52 @@ function ExplorerInner() {
           )}
         </section>
       </div>
+
+      {/* Row-detail modal — view full untruncated row */}
+      {detailRow && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4" onClick={() => setDetailRow(null)}>
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col" onClick={(e) => e.stopPropagation()}>
+            <header className="px-5 py-3 border-b flex items-center justify-between">
+              <div>
+                <div className="text-xs text-zinc-500">{selectedDb} · {selectedTable}</div>
+                <h2 className="text-base font-semibold">Row detail</h2>
+              </div>
+              <button onClick={() => setDetailRow(null)} className="text-sm px-3 py-1 rounded-xl border bg-white hover:bg-zinc-50">Close</button>
+            </header>
+            <div className="flex-1 overflow-auto px-5 py-3">
+              <table className="w-full text-sm border-separate border-spacing-0">
+                <tbody>
+                  {Object.entries(detailRow).map(([k, v]) => (
+                    <tr key={k} className="align-top">
+                      <td className="px-2 py-1.5 border-b font-medium text-zinc-700 whitespace-nowrap w-1/3">{k}</td>
+                      <td className="px-2 py-1.5 border-b">
+                        <div className="flex items-start justify-between gap-2">
+                          <span className="break-all whitespace-pre-wrap font-mono text-xs">{formatCell(v)}</span>
+                          <button
+                            onClick={() => { try { navigator.clipboard?.writeText(formatCell(v)); } catch { /* ignore */ } }}
+                            className="shrink-0 text-xs px-1.5 py-0.5 rounded border border-zinc-200 hover:bg-zinc-50"
+                            title="Copy value"
+                          >
+                            ⧉
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            <footer className="px-5 py-3 border-t flex items-center justify-end gap-2">
+              <button
+                onClick={() => { const r = detailRow; setDetailRow(null); if (r) openEditModal(r); }}
+                className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-amber-50 hover:border-amber-400"
+              >
+                ✏️ Edit this row
+              </button>
+            </footer>
+          </div>
+        </div>
+      )}
 
       {/* Edit modal — 2 stages: form → confirm */}
       {editOpen && selectedTable && (

@@ -141,40 +141,54 @@ export async function listColumns(
 
 // ---------- rows (paginated) ----------
 
+export type OrderBy = { column: string; dir: "asc" | "desc" };
+
+// Build an `ORDER BY col ASC|DESC` clause from a validated OrderBy, or "" if none.
+// The column identifier is whitelisted + driver-quoted; dir is enum-checked.
+function orderClause(orderBy: OrderBy | undefined, driver: DriverType): string {
+  if (!orderBy) return "";
+  validateIdent(orderBy.column, "sort column");
+  const dir = orderBy.dir === "desc" ? "DESC" : "ASC";
+  return `ORDER BY ${quoteIdent(orderBy.column, driver)} ${dir}`;
+}
+
 export async function listRows(
   q: QueryFn,
   driver: DriverType,
   database: string,
   table: string,
   limit: number,
-  offset: number
+  offset: number,
+  orderBy?: OrderBy
 ): Promise<{ columns: string[]; rows: Record<string, unknown>[]; total: number }> {
   validateIdent(database, "database");
   validateIdent(table, "table");
 
   const lim = Math.max(1, Math.min(1000, Math.floor(limit)));
   const off = Math.max(0, Math.floor(offset));
+  const order = orderClause(orderBy, driver);
 
   if (driver === "mysql") {
     const fq = `${quoteIdent(database, "mysql")}.${quoteIdent(table, "mysql")}`;
     const totalRes = await q(`SELECT COUNT(*) AS total FROM ${fq}`);
     const total = Number((totalRes.rows[0] as { total: number | string }).total ?? 0);
-    const data = await q(`SELECT * FROM ${fq} LIMIT ? OFFSET ?`, [lim, off]);
+    const data = await q(`SELECT * FROM ${fq} ${order} LIMIT ? OFFSET ?`, [lim, off]);
     return { columns: data.columns, rows: data.rows, total };
   }
   if (driver === "postgresql") {
     const fq = `${quoteIdent(database, "postgresql")}.${quoteIdent(table, "postgresql")}`;
     const totalRes = await q(`SELECT COUNT(*) AS total FROM ${fq}`);
     const total = Number((totalRes.rows[0] as { total: number | string }).total ?? 0);
-    const data = await q(`SELECT * FROM ${fq} LIMIT $1 OFFSET $2`, [lim, off]);
+    const data = await q(`SELECT * FROM ${fq} ${order} LIMIT $1 OFFSET $2`, [lim, off]);
     return { columns: data.columns, rows: data.rows, total };
   }
-  // mssql: schema.table; pagination via OFFSET/FETCH (requires ORDER BY)
+  // mssql: OFFSET/FETCH requires ORDER BY — use the requested order, else stable fallback.
   const fq = `${quoteIdent(database, "mssql")}.${quoteIdent(table, "mssql")}`;
   const totalRes = await q(`SELECT COUNT(*) AS total FROM ${fq}`);
   const total = Number((totalRes.rows[0] as { total: number | string }).total ?? 0);
+  const mssqlOrder = order || "ORDER BY (SELECT NULL)";
   const data = await q(
-    `SELECT * FROM ${fq} ORDER BY (SELECT NULL) OFFSET ? ROWS FETCH NEXT ? ROWS ONLY`,
+    `SELECT * FROM ${fq} ${mssqlOrder} OFFSET ? ROWS FETCH NEXT ? ROWS ONLY`,
     [off, lim]
   );
   return { columns: data.columns, rows: data.rows, total };
