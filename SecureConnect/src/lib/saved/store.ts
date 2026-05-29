@@ -113,7 +113,7 @@ export async function loadProfile(email: string, id: string): Promise<{ meta: Pr
     const store = await readStore();
     const p = store.users[userKey(email)]?.profiles.find((x) => x.id === id);
     if (!p) return null;
-    const plaintext = decryptForUser(email, { salt: p.salt, iv: p.iv, ciphertext: p.ciphertext });
+    const plaintext = decryptForUser(email, { salt: p.salt, iv: p.iv, ciphertext: p.ciphertext, v: p.v });
     return {
       meta: { id: p.id, name: p.name, createdAt: p.createdAt, updatedAt: p.updatedAt },
       plaintext

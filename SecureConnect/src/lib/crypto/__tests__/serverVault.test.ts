@@ -4,14 +4,19 @@ import { encryptForUser, decryptForUser, isVaultConfigured, _resetMasterKeyCache
 const MASTER_OK = Buffer.alloc(32, 7).toString("base64");
 
 let original: string | undefined;
+let originalOld: string | undefined;
 beforeEach(() => {
   original = process.env.VAULT_MASTER_SECRET;
+  originalOld = process.env.VAULT_MASTER_SECRET_OLD;
   process.env.VAULT_MASTER_SECRET = MASTER_OK;
+  delete process.env.VAULT_MASTER_SECRET_OLD;
   _resetMasterKeyCache();
 });
 afterEach(() => {
   if (original === undefined) delete process.env.VAULT_MASTER_SECRET;
   else process.env.VAULT_MASTER_SECRET = original;
+  if (originalOld === undefined) delete process.env.VAULT_MASTER_SECRET_OLD;
+  else process.env.VAULT_MASTER_SECRET_OLD = originalOld;
   _resetMasterKeyCache();
 });
 
@@ -63,5 +68,40 @@ describe("serverVault", () => {
     const blob = encryptForUser("a@x.com", "x");
     const tampered = { ...blob, ciphertext: Buffer.from(blob.ciphertext, "base64").reverse().toString("base64") };
     expect(() => decryptForUser("a@x.com", tampered)).toThrow();
+  });
+
+  test("blob carries key fingerprint v", () => {
+    const blob = encryptForUser("a@x.com", "x");
+    expect(blob.v).toMatch(/^[0-9a-f]{8}$/);
+  });
+
+  test("key rotation: old-key data still decrypts via VAULT_MASTER_SECRET_OLD", () => {
+    // Encrypt with key A.
+    const KEY_A = MASTER_OK;
+    process.env.VAULT_MASTER_SECRET = KEY_A;
+    _resetMasterKeyCache();
+    const blob = encryptForUser("u@x.com", "old-secret");
+
+    // Rotate: new primary B, old A as fallback.
+    const KEY_B = Buffer.alloc(32, 0xbb).toString("base64");
+    process.env.VAULT_MASTER_SECRET = KEY_B;
+    process.env.VAULT_MASTER_SECRET_OLD = KEY_A;
+    _resetMasterKeyCache();
+
+    // Old blob still decrypts (via OLD); new encryption uses B.
+    expect(decryptForUser("u@x.com", blob)).toBe("old-secret");
+    const fresh = encryptForUser("u@x.com", "new-secret");
+    expect(fresh.v).not.toBe(blob.v);
+    expect(decryptForUser("u@x.com", fresh)).toBe("new-secret");
+  });
+
+  test("after rotation without OLD, old data is unreadable", () => {
+    process.env.VAULT_MASTER_SECRET = MASTER_OK;
+    _resetMasterKeyCache();
+    const blob = encryptForUser("u@x.com", "secret");
+    process.env.VAULT_MASTER_SECRET = Buffer.alloc(32, 0xcc).toString("base64");
+    delete process.env.VAULT_MASTER_SECRET_OLD;
+    _resetMasterKeyCache();
+    expect(() => decryptForUser("u@x.com", blob)).toThrow();
   });
 });
