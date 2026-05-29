@@ -49,7 +49,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       ? { action, connectionId: params.id, database, table, where, set }
       : { action, connectionId: params.id, database, table, where };
 
-    const token = issueToken(payload);
+    const token = await issueToken(payload);
 
     audit({
       action: "db.rows.preview",

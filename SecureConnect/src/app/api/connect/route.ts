@@ -44,7 +44,7 @@ export async function POST(req: Request) {
   const email = session.user.email ?? "unknown";
 
   // Per-user rate limit: 10 attempts / minute.
-  const rl = rateLimit(`connect:${email}`, 10, 60_000);
+  const rl = await rateLimit(`connect:${email}`, 10, 60_000);
   if (!rl.ok) {
     audit({ action: "connect", email, ip, ok: false, errCode: "RATE_LIMIT", ms: Date.now() - t0 });
     return jsonError("RATE_LIMIT", "Too many requests", 429, { "Retry-After": String(rl.retryAfter) });
@@ -63,7 +63,7 @@ export async function POST(req: Request) {
     return jsonError("BAD_REQUEST", "Invalid JSON", 400);
   }
 
-  cleanupExpired();
+  await cleanupExpired();
 
   const parsed = ConnectRequestSchema.safeParse(body);
   if (!parsed.success) {
@@ -124,7 +124,7 @@ export async function POST(req: Request) {
     return jsonError("CONNECT_FAIL", "Unable to connect to database", 400);
   }
 
-  const rec = createConnectionRecord({
+  const rec = await createConnectionRecord({
     ownerEmail: email,
     dbType: result.dbType,
     host,

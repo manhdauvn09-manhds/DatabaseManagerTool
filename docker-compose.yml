@@ -28,6 +28,13 @@ services:
       - "127.0.0.1:${HOST_PORT:-13000}:3000"
     env_file:
       - ./SecureConnect/.env.production
+    environment:
+      # Shared state backend (rate-limit, confirm-tokens, encrypted connection
+      # records). Lets the app survive restarts + scale horizontally.
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      redis:
+        condition: service_healthy
     volumes:
       - dbmanager_data:/data
     healthcheck:
@@ -63,10 +70,35 @@ services:
     #   - default
     #   - proxy
 
+  # Shared-state store. Not published to host (internal compose network only).
+  redis:
+    image: redis:7-alpine
+    container_name: dbmanager-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "128mb", "--maxmemory-policy", "volatile-ttl"]
+    volumes:
+      - dbmanager_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    deploy:
+      resources:
+        limits:
+          memory: 192M
+
 volumes:
   dbmanager_data:
     # Persists encrypted saved-connection profiles under /data/saved-connections.json
     # (file owned by container's `nextjs` user, mode 600).
+  dbmanager_redis:
+    # Redis AOF — encrypted connection records + tokens survive redis restart.
 
 # networks:
 #   proxy:

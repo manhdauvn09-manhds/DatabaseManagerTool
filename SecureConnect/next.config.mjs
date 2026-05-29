@@ -37,7 +37,7 @@ const nextConfig = {
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
   experimental: {
-    serverComponentsExternalPackages: ["mysql2", "pg", "mssql"]
+    serverComponentsExternalPackages: ["mysql2", "pg", "mssql", "ioredis"]
   },
   async headers() {
     return [

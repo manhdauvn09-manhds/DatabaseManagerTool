@@ -16,7 +16,7 @@ export async function GET(req: Request) {
   }
 
   const ip = getClientIp(req);
-  const rl = rateLimit(`pubkey:${ip}`, 30, 60_000);
+  const rl = await rateLimit(`pubkey:${ip}`, 30, 60_000);
   if (!rl.ok) {
     return NextResponse.json(
       { error: { code: "RATE_LIMIT", message: "Too many requests" } },

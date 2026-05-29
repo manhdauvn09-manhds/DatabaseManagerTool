@@ -45,7 +45,7 @@ export async function authorizeUser(
   }
 
   const bucket = opts.rateLimitBucket ?? "dbapi";
-  const rl = rateLimit(`${bucket}:${email}`, opts.rateLimitMax ?? 60, opts.rateLimitWindowMs ?? 60_000);
+  const rl = await rateLimit(`${bucket}:${email}`, opts.rateLimitMax ?? 60, opts.rateLimitWindowMs ?? 60_000);
   if (!rl.ok) {
     audit({ action, email, ip, ok: false, errCode: "RATE_LIMIT" });
     return {
@@ -75,7 +75,7 @@ export async function authorize(
     return { ok: false, response: jerr("BAD_CONNECTION_ID", "Invalid connection id", 400) };
   }
 
-  const rec = getConnectionRecord(connectionId, email);
+  const rec = await getConnectionRecord(connectionId, email);
   if (!rec) {
     audit({ action, email, ip, ok: false, errCode: "CONNECTION_NOT_FOUND" });
     return { ok: false, response: jerr("CONNECTION_NOT_FOUND", "Connection not found or expired. Please reconnect.", 404) };

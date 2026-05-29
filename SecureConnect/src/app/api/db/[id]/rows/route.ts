@@ -123,7 +123,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
   // Verify token matches THIS exact operation (including connection).
   const payload = { action: "update", connectionId: params.id, database, table, where, set };
-  const tk = consumeToken(token, payload);
+  const tk = await consumeToken(token, payload);
   if (!tk.ok) {
     audit({ action: "db.rows.update", email: ctx.email, ip: ctx.ip, ok: false, errCode: `TOKEN_${tk.reason.toUpperCase()}` });
     return jerr("BAD_TOKEN", `Token ${tk.reason} — please preview again`, 400);
@@ -164,7 +164,7 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
   if (Object.keys(where).length === 0) return jerr("BAD_REQUEST", "WHERE clause is mandatory", 400);
 
   const payload = { action: "delete", connectionId: params.id, database, table, where };
-  const tk = consumeToken(token, payload);
+  const tk = await consumeToken(token, payload);
   if (!tk.ok) {
     audit({ action: "db.rows.delete", email: ctx.email, ip: ctx.ip, ok: false, errCode: `TOKEN_${tk.reason.toUpperCase()}` });
     return jerr("BAD_TOKEN", `Token ${tk.reason} — please preview again`, 400);
