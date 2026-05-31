@@ -155,11 +155,17 @@
     <li><strong>#11</strong> <code>deploy/backup-data.sh</code> rotating volume backup</li>
     <li><strong>#8</strong> Vault master-key rotation (VAULT_MASTER_SECRET_OLD)</li>
     <li><strong>#15</strong> Opt-in per-connection pool (DB_POOL_ENABLED)</li>
-    <li><strong>#1 Redis</strong> — <em>deferred</em>: needs async refactor of the hot path
-      for zero current benefit (single instance). Revisit when a 2nd instance exists.</li>
-    <li><strong>#14</strong> SSH "ban" was NOT fail2ban (not installed) — it's SSH brute-force
-      flooding MaxStartups. Needs sshd hardening decision (shared box).</li>
+    <li><strong>#1 Redis</strong> — <em>DONE</em>: opt-in shared state via <code>REDIS_URL</code>.
+      rate-limit + confirm-tokens + (vault-encrypted) connection records move to Redis;
+      in-memory fallback when unset. Hot path now async. Service <code>dbmanager-redis</code>
+      (redis:7-alpine, AOF, internal-only). See lib/redis/client.ts.</li>
+    <li><strong>#14</strong> <em>DONE</em>: fail2ban installed on the host (sshd jail, 1h ban,
+      operator IP whitelisted in <code>/etc/fail2ban/jail.local</code>). The SSH timeouts were
+      brute-force floods now mitigated.</li>
   </ul>
+  <p style="margin-top:8px"><strong>State backend:</strong> when <code>REDIS_URL</code> set + <code>VAULT_MASTER_SECRET</code>
+   present → connection records persist in Redis encrypted (survive app restart, multi-instance ready).
+   Connection-record password is AES-GCM encrypted before hitting Redis — never plaintext.</p>
 </div>
 
 <h2 id="mission">1. Mission & Scope</h2>
