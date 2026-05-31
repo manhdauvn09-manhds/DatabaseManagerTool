@@ -39,7 +39,7 @@ const MAX_RECORDS = Math.max(10, Number(process.env.CONNECTION_MAX_RECORDS ?? "1
 // when a vault master is configured, so the password can be encrypted at rest
 // (AES-256-GCM via serverVault). Without a master we keep records in-memory even
 // if REDIS_URL is set — never write plaintext credentials to Redis.
-function useRedis(): boolean {
+function redisActive(): boolean {
   return !!getRedis() && isVaultConfigured();
 }
 
@@ -93,7 +93,7 @@ export async function createConnectionRecord(
   const now = Date.now();
   const rec: ConnectionRecord = { id, createdAt: now, expiresAt: now + TTL_MS, ...input };
 
-  if (useRedis()) {
+  if (redisActive()) {
     const r = getRedis()!;
     await r.set(RKEY(id), JSON.stringify(toRedis(rec)), "PX", TTL_MS);
     return rec;
@@ -122,7 +122,7 @@ export async function createConnectionRecord(
 export async function getConnectionRecord(id: string, ownerEmail: string): Promise<ConnectionRecord | null> {
   const now = Date.now();
 
-  if (useRedis()) {
+  if (redisActive()) {
     const r = getRedis()!;
     const raw = await r.get(RKEY(id));
     if (!raw) return null;
@@ -147,7 +147,7 @@ export async function getConnectionRecord(id: string, ownerEmail: string): Promi
 }
 
 export async function deleteConnectionRecord(id: string): Promise<void> {
-  if (useRedis()) { await getRedis()!.del(RKEY(id)); return; }
+  if (redisActive()) { await getRedis()!.del(RKEY(id)); return; }
   const rec = store.get(id);
   if (rec) clearSecret(rec);
   store.delete(id);
@@ -155,7 +155,7 @@ export async function deleteConnectionRecord(id: string): Promise<void> {
 
 // In-memory housekeeping only; Redis uses native TTL.
 export async function cleanupExpired(): Promise<void> {
-  if (useRedis()) return;
+  if (redisActive()) return;
   memCleanup();
 }
 
