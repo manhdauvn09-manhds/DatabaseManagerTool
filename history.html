@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DatabaseManager — Deploy History</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 1000px;
+      margin: 0 auto;
+      background: #1a202c;
+      border-radius: 8px;
+      padding: 2rem;
+      border: 1px solid #2d3748;
+    }
+    h1 {
+      font-size: 1.8rem;
+      color: #60a5fa;
+      margin-bottom: 1rem;
+      border-bottom: 2px solid #2d3748;
+      padding-bottom: 0.5rem;
+    }
+    .meta {
+      color: #94a3b8;
+      font-size: 0.9rem;
+      margin-bottom: 2rem;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 2rem;
+    }
+    th {
+      background: #2d3748;
+      color: #93c5fd;
+      padding: 0.75rem 1rem;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid #3f47fd;
+      font-size: 0.85rem;
+    }
+    td {
+      padding: 1rem;
+      border-bottom: 1px solid #2d3748;
+      vertical-align: top;
+    }
+    tr:hover { background: #263449; }
+    .status-success { color: #4ade80; font-weight: 600; }
+    .status-pending { color: #fbbf24; font-weight: 600; }
+    .hash {
+      font-family: 'Courier New', monospace;
+      font-size: 0.85rem;
+      color: #7dd3fc;
+    }
+    .summary {
+      color: #cbd5e1;
+      font-size: 0.95rem;
+    }
+    .deployment-target {
+      display: inline-block;
+      background: #3f47fd;
+      color: #fff;
+      padding: 0.25rem 0.75rem;
+      border-radius: 4px;
+      font-size: 0.8rem;
+      margin-right: 0.5rem;
+    }
+    .note {
+      background: #1f2937;
+      border-left: 4px solid #3f47fd;
+      padding: 1rem;
+      margin-top: 1rem;
+      border-radius: 4px;
+      font-size: 0.9rem;
+      color: #cbd5e1;
+    }
+    .timestamp {
+      color: #64748b;
+      font-size: 0.85rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 DatabaseManager — Deploy History</h1>
+    <div class="meta">
+      <div><strong>Project:</strong> DatabaseManager (Next.js + Redis + SQL)</div>
+      <div><strong>Server:</strong> prod-106 (62.238.28.106) · Container: dbmanager-app · Port: 13000</div>
+      <div><strong>Last Updated:</strong> 2026-06-01 · Status: ✅ Production</div>
+    </div>
+
+    <h2 style="font-size: 1.2rem; color: #93c5fd; margin: 1.5rem 0 1rem; border-bottom: 1px solid #2d3748; padding-bottom: 0.5rem;">Recent Deployments</h2>
+
+    <table>
+      <thead>
+        <tr>
+          <th style="width: 15%;">Date</th>
+          <th style="width: 15%;">Commit</th>
+          <th style="width: 35%;">Summary</th>
+          <th style="width: 15%;">Target</th>
+          <th style="width: 20%;">Status</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="timestamp">2026-05-31<br/>20:55 UTC+9</td>
+          <td class="hash">a6df131</td>
+          <td class="summary">
+            <strong>Waves 1-3 Complete</strong><br/>
+            Marked Redis (#1) & fail2ban (#14) as DONE. All improvements deployed + tested.
+            <br/>• 129 vitest tests pass<br/>• Redis healthy (AOF persistence)<br/>• fail2ban SSH jail active
+          </td>
+          <td><span class="deployment-target">App</span><br/><span class="deployment-target">Infra</span></td>
+          <td class="status-success">✅ SUCCESS</td>
+        </tr>
+        <tr>
+          <td class="timestamp">2026-05-31<br/>15:06 UTC+9</td>
+          <td class="hash">20f5378</td>
+          <td class="summary">
+            <strong>Fix ESLint Hook Rule</strong><br/>
+            Renamed useRedis() → redisActive() to resolve react-hooks/rules-of-hooks lint error.
+            <br/>• Build passed (npm run build)<br/>• No regressions
+          </td>
+          <td><span class="deployment-target">FE</span></td>
+          <td class="status-success">✅ SUCCESS</td>
+        </tr>
+        <tr>
+          <td class="timestamp">2026-05-30<br/>07:11 UTC+9</td>
+          <td class="hash">e9a1c57</td>
+          <td class="summary">
+            <strong>Redis-Backed Shared State (Wave 3 #1)</strong><br/>
+            Implemented opt-in Redis backend for rate-limit, confirm-tokens, connection records.
+            <br/>• Async/await refactoring (hot path)<br/>• AES-256-GCM encryption at rest<br/>• Dual-mode: in-memory fallback when Redis unavailable<br/>• Docker Compose integration (redis:7-alpine, 128mb, volatile-ttl)
+          </td>
+          <td><span class="deployment-target">App</span><br/><span class="deployment-target">Infra</span></td>
+          <td class="status-success">✅ SUCCESS</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="note">
+      <strong>🔹 Wave Completion Summary:</strong><br/>
+      All requested improvements (Wave 1: RSA persist, sort, row-detail · Wave 2: filter, type-aware form, backup · Wave 3: Redis, fail2ban) have been implemented, tested, and deployed to production. App is healthy, all services stable.
+    </div>
+
+    <h2 style="font-size: 1.2rem; color: #93c5fd; margin: 1.5rem 0 1rem; border-bottom: 1px solid #2d3748; padding-bottom: 0.5rem;">Infrastructure Notes</h2>
+    <div class="note">
+      <strong>Recent Changes:</strong><br/>
+      ✅ Redis service deployed (docker-compose) with AOF persistence<br/>
+      ✅ fail2ban SSH jail configured on prod-106 (10m findtime, 5 maxretry, 1h ban)<br/>
+      ✅ REDIS_URL injected to app environment (redis://redis:6379)<br/>
+      ✅ Connection pooling opt-in (DB_POOL_ENABLED=false by default)<br/>
+      ✅ All 13 other containers on shared server unaffected<br/>
+    </div>
+  </div>
+</body>
+</html>
