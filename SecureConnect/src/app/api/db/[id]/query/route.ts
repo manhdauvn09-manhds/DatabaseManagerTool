@@ -66,16 +66,21 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       ms: Date.now() - t0
     });
 
-    return NextResponse.json(
-      {
-        columns: result.columns,
-        rows: result.rows,
-        rowCount: result.rowCount,
-        executionTimeMs: result.executionTimeMs,
-        isExplain: result.isExplain,
-        limit
-      },
-      { headers: { "Content-Type": "application/json" } }
+    // Use a replacer (not NextResponse.json) — rows may contain BigInt/Date/Buffer
+    // which JSON.stringify cannot serialize natively (BigInt throws).
+    return new NextResponse(
+      JSON.stringify(
+        {
+          columns: result.columns,
+          rows: result.rows,
+          rowCount: result.rowCount,
+          executionTimeMs: result.executionTimeMs,
+          isExplain: result.isExplain,
+          limit
+        },
+        replacer
+      ),
+      { status: 200, headers: { "Content-Type": "application/json" } }
     );
   } catch (e) {
     logInternal("db.query", e);
@@ -91,4 +96,11 @@ export async function POST(req: Request, { params }: { params: { id: string } })
     const msg = e instanceof Error ? e.message : "Query failed";
     return jerr("QUERY_FAIL", msg, 500);
   }
+}
+
+function replacer(_key: string, value: unknown): unknown {
+  if (typeof value === "bigint") return value.toString();
+  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Buffer || value instanceof Uint8Array) return `0x${Buffer.from(value).toString("hex")}`;
+  return value;
 }
