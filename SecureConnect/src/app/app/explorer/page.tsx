@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
+import { SQLEditor } from "@/components/SQLEditor";
 
 type ColumnInfo = {
   name: string;
@@ -25,7 +26,7 @@ function ExplorerInner() {
   const [selectedDb, setSelectedDb] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
 
-  const [view, setView] = useState<"columns" | "data">("data");
+  const [view, setView] = useState<"columns" | "data" | "sql">("data");
   const [columns, setColumns] = useState<ColumnInfo[]>([]);
   const [rowsData, setRowsData] = useState<RowsResp | null>(null);
 
@@ -585,6 +586,12 @@ function ExplorerInner() {
                     >
                       Columns
                     </button>
+                    <button
+                      onClick={() => setView("sql")}
+                      className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "sql" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
+                    >
+                      SQL
+                    </button>
                   </div>
                 </div>
               </div>
@@ -722,6 +729,7 @@ function ExplorerInner() {
                   </table>
                 )}
                 {view === "data" && loading && !rowsData && <div className="p-4 text-sm text-zinc-500">Loading…</div>}
+                {view === "sql" && <SQLEditor connectionId={cid} />}
               </div>
 
               {view === "data" && rowsData && (
