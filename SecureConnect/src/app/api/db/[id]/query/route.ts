@@ -13,7 +13,7 @@ const MAX_BODY_BYTES = 50 * 1024; // 50 KiB — large SQL files
 
 // POST /api/db/:id/query — Execute read-only SQL
 export async function POST(req: Request, { params }: { params: { id: string } }) {
-  const a = await authorize(req, params.id, "db.query", { rateLimitMax: 60, rateLimitWindowMs: 60_000 });
+  const a = await authorize(req, params.id, "db.query", { rateLimitMax: 60, rateLimitWindowMs: 60_000, allowShare: true });
   if (!a.ok) return a.response;
   const { ctx } = a;
 

@@ -7,7 +7,7 @@ import { audit } from "@/lib/security/auditLog";
 export const runtime = "nodejs";
 
 export async function GET(req: Request, { params }: { params: { id: string } }) {
-  const a = await authorize(req, params.id, "db.columns");
+  const a = await authorize(req, params.id, "db.columns", { allowShare: true });
   if (!a.ok) return a.response;
   const { ctx } = a;
   const url = new URL(req.url);

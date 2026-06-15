@@ -48,11 +48,12 @@ export interface AdvancedSearchProps {
   database: string;
   table: string;
   columns: { name: string }[];
+  shareToken?: string;
 }
 
 const PAGE = 50;
 
-export function AdvancedSearch({ connectionId, database, table, columns }: AdvancedSearchProps) {
+export function AdvancedSearch({ connectionId, database, table, columns, shareToken }: AdvancedSearchProps) {
   const firstCol = columns[0]?.name ?? "";
   const newCondition = (): Condition => ({ column: firstCol, op: "eq", value: "", value2: "" });
   const newGroup = (): Group => ({ combinator: "AND", conditions: [newCondition()] });
@@ -117,9 +118,11 @@ export function AdvancedSearch({ connectionId, database, table, columns }: Advan
     setLoading(true);
     setError(null);
     try {
+      const headers: Record<string, string> = { "Content-Type": "application/json" };
+      if (shareToken) headers["x-share-token"] = shareToken;
       const res = await fetch(`/api/db/${connectionId}/search`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify(buildPayload(off))
       });
       if (!res.ok) {

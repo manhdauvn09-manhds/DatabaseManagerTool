@@ -16,7 +16,7 @@ const MAX_BODY_BYTES = 64 * 1024; // 64 KiB — covers reasonable insert payload
 
 // -------------------- GET (browse rows) --------------------
 export async function GET(req: Request, { params }: { params: { id: string } }) {
-  const a = await authorize(req, params.id, "db.rows");
+  const a = await authorize(req, params.id, "db.rows", { allowShare: true });
   if (!a.ok) return a.response;
   const { ctx } = a;
   const url = new URL(req.url);

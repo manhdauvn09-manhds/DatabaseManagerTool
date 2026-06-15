@@ -4,6 +4,7 @@ import { useState } from "react";
 
 export interface SQLEditorProps {
   connectionId: string;
+  shareToken?: string;
   onError?: (msg: string) => void;
 }
 
@@ -16,11 +17,14 @@ interface QueryResult {
   limit: number;
 }
 
-export function SQLEditor({ connectionId }: SQLEditorProps) {
+export function SQLEditor({ connectionId, shareToken }: SQLEditorProps) {
   const [sql, setSql] = useState("SELECT * FROM ");
   const [result, setResult] = useState<QueryResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (shareToken) headers["x-share-token"] = shareToken;
 
   async function executeQuery() {
     if (!sql.trim()) {
@@ -35,7 +39,7 @@ export function SQLEditor({ connectionId }: SQLEditorProps) {
     try {
       const res = await fetch(`/api/db/${connectionId}/query`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ sql, limit: 1000 })
       });
 
@@ -66,7 +70,7 @@ export function SQLEditor({ connectionId }: SQLEditorProps) {
     try {
       const res = await fetch(`/api/db/${connectionId}/query`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers,
         body: JSON.stringify({ sql, explainOnly: true })
       });
 

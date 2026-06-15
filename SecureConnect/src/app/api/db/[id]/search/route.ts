@@ -13,7 +13,7 @@ const MAX_BODY_BYTES = 16 * 1024; // 16 KiB — search trees are small
 
 // POST /api/db/:id/search — advanced filtered search (2-level AND/OR builder)
 export async function POST(req: Request, { params }: { params: { id: string } }) {
-  const a = await authorize(req, params.id, "db.search", { rateLimitMax: 60, rateLimitWindowMs: 60_000 });
+  const a = await authorize(req, params.id, "db.search", { rateLimitMax: 60, rateLimitWindowMs: 60_000, allowShare: true });
   if (!a.ok) return a.response;
   const { ctx } = a;
 

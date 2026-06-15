@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { SQLEditor } from "@/components/SQLEditor";
 import { AdvancedSearch } from "@/components/AdvancedSearch";
+import { ShareDialog } from "@/components/ShareDialog";
 
 type ColumnInfo = {
   name: string;
@@ -19,7 +20,14 @@ type RowsResp = { columns: string[]; rows: Record<string, unknown>[]; total: num
 function ExplorerInner() {
   const router = useRouter();
   const sp = useSearchParams();
-  const cid = sp.get("cid") ?? "";
+  const ownerCid = sp.get("cid") ?? "";
+  const shareToken = sp.get("share") ?? "";
+  const readonly = !!shareToken;
+  // In share mode the connectionId is resolved from the token; otherwise it's the cid param.
+  const [cid, setCid] = useState(ownerCid);
+
+  // Owner-only share dialog.
+  const [shareOpen, setShareOpen] = useState(false);
 
   const [databases, setDatabases] = useState<string[]>([]);
   const [tablesByDb, setTablesByDb] = useState<Record<string, string[]>>({});
@@ -82,13 +90,33 @@ function ExplorerInner() {
   const [delBusy, setDelBusy] = useState(false);
   const [delError, setDelError] = useState<string | null>(null);
 
-  // Redirect to /app if no cid.
+  // Redirect to /app if neither a connection id nor a share token is present.
   useEffect(() => {
-    if (!cid) router.replace("/app");
-  }, [cid, router]);
+    if (!ownerCid && !shareToken) router.replace("/app");
+  }, [ownerCid, shareToken, router]);
+
+  // Resolve a share token → connectionId (read-only viewer bootstrap).
+  useEffect(() => {
+    if (!shareToken) return;
+    let cancelled = false;
+    fetch(`/api/share/${encodeURIComponent(shareToken)}`, { cache: "no-store" })
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error("Share link invalid or expired"))))
+      .then((d: { connectionId: string }) => { if (!cancelled) setCid(d.connectionId); })
+      .catch(() => { if (!cancelled) router.replace("/app"); });
+    return () => { cancelled = true; };
+  }, [shareToken, router]);
+
+  // Share-mode requests carry the bearer token; read routes honor it (read-only).
+  const shareHeaders = useCallback(
+    (base?: Record<string, string>): Record<string, string> | undefined => {
+      if (!shareToken) return base;
+      return { ...(base ?? {}), "x-share-token": shareToken };
+    },
+    [shareToken]
+  );
 
   const apiGet = useCallback(async <T,>(path: string): Promise<T> => {
-    const res = await fetch(path, { cache: "no-store" });
+    const res = await fetch(path, { cache: "no-store", headers: shareHeaders() });
     if (res.status === 404 || res.status === 401) {
       router.replace("/app");
       throw new Error("Connection expired. Please reconnect.");
@@ -98,12 +126,12 @@ function ExplorerInner() {
       throw new Error(body?.error?.message ?? `HTTP ${res.status}`);
     }
     return res.json() as Promise<T>;
-  }, [router]);
+  }, [router, shareHeaders]);
 
   const apiPost = useCallback(async <T,>(path: string, body: unknown): Promise<T> => {
     const res = await fetch(path, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: shareHeaders({ "Content-Type": "application/json" }),
       body: JSON.stringify(body)
     });
     if (res.status === 404 || res.status === 401) {
@@ -115,7 +143,7 @@ function ExplorerInner() {
       throw new Error(j?.error?.message ?? `HTTP ${res.status}`);
     }
     return res.json() as Promise<T>;
-  }, [router]);
+  }, [router, shareHeaders]);
 
   // 1. Load databases on mount.
   useEffect(() => {
@@ -459,30 +487,54 @@ function ExplorerInner() {
     setError(null);
   }
 
-  if (!cid) return null;
+  if (!cid) {
+    return readonly ? (
+      <main className="min-h-screen flex items-center justify-center text-sm text-zinc-500">
+        Loading shared connection…
+      </main>
+    ) : null;
+  }
 
   return (
     <main className="min-h-screen flex flex-col bg-zinc-50">
       <header className="border-b border-zinc-200 bg-white px-5 py-3 flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">DatabaseManager</h1>
-          <p className="text-xs text-zinc-500">
+          <p className="text-xs text-zinc-500 flex items-center gap-2">
             Connection: <code className="bg-zinc-100 px-1.5 py-0.5 rounded">{cid.slice(0, 8)}…</code>
+            {readonly && (
+              <span className="px-2 py-0.5 rounded-full bg-amber-100 text-amber-800 border border-amber-300 font-medium">
+                🔗 Read-only (shared)
+              </span>
+            )}
           </p>
         </div>
         <div className="flex items-center gap-2">
-          <button
-            onClick={disconnect}
-            className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-zinc-50"
-            title="Quay lại màn hình Connect"
-          >
-            ← Back to connect
-          </button>
+          {!readonly && (
+            <button
+              onClick={() => setShareOpen(true)}
+              className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-blue-50 hover:border-blue-300"
+              title="Share this connection (read-only link)"
+            >
+              🔗 Share
+            </button>
+          )}
+          {!readonly && (
+            <button
+              onClick={disconnect}
+              className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-zinc-50"
+              title="Quay lại màn hình Connect"
+            >
+              ← Back to connect
+            </button>
+          )}
           <button onClick={() => signOut({ callbackUrl: "/signin" })} className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-zinc-50">
             Sign out
           </button>
         </div>
       </header>
+
+      {shareOpen && !readonly && <ShareDialog connectionId={cid} onClose={() => setShareOpen(false)} />}
 
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
@@ -550,7 +602,7 @@ function ExplorerInner() {
                   </div>
                 </div>
                 <div className="flex items-center gap-2">
-                  {view === "data" && columns.length > 0 && (
+                  {view === "data" && columns.length > 0 && !readonly && (
                     <>
                       <button
                         onClick={openInsertModal}
@@ -702,20 +754,24 @@ function ExplorerInner() {
                             >
                               👁
                             </button>
-                            <button
-                              onClick={() => openEditModal(r)}
-                              className="text-xs px-2 py-0.5 rounded border border-zinc-300 bg-white hover:bg-amber-50 hover:border-amber-400 mr-1"
-                              title="Edit row"
-                            >
-                              ✏️
-                            </button>
-                            <button
-                              onClick={() => openDeleteModal(r)}
-                              className="text-xs px-2 py-0.5 rounded border border-zinc-300 bg-white hover:bg-red-50 hover:border-red-400"
-                              title="Delete row"
-                            >
-                              🗑️
-                            </button>
+                            {!readonly && (
+                              <>
+                                <button
+                                  onClick={() => openEditModal(r)}
+                                  className="text-xs px-2 py-0.5 rounded border border-zinc-300 bg-white hover:bg-amber-50 hover:border-amber-400 mr-1"
+                                  title="Edit row"
+                                >
+                                  ✏️
+                                </button>
+                                <button
+                                  onClick={() => openDeleteModal(r)}
+                                  className="text-xs px-2 py-0.5 rounded border border-zinc-300 bg-white hover:bg-red-50 hover:border-red-400"
+                                  title="Delete row"
+                                >
+                                  🗑️
+                                </button>
+                              </>
+                            )}
                           </td>
                           {rowsData.columns.map((c) => (
                             <td
@@ -736,13 +792,14 @@ function ExplorerInner() {
                   </table>
                 )}
                 {view === "data" && loading && !rowsData && <div className="p-4 text-sm text-zinc-500">Loading…</div>}
-                {view === "sql" && <SQLEditor connectionId={cid} />}
+                {view === "sql" && <SQLEditor connectionId={cid} shareToken={shareToken || undefined} />}
                 {view === "search" && selectedDb && selectedTable && (
                   <AdvancedSearch
                     connectionId={cid}
                     database={selectedDb}
                     table={selectedTable}
                     columns={columns}
+                    shareToken={shareToken || undefined}
                   />
                 )}
               </div>

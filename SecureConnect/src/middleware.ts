@@ -44,9 +44,12 @@ export async function middleware(req: NextRequest) {
         { status: 401 }
       );
     }
+    // Preserve the full path + query (e.g. ?share=<token>) so share links survive login.
+    const next = pathname + req.nextUrl.search;
     const url = req.nextUrl.clone();
     url.pathname = "/signin";
-    url.searchParams.set("next", pathname);
+    url.search = "";
+    url.searchParams.set("next", next);
     return NextResponse.redirect(url);
   }
 
