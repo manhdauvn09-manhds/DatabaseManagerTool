@@ -150,7 +150,7 @@ const MAX_FILTERS = 10;
 
 // Build an `ORDER BY col ASC|DESC` clause from a validated OrderBy, or "" if none.
 // The column identifier is whitelisted + driver-quoted; dir is enum-checked.
-function orderClause(orderBy: OrderBy | undefined, driver: DriverType): string {
+export function orderClause(orderBy: OrderBy | undefined, driver: DriverType): string {
   if (!orderBy) return "";
   validateIdent(orderBy.column, "sort column");
   const dir = orderBy.dir === "desc" ? "DESC" : "ASC";

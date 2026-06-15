@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { SQLEditor } from "@/components/SQLEditor";
+import { AdvancedSearch } from "@/components/AdvancedSearch";
 
 type ColumnInfo = {
   name: string;
@@ -26,7 +27,7 @@ function ExplorerInner() {
   const [selectedDb, setSelectedDb] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
 
-  const [view, setView] = useState<"columns" | "data" | "sql">("data");
+  const [view, setView] = useState<"columns" | "data" | "sql" | "search">("data");
   const [columns, setColumns] = useState<ColumnInfo[]>([]);
   const [rowsData, setRowsData] = useState<RowsResp | null>(null);
 
@@ -587,6 +588,12 @@ function ExplorerInner() {
                       Columns
                     </button>
                     <button
+                      onClick={() => setView("search")}
+                      className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "search" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
+                    >
+                      Search
+                    </button>
+                    <button
                       onClick={() => setView("sql")}
                       className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "sql" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
                     >
@@ -730,6 +737,14 @@ function ExplorerInner() {
                 )}
                 {view === "data" && loading && !rowsData && <div className="p-4 text-sm text-zinc-500">Loading…</div>}
                 {view === "sql" && <SQLEditor connectionId={cid} />}
+                {view === "search" && selectedDb && selectedTable && (
+                  <AdvancedSearch
+                    connectionId={cid}
+                    database={selectedDb}
+                    table={selectedTable}
+                    columns={columns}
+                  />
+                )}
               </div>
 
               {view === "data" && rowsData && (
