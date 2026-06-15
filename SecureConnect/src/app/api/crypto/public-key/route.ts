@@ -1,28 +1,13 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { authorizeUser } from "@/lib/db-api/route-helper";
 import { getOrCreateServerKey } from "@/lib/crypto/serverKeyStore";
-import { rateLimit, getClientIp } from "@/lib/security/rateLimit";
 
 export const runtime = "nodejs";
 
 export async function GET(req: Request) {
-  // Middleware already enforces auth on /api/* (except /api/auth). This is defense-in-depth.
-  const session = await auth();
-  if (!session?.user) {
-    return NextResponse.json(
-      { error: { code: "UNAUTH", message: "Sign-in required" } },
-      { status: 401 }
-    );
-  }
-
-  const ip = getClientIp(req);
-  const rl = await rateLimit(`pubkey:${ip}`, 30, 60_000);
-  if (!rl.ok) {
-    return NextResponse.json(
-      { error: { code: "RATE_LIMIT", message: "Too many requests" } },
-      { status: 429, headers: { "Retry-After": String(rl.retryAfter) } }
-    );
-  }
+  // Cookie session OR Bearer PAT (CLI needs the public key to encrypt before /api/connect).
+  const a = await authorizeUser(req, "crypto.publicKey", { rateLimitMax: 30, rateLimitWindowMs: 60_000, rateLimitBucket: "pubkey" });
+  if (!a.ok) return a.response;
 
   const { keyId, publicJwk } = await getOrCreateServerKey();
   return NextResponse.json({ keyId, publicJwk });

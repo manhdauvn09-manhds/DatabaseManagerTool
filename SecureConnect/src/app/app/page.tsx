@@ -188,9 +188,14 @@ export default function AppPage() {
             <h1 className="text-2xl font-semibold">DatabaseManager</h1>
             <p className="text-sm text-zinc-600">Secure Connect (HTTPS + RSA-OAEP in browser)</p>
           </div>
-          <button className="text-sm px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50" onClick={() => signOut({ callbackUrl: "/signin" })}>
-            Sign out
-          </button>
+          <div className="flex items-center gap-2">
+            <a href="/app/tokens" className="text-sm px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50" title="API tokens for the CLI">
+              🔑 API Tokens
+            </a>
+            <button className="text-sm px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50" onClick={() => signOut({ callbackUrl: "/signin" })}>
+              Sign out
+            </button>
+          </div>
         </header>
 
         <section className="mt-6 grid grid-cols-1 md:grid-cols-3 gap-4">

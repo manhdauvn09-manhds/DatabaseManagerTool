@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
-import { auth } from "@/auth";
+import { authorizeUser } from "@/lib/db-api/route-helper";
 import { ConnectRequestSchema } from "@/lib/schemas/connect";
 import { decryptBase64RSAOAEP, getOrCreateServerKey } from "@/lib/crypto/serverKeyStore";
 import { cleanupExpired, createConnectionRecord } from "@/lib/connections/store";
 import { testConnection } from "@/lib/connections/testConnection";
 import { ensureSafeHost } from "@/lib/security/ssrfGuard";
-import { rateLimit, getClientIp } from "@/lib/security/rateLimit";
 import { audit } from "@/lib/security/auditLog";
 
 export const runtime = "nodejs";
@@ -19,36 +18,12 @@ function jsonError(code: string, message: string, status: number, extraHeaders?:
 
 export async function POST(req: Request) {
   const t0 = Date.now();
-  const ip = getClientIp(req);
 
-  // CSRF defense-in-depth: when AUTH_URL is configured, require Origin/Referer to match.
-  // SameSite=Lax cookies already block classic CSRF; this catches edge cases (e.g. iframes).
-  // Comparison is case-insensitive per RFC 3986 (scheme+host are case-insensitive).
-  const expectedOrigin = process.env.AUTH_URL?.toLowerCase();
-  if (expectedOrigin) {
-    const origin = req.headers.get("origin")?.toLowerCase();
-    const referer = req.headers.get("referer")?.toLowerCase();
-    const matchesOrigin = !!origin && origin === expectedOrigin;
-    const matchesReferer = !origin && !!referer && referer.startsWith(expectedOrigin);
-    if (!matchesOrigin && !matchesReferer) {
-      audit({ action: "connect", ip, ok: false, errCode: "BAD_ORIGIN" });
-      return jsonError("FORBIDDEN", "Bad origin", 403);
-    }
-  }
-
-  const session = await auth();
-  if (!session?.user) {
-    audit({ action: "connect", ip, ok: false, errCode: "UNAUTH" });
-    return jsonError("UNAUTH", "Sign-in required", 401);
-  }
-  const email = session.user.email ?? "unknown";
-
-  // Per-user rate limit: 10 attempts / minute.
-  const rl = await rateLimit(`connect:${email}`, 10, 60_000);
-  if (!rl.ok) {
-    audit({ action: "connect", email, ip, ok: false, errCode: "RATE_LIMIT", ms: Date.now() - t0 });
-    return jsonError("RATE_LIMIT", "Too many requests", 429, { "Retry-After": String(rl.retryAfter) });
-  }
+  // Auth: cookie session (Origin/CSRF checked) OR Bearer PAT (CLI; CSRF n/a).
+  // Per-user rate limit: 10 attempts / minute on the "connect" bucket.
+  const a = await authorizeUser(req, "connect", { rateLimitMax: 10, rateLimitWindowMs: 60_000, rateLimitBucket: "connect" });
+  if (!a.ok) return a.response;
+  const { email, ip } = a.ctx;
 
   // Body size cap (mitigates payload-DoS).
   const raw = await req.text();

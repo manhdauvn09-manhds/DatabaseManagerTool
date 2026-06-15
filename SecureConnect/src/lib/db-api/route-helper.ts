@@ -4,6 +4,7 @@ import { getClientIp, rateLimit } from "@/lib/security/rateLimit";
 import { audit } from "@/lib/security/auditLog";
 import { getConnectionRecord, type ConnectionRecord } from "@/lib/connections/store";
 import { getShare } from "@/lib/sharing/shareStore";
+import { verifyPat } from "@/lib/tokens/patStore";
 
 export type UserCtx = { email: string; ip: string };
 // `readonly` is true when access was granted via a read-only share link (not owner).
@@ -23,29 +24,59 @@ function originOk(req: Request): boolean {
   return false;
 }
 
+function extractBearer(req: Request): string | null {
+  const h = req.headers.get("authorization");
+  if (!h) return null;
+  const m = /^Bearer\s+(.+)$/i.exec(h);
+  return m ? m[1].trim() : null;
+}
+
 export type AuthorizeResult<T> = { ok: true; ctx: T } | { ok: false; response: NextResponse };
 
 /**
- * Authorize a request as an authenticated user — checks session + Origin/Referer + rate limit.
- * Returns email + ip. Use this for endpoints that don't operate on a specific connection.
+ * Authorize a request as an authenticated user — session (cookie) OR Personal
+ * Access Token (`Authorization: Bearer <token>`), then rate limit.
+ *
+ * - Cookie session: Origin/Referer (CSRF) checked.
+ * - Bearer PAT: CSRF check SKIPPED (bearer tokens aren't auto-sent by browsers),
+ *   used by the CLI. Set `opts.sessionOnly` to reject PAT (e.g. token-management
+ *   routes — a leaked PAT must not be able to mint/list/revoke PATs).
  */
 export async function authorizeUser(
   req: Request,
   action: string,
-  opts: { rateLimitMax?: number; rateLimitWindowMs?: number; rateLimitBucket?: string } = {}
+  opts: { rateLimitMax?: number; rateLimitWindowMs?: number; rateLimitBucket?: string; sessionOnly?: boolean } = {}
 ): Promise<AuthorizeResult<UserCtx>> {
   const ip = getClientIp(req);
 
-  const session = await auth();
-  if (!session?.user?.email) {
-    audit({ action, ip, ok: false, errCode: "UNAUTH" });
-    return { ok: false, response: jerr("UNAUTH", "Sign-in required", 401) };
-  }
-  const email = session.user.email;
+  let email: string | null = null;
 
-  if (!originOk(req)) {
-    audit({ action, email, ip, ok: false, errCode: "BAD_ORIGIN" });
-    return { ok: false, response: jerr("FORBIDDEN", "Bad origin", 403) };
+  // Bearer PAT path (non-browser clients). Disabled when sessionOnly.
+  if (!opts.sessionOnly) {
+    const bearer = extractBearer(req);
+    if (bearer) {
+      const pat = await verifyPat(bearer);
+      if (!pat) {
+        audit({ action, ip, ok: false, errCode: "BAD_TOKEN" });
+        return { ok: false, response: jerr("UNAUTH", "Invalid or expired access token", 401) };
+      }
+      email = pat.email;
+      // No Origin check for token auth (not cookie-based → no CSRF surface).
+    }
+  }
+
+  if (!email) {
+    const session = await auth();
+    if (!session?.user?.email) {
+      audit({ action, ip, ok: false, errCode: "UNAUTH" });
+      return { ok: false, response: jerr("UNAUTH", "Sign-in required", 401) };
+    }
+    email = session.user.email;
+
+    if (!originOk(req)) {
+      audit({ action, email, ip, ok: false, errCode: "BAD_ORIGIN" });
+      return { ok: false, response: jerr("FORBIDDEN", "Bad origin", 403) };
+    }
   }
 
   const bucket = opts.rateLimitBucket ?? "dbapi";

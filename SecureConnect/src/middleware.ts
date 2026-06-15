@@ -36,6 +36,14 @@ export async function middleware(req: NextRequest) {
     }
   }
 
+  // Personal Access Token (PAT) requests authenticate at the route layer
+  // (nodejs runtime). Edge middleware can't verify PATs (node:crypto / ioredis),
+  // so defer API requests carrying a Bearer PAT — the route re-authenticates and
+  // rejects invalid tokens. Only our token format bypasses the cookie gate.
+  if (isApi(pathname) && /^Bearer\s+dbm_pat_/i.test(req.headers.get("authorization") ?? "")) {
+    return NextResponse.next();
+  }
+
   const session = await auth();
   if (!session?.user) {
     if (isApi(pathname)) {

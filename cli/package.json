@@ -1,0 +1,13 @@
+{
+  "name": "dbm-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "DatabaseManager CLI — read-only SQL + browse over the API via a Personal Access Token",
+  "type": "module",
+  "bin": {
+    "dbm": "./dbm.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
