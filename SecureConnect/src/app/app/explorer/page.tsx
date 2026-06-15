@@ -6,6 +6,8 @@ import { signOut } from "next-auth/react";
 import { SQLEditor } from "@/components/SQLEditor";
 import { AdvancedSearch } from "@/components/AdvancedSearch";
 import { ShareDialog } from "@/components/ShareDialog";
+import { MonitorPanel } from "@/components/MonitorPanel";
+import { ColumnStatsModal } from "@/components/ColumnStatsModal";
 
 type ColumnInfo = {
   name: string;
@@ -35,7 +37,10 @@ function ExplorerInner() {
   const [selectedDb, setSelectedDb] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
 
-  const [view, setView] = useState<"columns" | "data" | "sql" | "search">("data");
+  const [view, setView] = useState<"columns" | "data" | "sql" | "search" | "monitor">("data");
+
+  // Column-stats modal (from Columns view).
+  const [statsColumn, setStatsColumn] = useState<string | null>(null);
   const [columns, setColumns] = useState<ColumnInfo[]>([]);
   const [rowsData, setRowsData] = useState<RowsResp | null>(null);
 
@@ -536,6 +541,17 @@ function ExplorerInner() {
 
       {shareOpen && !readonly && <ShareDialog connectionId={cid} onClose={() => setShareOpen(false)} />}
 
+      {statsColumn && selectedDb && selectedTable && (
+        <ColumnStatsModal
+          connectionId={cid}
+          database={selectedDb}
+          table={selectedTable}
+          column={statsColumn}
+          shareToken={shareToken || undefined}
+          onClose={() => setStatsColumn(null)}
+        />
+      )}
+
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
         <aside className="w-72 border-r border-zinc-200 bg-white overflow-y-auto">
@@ -651,6 +667,12 @@ function ExplorerInner() {
                     >
                       SQL
                     </button>
+                    <button
+                      onClick={() => setView("monitor")}
+                      className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "monitor" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
+                    >
+                      Monitor
+                    </button>
                   </div>
                 </div>
               </div>
@@ -706,6 +728,7 @@ function ExplorerInner() {
                         <th className="px-3 py-2 border-b">Nullable</th>
                         <th className="px-3 py-2 border-b">PK</th>
                         <th className="px-3 py-2 border-b">Default</th>
+                        <th className="px-3 py-2 border-b">Stats</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -716,10 +739,19 @@ function ExplorerInner() {
                           <td className="px-3 py-1.5 border-b">{c.nullable ? "YES" : "NO"}</td>
                           <td className="px-3 py-1.5 border-b">{c.isPrimaryKey ? "🔑" : ""}</td>
                           <td className="px-3 py-1.5 border-b text-zinc-500">{c.default ?? ""}</td>
+                          <td className="px-3 py-1.5 border-b">
+                            <button
+                              onClick={() => setStatsColumn(c.name)}
+                              className="text-xs px-2 py-0.5 rounded border border-zinc-300 bg-white hover:bg-blue-50 hover:border-blue-400"
+                              title="Column statistics"
+                            >
+                              📊
+                            </button>
+                          </td>
                         </tr>
                       ))}
                       {columns.length === 0 && !loading && (
-                        <tr><td colSpan={5} className="px-3 py-4 text-center text-zinc-400">No columns</td></tr>
+                        <tr><td colSpan={6} className="px-3 py-4 text-center text-zinc-400">No columns</td></tr>
                       )}
                     </tbody>
                   </table>
@@ -801,6 +833,9 @@ function ExplorerInner() {
                     columns={columns}
                     shareToken={shareToken || undefined}
                   />
+                )}
+                {view === "monitor" && (
+                  <MonitorPanel connectionId={cid} database={selectedDb} shareToken={shareToken || undefined} />
                 )}
               </div>
 
