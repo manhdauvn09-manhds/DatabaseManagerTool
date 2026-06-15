@@ -37,7 +37,8 @@ describe("sqlValidator", () => {
   it("blocks INSERT", () => {
     const result = validateSql("INSERT INTO users (name) VALUES ('test')");
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/Write operations|INSERT/i);
+    // Either guard may fire first (whitelist prefix or dangerous-keyword scan).
+    expect(result.error).toMatch(/Only SELECT|Write operations|INSERT/i);
   });
 
   it("blocks UPDATE", () => {
