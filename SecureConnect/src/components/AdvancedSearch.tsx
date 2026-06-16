@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { BulkEditModal } from "@/components/BulkEditModal";
 
 type Combinator = "AND" | "OR";
 
@@ -64,6 +65,8 @@ export function AdvancedSearch({ connectionId, database, table, columns, shareTo
   const [offset, setOffset] = useState(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [bulkOpen, setBulkOpen] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   function updateGroup(gi: number, patch: Partial<Group>) {
     setGroups((gs) => gs.map((g, i) => (i === gi ? { ...g, ...patch } : g)));
@@ -92,26 +95,24 @@ export function AdvancedSearch({ connectionId, database, table, columns, shareTo
     setGroups((gs) => (gs.length > 1 ? gs.filter((_, i) => i !== gi) : gs));
   }
 
-  function buildPayload(off: number) {
+  function buildSearch() {
     return {
-      database,
-      table,
-      limit: PAGE,
-      offset: off,
-      search: {
-        combinator: topCombinator,
-        groups: groups.map((g) => ({
-          combinator: g.combinator,
-          conditions: g.conditions.map((c) => {
-            const mode = opMode(c.op);
-            const cond: Record<string, string> = { column: c.column, op: c.op };
-            if (mode !== "none") cond.value = c.value;
-            if (mode === "double") cond.value2 = c.value2;
-            return cond;
-          })
-        }))
-      }
+      combinator: topCombinator,
+      groups: groups.map((g) => ({
+        combinator: g.combinator,
+        conditions: g.conditions.map((c) => {
+          const mode = opMode(c.op);
+          const cond: Record<string, string> = { column: c.column, op: c.op };
+          if (mode !== "none") cond.value = c.value;
+          if (mode === "double") cond.value2 = c.value2;
+          return cond;
+        })
+      }))
     };
+  }
+
+  function buildPayload(off: number) {
+    return { database, table, limit: PAGE, offset: off, search: buildSearch() };
   }
 
   async function runSearch(off: number) {
@@ -254,12 +255,24 @@ export function AdvancedSearch({ connectionId, database, table, columns, shareTo
           <strong>Error:</strong> {error}
         </div>
       )}
+      {notice && (
+        <div className="p-3 bg-emerald-50 border-b border-emerald-200 text-sm text-emerald-700">{notice}</div>
+      )}
 
       {/* Results */}
       {result && (
         <div className="flex-1 min-h-0 flex flex-col">
-          <div className="px-4 py-2 bg-zinc-50 border-b text-xs text-zinc-500">
-            {result.total.toLocaleString()} match{result.total !== 1 ? "es" : ""}
+          <div className="px-4 py-2 bg-zinc-50 border-b text-xs text-zinc-500 flex items-center justify-between">
+            <span>{result.total.toLocaleString()} match{result.total !== 1 ? "es" : ""}</span>
+            {!shareToken && result.total > 0 && (
+              <button
+                onClick={() => setBulkOpen(true)}
+                className="text-xs px-3 py-1 rounded-lg border bg-white hover:bg-amber-50 hover:border-amber-300"
+                title="Bulk update/delete the matched rows"
+              >
+                ⚡ Bulk edit matched
+              </button>
+            )}
           </div>
           <div className="flex-1 min-h-0 overflow-auto">
             {result.rows.length === 0 ? (
@@ -303,6 +316,18 @@ export function AdvancedSearch({ connectionId, database, table, columns, shareTo
             </div>
           )}
         </div>
+      )}
+
+      {bulkOpen && !shareToken && (
+        <BulkEditModal
+          connectionId={connectionId}
+          database={database}
+          table={table}
+          columns={columns}
+          search={buildSearch()}
+          onClose={() => setBulkOpen(false)}
+          onDone={(msg) => { setNotice(msg); setTimeout(() => setNotice(null), 6000); runSearch(0); }}
+        />
       )}
     </div>
   );
