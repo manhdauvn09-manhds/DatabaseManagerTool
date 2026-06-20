@@ -36,13 +36,26 @@ const nextConfig = {
   output: "standalone",
   poweredByHeader: false,
   productionBrowserSourceMaps: false,
+  compress: true,
   experimental: {
     serverComponentsExternalPackages: ["mysql2", "pg", "mssql", "ioredis"]
   },
   async headers() {
     return [
       { source: "/:path*", headers: SECURITY_HEADERS },
-      { source: "/api/:path*", headers: API_CACHE_HEADERS }
+      {
+        source: "/api/:path*",
+        headers: [
+          ...API_CACHE_HEADERS,
+          { key: "Content-Encoding", value: "gzip" }
+        ]
+      },
+      {
+        source: "/_next/static/:path*",
+        headers: [
+          { key: "Cache-Control", value: "public, max-age=31536000, immutable" }
+        ]
+      }
     ];
   }
 };

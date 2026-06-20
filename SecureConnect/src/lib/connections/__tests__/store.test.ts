@@ -23,8 +23,12 @@ function makeInput(overrides: Partial<CreateInput> = {}): CreateInput {
 
 // REDIS_URL unset in tests → in-memory backend. Functions are async; await all.
 describe("connections store (in-memory)", () => {
-  beforeEach(() => vi.useFakeTimers());
-  afterEach(() => vi.useRealTimers());
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   test("create + get by matching owner", async () => {
     const rec = await createConnectionRecord(makeInput());
