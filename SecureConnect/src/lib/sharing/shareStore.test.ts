@@ -6,8 +6,12 @@ const B = "bob@example.com";
 const CONN = "11111111-1111-1111-1111-111111111111";
 
 describe("shareStore (in-memory)", () => {
-  beforeEach(() => resetShares());
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    resetShares();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it("creates a share with a high-entropy token", async () => {
     const s = await createShare(CONN, A, 3600);

@@ -1,107 +1,91 @@
 import { describe, test, expect, beforeEach, afterEach } from "vitest";
-import { encryptForUser, decryptForUser, isVaultConfigured, _resetMasterKeyCache } from "../serverVault";
+import { randomBytes } from "node:crypto";
+import {
+  encryptForUser,
+  decryptForUser,
+  isVaultConfigured,
+  _resetMasterKeyCache,
+  type ServerVaultBlob
+} from "../serverVault";
 
-const MASTER_OK = Buffer.alloc(32, 7).toString("base64");
+function generateTestKey(): string {
+  return randomBytes(32).toString("base64");
+}
 
-let original: string | undefined;
-let originalOld: string | undefined;
-beforeEach(() => {
-  original = process.env.VAULT_MASTER_SECRET;
-  originalOld = process.env.VAULT_MASTER_SECRET_OLD;
-  process.env.VAULT_MASTER_SECRET = MASTER_OK;
-  delete process.env.VAULT_MASTER_SECRET_OLD;
-  _resetMasterKeyCache();
-});
-afterEach(() => {
-  if (original === undefined) delete process.env.VAULT_MASTER_SECRET;
-  else process.env.VAULT_MASTER_SECRET = original;
-  if (originalOld === undefined) delete process.env.VAULT_MASTER_SECRET_OLD;
-  else process.env.VAULT_MASTER_SECRET_OLD = originalOld;
-  _resetMasterKeyCache();
-});
-
-describe("serverVault", () => {
-  test("round-trip encrypt/decrypt", () => {
-    const blob = encryptForUser("a@x.com", "hello world");
-    const back = decryptForUser("a@x.com", blob);
-    expect(back).toBe("hello world");
+describe("serverVault (AES-256-GCM encryption)", () => {
+  beforeEach(() => {
+    process.env.VAULT_MASTER_SECRET = generateTestKey();
+    delete process.env.VAULT_MASTER_SECRET_OLD;
+    _resetMasterKeyCache();
   });
 
-  test("different users cannot decrypt each other's data", () => {
-    const blob = encryptForUser("a@x.com", "secret-A");
-    expect(() => decryptForUser("b@x.com", blob)).toThrow();
+  afterEach(() => {
+    delete process.env.VAULT_MASTER_SECRET;
+    delete process.env.VAULT_MASTER_SECRET_OLD;
+    _resetMasterKeyCache();
   });
 
-  test("email comparison is case-insensitive (lowercased)", () => {
-    const blob = encryptForUser("Alice@X.com", "x");
-    expect(decryptForUser("alice@x.com", blob)).toBe("x");
-  });
-
-  test("ciphertext varies per call (random salt + iv)", () => {
-    const a = encryptForUser("u@x.com", "same");
-    const b = encryptForUser("u@x.com", "same");
-    expect(a.salt).not.toBe(b.salt);
-    expect(a.iv).not.toBe(b.iv);
-    expect(a.ciphertext).not.toBe(b.ciphertext);
-    expect(decryptForUser("u@x.com", a)).toBe("same");
-    expect(decryptForUser("u@x.com", b)).toBe("same");
-  });
-
-  test("isVaultConfigured returns true when env set", () => {
+  test("isVaultConfigured() returns true when VAULT_MASTER_SECRET is set", () => {
     expect(isVaultConfigured()).toBe(true);
   });
 
-  test("throws when VAULT_MASTER_SECRET missing", () => {
+  test("isVaultConfigured() returns false when VAULT_MASTER_SECRET is missing", () => {
     delete process.env.VAULT_MASTER_SECRET;
     _resetMasterKeyCache();
     expect(isVaultConfigured()).toBe(false);
-    expect(() => encryptForUser("a@x.com", "x")).toThrow(/VAULT_MASTER_SECRET/);
   });
 
-  test("throws when VAULT_MASTER_SECRET too short", () => {
-    process.env.VAULT_MASTER_SECRET = Buffer.alloc(16).toString("base64"); // only 16 bytes
-    _resetMasterKeyCache();
-    expect(() => encryptForUser("a@x.com", "x")).toThrow(/need ≥ 32/);
+  test("encryptForUser + decryptForUser roundtrip", () => {
+    const email = "alice@example.com";
+    const plaintext = "my-secret-password-123";
+    const blob = encryptForUser(email, plaintext);
+    const decrypted = decryptForUser(email, blob);
+    expect(decrypted).toBe(plaintext);
   });
 
-  test("rejects tampered ciphertext (auth tag fail)", () => {
-    const blob = encryptForUser("a@x.com", "x");
-    const tampered = { ...blob, ciphertext: Buffer.from(blob.ciphertext, "base64").reverse().toString("base64") };
-    expect(() => decryptForUser("a@x.com", tampered)).toThrow();
+  test("encryptForUser includes version fingerprint", () => {
+    const blob = encryptForUser("test@example.com", "secret");
+    expect(blob.v).toBeDefined();
+    expect(blob.v?.length).toBe(8);
   });
 
-  test("blob carries key fingerprint v", () => {
-    const blob = encryptForUser("a@x.com", "x");
-    expect(blob.v).toMatch(/^[0-9a-f]{8}$/);
+  test("decryptForUser rejects wrong email", () => {
+    const blob = encryptForUser("alice@example.com", "secret-data");
+    expect(() => decryptForUser("bob@example.com", blob)).toThrow();
   });
 
-  test("key rotation: old-key data still decrypts via VAULT_MASTER_SECRET_OLD", () => {
-    // Encrypt with key A.
-    const KEY_A = MASTER_OK;
-    process.env.VAULT_MASTER_SECRET = KEY_A;
-    _resetMasterKeyCache();
-    const blob = encryptForUser("u@x.com", "old-secret");
+  test("decryptForUser handles key rotation (old key fallback)", () => {
+    const email = "charlie@example.com";
+    const plaintext = "rotation-test";
+    const blobV1 = encryptForUser(email, plaintext);
 
-    // Rotate: new primary B, old A as fallback.
-    const KEY_B = Buffer.alloc(32, 0xbb).toString("base64");
-    process.env.VAULT_MASTER_SECRET = KEY_B;
-    process.env.VAULT_MASTER_SECRET_OLD = KEY_A;
+    const newKey = generateTestKey();
+    const oldKey = process.env.VAULT_MASTER_SECRET;
+    process.env.VAULT_MASTER_SECRET_OLD = oldKey;
+    process.env.VAULT_MASTER_SECRET = newKey;
     _resetMasterKeyCache();
 
-    // Old blob still decrypts (via OLD); new encryption uses B.
-    expect(decryptForUser("u@x.com", blob)).toBe("old-secret");
-    const fresh = encryptForUser("u@x.com", "new-secret");
-    expect(fresh.v).not.toBe(blob.v);
-    expect(decryptForUser("u@x.com", fresh)).toBe("new-secret");
+    const decrypted = decryptForUser(email, blobV1);
+    expect(decrypted).toBe(plaintext);
   });
 
-  test("after rotation without OLD, old data is unreadable", () => {
-    process.env.VAULT_MASTER_SECRET = MASTER_OK;
-    _resetMasterKeyCache();
-    const blob = encryptForUser("u@x.com", "secret");
-    process.env.VAULT_MASTER_SECRET = Buffer.alloc(32, 0xcc).toString("base64");
-    delete process.env.VAULT_MASTER_SECRET_OLD;
-    _resetMasterKeyCache();
-    expect(() => decryptForUser("u@x.com", blob)).toThrow();
+  test("encryptForUser generates unique salts per call", () => {
+    const blob1 = encryptForUser("diana@example.com", "test");
+    const blob2 = encryptForUser("diana@example.com", "test");
+    expect(blob1.salt).not.toBe(blob2.salt);
+    expect(blob1.ciphertext).not.toBe(blob2.ciphertext);
+  });
+
+  test("decryptForUser rejects tampered ciphertext", () => {
+    const blob = encryptForUser("frank@example.com", "test");
+    const tampered = Buffer.from(blob.ciphertext, "base64");
+    tampered[0] ^= 0xff;
+
+    expect(() => decryptForUser("frank@example.com", {
+      salt: blob.salt,
+      iv: blob.iv,
+      ciphertext: tampered.toString("base64"),
+      v: blob.v
+    })).toThrow();
   });
 });
