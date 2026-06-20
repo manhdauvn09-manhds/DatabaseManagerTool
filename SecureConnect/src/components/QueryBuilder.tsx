@@ -135,7 +135,7 @@ export function QueryBuilder({ columns, onApply, onClose, initialFilters = [] }:
 
           {filters.length === 0 && (
             <div className="text-sm text-zinc-500 p-4 border border-dashed rounded-lg">
-              No filters yet. Click "+ Add filter" to begin.
+              No filters yet. Click &quot;+ Add filter&quot; to begin.
             </div>
           )}
 
