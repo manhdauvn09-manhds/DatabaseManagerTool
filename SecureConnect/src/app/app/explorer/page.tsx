@@ -3,6 +3,7 @@
 import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
+import { QueryBuilder, type FilterItem as QueryBuilderFilterItem } from "@/components/QueryBuilder";
 
 type ColumnInfo = {
   name: string;
@@ -79,6 +80,9 @@ function ExplorerInner() {
   const [delTokenInput, setDelTokenInput] = useState("");
   const [delBusy, setDelBusy] = useState(false);
   const [delError, setDelError] = useState<string | null>(null);
+
+  // Query builder modal state
+  const [queryBuilderOpen, setQueryBuilderOpen] = useState(false);
 
   // Redirect to /app if no cid.
   useEffect(() => {
@@ -173,6 +177,16 @@ function ExplorerInner() {
   }
   function removeFilter(idx: number) {
     setFilters((prev) => prev.filter((_, i) => i !== idx));
+    setOffset(0);
+  }
+
+  function applyQueryBuilderFilters(builderFilters: QueryBuilderFilterItem[]) {
+    const newFilters = builderFilters.map((f) => ({
+      column: f.column,
+      op: f.op as FilterOp,
+      value: f.value
+    }));
+    setFilters(newFilters);
     setOffset(0);
   }
 
@@ -618,6 +632,13 @@ function ExplorerInner() {
                   <button onClick={addFilter} disabled={!draftCol || draftVal === ""} className="rounded-lg border px-2 py-1 text-xs bg-white hover:bg-zinc-100 disabled:opacity-40">
                     + Add
                   </button>
+                  <button
+                    onClick={() => setQueryBuilderOpen(true)}
+                    className="rounded-lg border px-2 py-1 text-xs bg-blue-50 text-blue-700 hover:bg-blue-100"
+                    title="Open advanced query builder"
+                  >
+                    ⚙️ Advanced
+                  </button>
                   {filters.map((f, i) => (
                     <span key={i} className="inline-flex items-center gap-1 rounded-full bg-blue-50 border border-blue-200 text-blue-800 px-2 py-0.5 text-xs">
                       {f.column} {f.op === "contains" ? "⊃" : f.op === "ne" ? "≠" : f.op === "eq" ? "=" : f.op === "gt" ? ">" : f.op === "lt" ? "<" : f.op === "gte" ? "≥" : "≤"} {f.value}
@@ -1009,6 +1030,16 @@ function ExplorerInner() {
             </footer>
           </div>
         </div>
+      )}
+
+      {/* Query Builder modal */}
+      {queryBuilderOpen && columns.length > 0 && (
+        <QueryBuilder
+          columns={columns.map((c) => c.name)}
+          initialFilters={filters.map((f) => ({ id: Math.random().toString(36), ...f }))}
+          onApply={applyQueryBuilderFilters}
+          onClose={() => setQueryBuilderOpen(false)}
+        />
       )}
     </main>
   );

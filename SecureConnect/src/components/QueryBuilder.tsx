@@ -2,14 +2,13 @@
 
 import { useState, useMemo } from "react";
 
-export type FilterOp = "eq" | "ne" | "contains" | "gt" | "lt" | "gte" | "lte" | "in" | "nin" | "between";
+export type FilterOp = "eq" | "ne" | "contains" | "gt" | "lt" | "gte" | "lte";
 
 export interface FilterItem {
   id: string;
   column: string;
   op: FilterOp;
   value: string;
-  value2?: string;
 }
 
 export interface QueryBuilderProps {
@@ -26,10 +25,7 @@ const OPERATORS: Record<FilterOp, string> = {
   gt: ">",
   lt: "<",
   gte: "≥",
-  lte: "≤",
-  in: "IN",
-  nin: "NOT IN",
-  between: "BETWEEN"
+  lte: "≤"
 };
 
 export function QueryBuilder({ columns, onApply, onClose, initialFilters = [] }: QueryBuilderProps) {
@@ -61,13 +57,6 @@ export function QueryBuilder({ columns, onApply, onClose, initialFilters = [] }:
       "WHERE " +
       filters
         .map((f) => {
-          if (f.op === "between" && f.value2) {
-            return `${f.column} BETWEEN ${f.value} AND ${f.value2}`;
-          }
-          if (f.op === "in" || f.op === "nin") {
-            const vals = f.value.split(",").map((v) => `'${v.trim()}'`).join(",");
-            return `${f.column} ${f.op === "in" ? "IN" : "NOT IN"} (${vals})`;
-          }
           const opStr = OPERATORS[f.op];
           return `${f.column} ${opStr} '${f.value}'`;
         })
@@ -135,19 +124,6 @@ export function QueryBuilder({ columns, onApply, onClose, initialFilters = [] }:
                 className="rounded-lg border p-2 text-sm flex-1 bg-white"
                 maxLength={1024}
               />
-              {(f.op === "between") && (
-                <>
-                  <span className="text-sm text-zinc-500">and</span>
-                  <input
-                    type="text"
-                    value={f.value2 || ""}
-                    onChange={(e) => updateFilter(f.id, "value2", e.target.value)}
-                    placeholder="value 2"
-                    className="rounded-lg border p-2 text-sm min-w-[100px] bg-white"
-                    maxLength={1024}
-                  />
-                </>
-              )}
               <button
                 onClick={() => removeFilter(f.id)}
                 className="text-sm px-2 py-2 rounded-lg border bg-red-50 hover:bg-red-100 text-red-600"
