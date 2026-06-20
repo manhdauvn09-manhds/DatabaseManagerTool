@@ -7,6 +7,7 @@ import { QueryBuilder, type FilterItem as QueryBuilderFilterItem } from "@/compo
 import { ImportWizard } from "@/components/ImportWizard";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTheme } from "@/context/ThemeContext";
+import { inferRelationships } from "@/lib/relationships";
 
 type ColumnInfo = {
   name: string;
@@ -30,7 +31,7 @@ function ExplorerInner() {
   const [selectedDb, setSelectedDb] = useState<string | null>(null);
   const [selectedTable, setSelectedTable] = useState<string | null>(null);
 
-  const [view, setView] = useState<"columns" | "data">("data");
+  const [view, setView] = useState<"columns" | "data" | "relationships">("data");
   const [columns, setColumns] = useState<ColumnInfo[]>([]);
   const [rowsData, setRowsData] = useState<RowsResp | null>(null);
 
@@ -636,15 +637,21 @@ function ExplorerInner() {
                   <div className="flex gap-1">
                     <button
                       onClick={() => setView("data")}
-                      className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "data" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
+                      className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "data" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "bg-white dark:bg-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-600")}
                     >
                       Data
                     </button>
                     <button
                       onClick={() => setView("columns")}
-                      className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "columns" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
+                      className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "columns" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "bg-white dark:bg-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-600")}
                     >
                       Columns
+                    </button>
+                    <button
+                      onClick={() => setView("relationships")}
+                      className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "relationships" ? "bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900" : "bg-white dark:bg-zinc-700 hover:bg-zinc-50 dark:hover:bg-zinc-600")}
+                    >
+                      🔗 Relations
                     </button>
                   </div>
                 </div>
@@ -699,6 +706,36 @@ function ExplorerInner() {
               )}
 
               <div className="flex-1 overflow-auto">
+                {view === "relationships" && (
+                  <div className="p-4 space-y-4">
+                    {(() => {
+                      const rels = inferRelationships(selectedTable, columns, databases.flatMap((db) => tablesByDb[db] ?? []));
+                      if (rels.length === 0) {
+                        return <div className="text-sm text-zinc-500 dark:text-zinc-400">No inferred relationships found.</div>;
+                      }
+                      return (
+                        <div className="space-y-3">
+                          {rels.map((rel, i) => (
+                            <div key={i} className="border dark:border-zinc-600 rounded-lg p-3">
+                              <div className="flex items-center gap-2 text-sm font-medium">
+                                <span className="bg-blue-100 dark:bg-blue-900 text-blue-900 dark:text-blue-100 px-2 py-1 rounded text-xs">
+                                  {rel.confidence}
+                                </span>
+                                <code className="bg-zinc-100 dark:bg-zinc-800 px-2 py-1 rounded text-xs">{rel.fromColumn}</code>
+                                <span>→</span>
+                                <code className="bg-green-100 dark:bg-green-900 text-green-900 dark:text-green-100 px-2 py-1 rounded text-xs">
+                                  {rel.likelyToTable}.{rel.likelyPrimaryKey}
+                                </code>
+                              </div>
+                              <div className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">{rel.reason}</div>
+                            </div>
+                          ))}
+                        </div>
+                      );
+                    })()}
+                  </div>
+                )}
+
                 {view === "columns" && (
                   <table className="w-full text-sm border-separate border-spacing-0">
                     <thead className="sticky top-0 bg-zinc-100 text-left">
