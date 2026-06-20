@@ -11,7 +11,8 @@
       "mcp__codeprovider-mcp__list_servers",
       "mcp__codeprovider-mcp__docker_status",
       "mcp__codeprovider-mcp__container_logs",
-      "Bash(npm test *)"
+      "Bash(npm test *)",
+      "mcp__CodeProvider_MCP__run_command"
     ]
   }
 }
