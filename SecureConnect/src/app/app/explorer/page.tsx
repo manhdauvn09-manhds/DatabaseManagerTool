@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { QueryBuilder, type FilterItem as QueryBuilderFilterItem } from "@/components/QueryBuilder";
 import { ImportWizard } from "@/components/ImportWizard";
+import { HealthPanel } from "@/components/HealthPanel";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTheme } from "@/context/ThemeContext";
 import { inferRelationships } from "@/lib/relationships";
@@ -538,32 +539,35 @@ function ExplorerInner() {
 
       <div className="flex flex-1 min-h-0">
         {/* Sidebar */}
-        <aside className="w-72 border-r border-zinc-200 bg-white overflow-y-auto">
-          <div className="px-3 py-2 text-xs uppercase text-zinc-500 tracking-wide border-b">Databases</div>
-          {loading && databases.length === 0 && <div className="p-3 text-sm text-zinc-500">Loading…</div>}
-          {error && databases.length === 0 && <div className="p-3 text-sm text-red-600">{error}</div>}
+        <aside className="w-72 border-r border-zinc-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 overflow-y-auto">
+          <div className="p-3 space-y-3">
+            <HealthPanel connectionId={cid} />
+          </div>
+          <div className="px-3 py-2 text-xs uppercase text-zinc-500 dark:text-zinc-400 tracking-wide border-b dark:border-zinc-700">Databases</div>
+          {loading && databases.length === 0 && <div className="p-3 text-sm text-zinc-500 dark:text-zinc-400">Loading…</div>}
+          {error && databases.length === 0 && <div className="p-3 text-sm text-red-600 dark:text-red-400">{error}</div>}
           <ul className="text-sm">
             {databases.map((db) => (
               <li key={db}>
                 <button
                   onClick={() => toggleDb(db)}
-                  className="w-full text-left px-3 py-1.5 hover:bg-zinc-50 flex items-center gap-2"
+                  className="w-full text-left px-3 py-1.5 hover:bg-zinc-50 dark:hover:bg-zinc-800 flex items-center gap-2"
                 >
-                  <span className="text-xs text-zinc-400">{expandedDb === db ? "▾" : "▸"}</span>
+                  <span className="text-xs text-zinc-400 dark:text-zinc-500">{expandedDb === db ? "▾" : "▸"}</span>
                   <span className="font-medium">{db}</span>
                 </button>
                 {expandedDb === db && (
-                  <ul className="ml-5 border-l border-zinc-100">
+                  <ul className="ml-5 border-l border-zinc-100 dark:border-zinc-700">
                     {(tablesByDb[db] ?? []).length === 0 && (
-                      <li className="px-3 py-1 text-xs text-zinc-400">{tablesByDb[db] ? "(empty)" : "Loading…"}</li>
+                      <li className="px-3 py-1 text-xs text-zinc-400 dark:text-zinc-500">{tablesByDb[db] ? "(empty)" : "Loading…"}</li>
                     )}
                     {(tablesByDb[db] ?? []).map((t) => (
                       <li key={t}>
                         <button
                           onClick={() => selectTable(db, t)}
                           className={
-                            "w-full text-left px-3 py-1 hover:bg-zinc-50 " +
-                            (selectedDb === db && selectedTable === t ? "bg-zinc-100 font-medium" : "")
+                            "w-full text-left px-3 py-1 hover:bg-zinc-50 dark:hover:bg-zinc-800 " +
+                            (selectedDb === db && selectedTable === t ? "bg-zinc-100 dark:bg-zinc-700 font-medium" : "")
                           }
                         >
                           {t}
