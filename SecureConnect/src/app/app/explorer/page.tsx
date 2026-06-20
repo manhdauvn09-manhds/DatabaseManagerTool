@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { QueryBuilder, type FilterItem as QueryBuilderFilterItem } from "@/components/QueryBuilder";
+import { ImportWizard } from "@/components/ImportWizard";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 import { useTheme } from "@/context/ThemeContext";
 
@@ -86,6 +87,9 @@ function ExplorerInner() {
 
   // Query builder modal state
   const [queryBuilderOpen, setQueryBuilderOpen] = useState(false);
+
+  // Import wizard state
+  const [importOpen, setImportOpen] = useState(false);
 
   // Redirect to /app if no cid.
   useEffect(() => {
@@ -199,6 +203,22 @@ function ExplorerInner() {
     }));
     setFilters(newFilters);
     setOffset(0);
+  }
+
+  async function handleImport(rows: Record<string, string>[]) {
+    if (!selectedDb || !selectedTable) throw new Error("Table not selected");
+    let imported = 0;
+    for (const row of rows) {
+      try {
+        await apiPost(`/api/db/${cid}/rows`, { database: selectedDb, table: selectedTable, data: row });
+        imported++;
+      } catch (e) {
+        throw new Error(`Import failed at row ${imported + 1}: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
+    setRefreshSeq((n) => n + 1);
+    setError(`✅ Imported ${imported} rows`);
+    setTimeout(() => setError(null), 4000);
   }
 
   // Type-aware value input for Insert/Edit modals. `disabled` reflects the NULL toggle.
@@ -590,15 +610,22 @@ function ExplorerInner() {
                       >
                         + Insert row
                       </button>
-                      <div className="flex items-center text-xs border rounded-xl overflow-hidden" title="Export current view">
-                        <span className="px-2 py-1 text-zinc-500 bg-zinc-50 border-r">Export</span>
+                      <button
+                        onClick={() => setImportOpen(true)}
+                        className="px-3 py-1.5 rounded-xl text-sm border bg-blue-600 text-white hover:bg-blue-700"
+                        title="Import data from CSV"
+                      >
+                        📥 Import
+                      </button>
+                      <div className="flex items-center text-xs border rounded-xl overflow-hidden dark:border-zinc-600" title="Export current view">
+                        <span className="px-2 py-1 text-zinc-500 dark:text-zinc-400 bg-zinc-50 dark:bg-zinc-700 border-r dark:border-zinc-600">Export</span>
                         {(["csv", "json", "sql"] as const).map((fmt) => (
                           <a
                             key={fmt}
                             href={selectedDb && selectedTable
                               ? `/api/db/${cid}/export?database=${encodeURIComponent(selectedDb)}&table=${encodeURIComponent(selectedTable)}&format=${fmt}&limit=10000${sortCol ? `&sort=${encodeURIComponent(sortCol)}&dir=${sortDir}` : ""}${filtersQs}`
                               : "#"}
-                            className="px-2 py-1 hover:bg-zinc-100 uppercase border-r last:border-r-0"
+                            className="px-2 py-1 hover:bg-zinc-100 dark:hover:bg-zinc-600 uppercase border-r dark:border-zinc-600 last:border-r-0"
                           >
                             {fmt}
                           </a>
@@ -1059,6 +1086,15 @@ function ExplorerInner() {
           initialFilters={filters.map((f) => ({ id: Math.random().toString(36), ...f }))}
           onApply={applyQueryBuilderFilters}
           onClose={() => setQueryBuilderOpen(false)}
+        />
+      )}
+
+      {/* Import Wizard modal */}
+      {importOpen && selectedTable && columns.length > 0 && (
+        <ImportWizard
+          columns={columns.map((c) => c.name)}
+          onImport={handleImport}
+          onClose={() => setImportOpen(false)}
         />
       )}
     </main>
