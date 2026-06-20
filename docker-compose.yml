@@ -1,14 +1,14 @@
 # DatabaseManager — runs on a SHARED Docker host (alongside other apps).
 #
 # Defaults:
-#   - Container binds to 127.0.0.1:${HOST_PORT:-13000} → only the local reverse
+#   - Container binds to 127.0.0.1:${HOST_PORT:-9230} → only the local reverse
 #     proxy (nginx / NPM / Caddy on the host) can reach it. Nothing exposed to
 #     the public internet directly.
 #   - Image name + container name are namespaced so they don't collide.
 #   - Resource limits set so a runaway app can't starve the box.
 #
 # Public hostname:   DBManager.allin1site.com  (TLS terminated at shared proxy)
-# Upstream port:     127.0.0.1:13000 → container:3000
+# Upstream port:     127.0.0.1:9230 → container:3000  (host nginx vhost proxy_pass)
 #
 # If your shared proxy is Traefik (Docker container on a shared network) instead
 # of nginx-on-host, uncomment the `labels:` and `networks:` blocks and remove
@@ -25,7 +25,7 @@ services:
     expose:
       - "3000"
     ports:
-      - "127.0.0.1:${HOST_PORT:-13000}:3000"
+      - "127.0.0.1:${HOST_PORT:-9230}:3000"
     env_file:
       - ./SecureConnect/.env.production
     environment:
