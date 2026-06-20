@@ -5,8 +5,12 @@ const A = "alice@example.com";
 const B = "bob@example.com";
 
 describe("patStore (in-memory)", () => {
-  beforeEach(() => resetPats());
-  afterEach(() => vi.restoreAllMocks());
+  beforeEach(() => {
+    resetPats();
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
   it("creates a token with the dbm_pat_ prefix and never returns the hash", async () => {
     const { token, meta } = await createPat(A, "cli");
