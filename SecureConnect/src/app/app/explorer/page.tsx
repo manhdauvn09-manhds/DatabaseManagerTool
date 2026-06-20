@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { QueryBuilder, type FilterItem as QueryBuilderFilterItem } from "@/components/QueryBuilder";
 import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
+import { useTheme } from "@/context/ThemeContext";
 
 type ColumnInfo = {
   name: string;
@@ -20,6 +21,7 @@ function ExplorerInner() {
   const router = useRouter();
   const sp = useSearchParams();
   const cid = sp.get("cid") ?? "";
+  const { theme, toggleTheme } = useTheme();
 
   const [databases, setDatabases] = useState<string[]>([]);
   const [tablesByDb, setTablesByDb] = useState<Record<string, string[]>>({});
@@ -493,13 +495,21 @@ function ExplorerInner() {
         </div>
         <div className="flex items-center gap-2">
           <button
+            onClick={toggleTheme}
+            className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-zinc-100 dark:bg-zinc-800 dark:hover:bg-zinc-700"
+            title={`Switch to ${theme === "light" ? "dark" : "light"} mode`}
+            aria-label={`Theme: ${theme}`}
+          >
+            {theme === "light" ? "🌙" : "☀️"}
+          </button>
+          <button
             onClick={disconnect}
-            className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-zinc-50"
+            className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-zinc-50 dark:bg-zinc-800 dark:hover:bg-zinc-700"
             title="Quay lại màn hình Connect"
           >
             ← Back to connect
           </button>
-          <button onClick={() => signOut({ callbackUrl: "/signin" })} className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-zinc-50">
+          <button onClick={() => signOut({ callbackUrl: "/signin" })} className="text-sm px-3 py-1.5 rounded-xl border bg-white hover:bg-zinc-50 dark:bg-zinc-800 dark:hover:bg-zinc-700">
             Sign out
           </button>
         </div>
