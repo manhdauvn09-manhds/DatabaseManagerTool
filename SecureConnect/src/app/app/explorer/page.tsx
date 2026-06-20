@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { QueryBuilder, type FilterItem as QueryBuilderFilterItem } from "@/components/QueryBuilder";
+import { useKeyboardShortcuts } from "@/hooks/useKeyboardShortcuts";
 
 type ColumnInfo = {
   name: string;
@@ -88,6 +89,14 @@ function ExplorerInner() {
   useEffect(() => {
     if (!cid) router.replace("/app");
   }, [cid, router]);
+
+  // Keyboard shortcuts
+  useKeyboardShortcuts({
+    "ctrl+k": () => setQueryBuilderOpen(true),
+    "ctrl+enter": () => setRefreshSeq((n) => n + 1),
+    "ctrl+i": () => openInsertModal(),
+    "ctrl+l": () => { setFilters([]); setOffset(0); }
+  });
 
   const apiGet = useCallback(async <T,>(path: string): Promise<T> => {
     const res = await fetch(path, { cache: "no-store" });
@@ -567,6 +576,7 @@ function ExplorerInner() {
                       <button
                         onClick={openInsertModal}
                         className="px-3 py-1.5 rounded-xl text-sm border bg-emerald-600 text-white hover:bg-emerald-700"
+                        title="Insert new row (Ctrl+I)"
                       >
                         + Insert row
                       </button>
@@ -635,7 +645,7 @@ function ExplorerInner() {
                   <button
                     onClick={() => setQueryBuilderOpen(true)}
                     className="rounded-lg border px-2 py-1 text-xs bg-blue-50 text-blue-700 hover:bg-blue-100"
-                    title="Open advanced query builder"
+                    title="Open advanced query builder (Ctrl+K)"
                   >
                     ⚙️ Advanced
                   </button>
