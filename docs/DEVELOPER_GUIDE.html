@@ -138,7 +138,7 @@
   <strong>Live</strong>
   <ul>
     <li>Domain: <code>https://DBManager.allin1site.com</code></li>
-    <li>Server: <code>root@62.238.28.106</code> (Hetzner, shared box với nhiều app khác)</li>
+    <li>Server: <code>root@[DEPRECATED: prod-106]</code> (Hetzner, shared box với nhiều app khác)</li>
     <li>Repo: <code>https://github.com/manhdauvn09-manhds/DatabaseManagerTool</code></li>
     <li>Branch: <code>main</code> · Latest: <code>cab72b5</code> (healthcheck IPv4 fix)</li>
   </ul>
@@ -213,7 +213,7 @@
                                 ┌──────────────────────┐
                                 │  nginx on host       │
                                 │  zzz-DBManager...    │
-                                │  443 → 127.0.0.1:13000│
+                                │  443 → 127.0.0.1:9230│
                                 └────────────┬──────────┘
                                              │
                           ┌──────────────────▼───────────────────┐
@@ -246,7 +246,7 @@
 </code></pre>
 
 <div class="note">
-  <strong>Quan trọng:</strong> Container bind <code>127.0.0.1:13000</code> — không expose internet trực tiếp.
+  <strong>Quan trọng:</strong> Container bind <code>127.0.0.1:9230</code> — không expose internet trực tiếp.
   Nginx host route domain → upstream loopback. Server có nhiều docker khác cùng box,
   symlink site <code>zzz-DBManager.allin1site.com.conf</code> ở vị trí <em>cuối</em>
   trong <code>sites-enabled/</code> để KHÔNG bị làm fallback default cho HTTPS unknown server_name.
@@ -754,7 +754,7 @@ volumes:
                           tránh trở thành implicit default cho HTTPS unmatched
 /etc/ssl/certs/dbmanager.pem      self-signed (CF Full SSL trust)
 /etc/ssl/private/dbmanager.key</code></pre>
-<p>Server config: redirect 80→443, proxy_pass <code>http://127.0.0.1:13000</code>,
+<p>Server config: redirect 80→443, proxy_pass <code>http://127.0.0.1:9230</code>,
    include <code>cloudflare-realip.conf</code> snippet, security headers ở Next.js layer.</p>
 
 <h2 id="deploy">18. Deploy flow</h2>
@@ -766,7 +766,7 @@ volumes:
 1. git rev-parse  (sanity)
 2. git add -A + commit (skip with -SkipCommit)
 3. git push origin main (skip with -SkipPush)
-4. ssh root@62.238.28.106 →
+4. ssh root@[DEPRECATED: prod-106] →
    cd /opt/dbmanager
    git fetch --all --prune
    git reset --hard origin/main

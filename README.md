@@ -39,7 +39,7 @@ git add -A && git commit -m "chore: initial commit"
 git push -u origin main
 ```
 
-**Trên server (chạy 1 lần):** xem section "Shared server deploy" bên dưới — flow đầy đủ cho deployment này (`62.238.28.106` / `DBManager.allin1site.com`).
+**Trên server (chạy 1 lần):** xem CLAUDE.md để biết server hiện tại và hướng dẫn deploy (server cũ 62.238.28.106 đã xoá 2026-06-04).
 
 ### Deploy lần tiếp theo
 
@@ -54,58 +54,9 @@ Script tự động:
 
 **Các flag hữu ích:** `-SkipCommit`, `-SkipPush`, `-SkipDeploy`, `-SkipVerify`. Xem `Get-Help .\deploy.ps1 -Full` để biết chi tiết.
 
-### Shared server deploy (THIS deployment)
+### ⚠️ Deployment — Cập nhật lên mcp-80 (2026-06-04+)
 
-| Item | Value |
-|---|---|
-| Server | `root@62.238.28.106` (SSH passwordless từ máy local) |
-| Domain | `DBManager.allin1site.com` (DNS A → 62.238.28.106, qua Cloudflare) |
-| Repo | `https://github.com/manhdauvn09-manhds/DatabaseManagerTool.git` |
-| Container | `dbmanager-app` bind `127.0.0.1:13000:3000` |
-| Reverse proxy | nginx trên host (cùng pattern allin1site.com/minigames) → self-signed cert |
-| Path trên server | `/opt/dbmanager` |
-
-**Trạng thái server (đã probe):**
-- ✅ Docker 29.4.2 + Compose v5.1.3 đã có
-- ✅ nginx + certbot 2.9.0 đã có
-- ✅ Port 13000 free
-- ⚠️ Chưa có cert cho `DBManager.allin1site.com` — script `setup-nginx-site.sh` sẽ gen self-signed (CF Full SSL trust)
-
-#### Bước 1 (LẦN ĐẦU) — bootstrap server thủ công
-
-```bash
-ssh root@62.238.28.106
-cd /opt
-git clone https://github.com/manhdauvn09-manhds/DatabaseManagerTool.git dbmanager
-cd dbmanager
-
-# Tạo .env.production. Nội dung copy từ máy local: deploy/.env.production.template
-nano SecureConnect/.env.production
-# Paste content, replace ??? với AUTH_GOOGLE_SECRET.
-
-# Cài nginx site + self-signed cert
-bash deploy/nginx/setup-nginx-site.sh
-
-# First build
-docker compose up -d --build
-docker compose ps
-curl -fsS https://DBManager.allin1site.com/api/health   # expect {"ok":true,...}
-```
-
-#### Bước 2 (DEPLOY các lần sau) — chạy 1 lệnh ở máy local
-
-```powershell
-cd E:\SourceCode\DatabaseManager
-.\deploy.ps1 -Message "<commit message>"
-```
-
-Script sẽ tự: `git add → commit → push origin/main → ssh root@62.238.28.106 → git reset --hard origin/main → docker compose up -d --build → health check`.
-
-Skip flags: `-SkipCommit`, `-SkipPush`, `-SkipDeploy`, `-SkipVerify`. Xem `Get-Help .\deploy.ps1 -Full`.
-
-#### Other reverse proxy options (không dùng trong deployment này)
-
-NPM / Caddy / Traefik — chỉ áp dụng nếu sau này migrate sang server khác. Pattern tương tự nginx (proxy_pass `http://127.0.0.1:13000` + TLS). Traefik labels có sẵn (commented) trong `docker-compose.yml`.
+**Server cũ `62.238.28.106` đã xoá 2026-06-04.** Xem `CLAUDE.md` (ground truth) để biết hướng dẫn deploy hiện tại trên mcp-80 (`65.108.62.80`).
 
 ### Deploy lần tiếp theo
 

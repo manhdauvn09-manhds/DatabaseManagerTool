@@ -1,8 +1,9 @@
 #!/usr/bin/env bash
-# Install DBManager nginx site on the shared server.
-# Idempotent: safe to re-run.
+# ⚠️ DEPRECATED — Server 62.238.28.106 was deleted 2026-06-04.
+# This script is kept for reference only. Current deployment is on mcp-80 (65.108.62.80).
+# See CLAUDE.md for current deployment instructions.
 #
-# Run as root on 62.238.28.106:
+# Legacy usage (62.238.28.106 — no longer available):
 #   bash /opt/dbmanager/deploy/nginx/setup-nginx-site.sh
 
 set -euo pipefail
@@ -72,4 +73,4 @@ echo
 echo "[ok] $SITE_NAME ready."
 echo "    Cert:    $CERT_PEM"
 echo "    Conf:    $DST_AVAIL"
-echo "    Upstream: 127.0.0.1:13000"
+echo "    Upstream: 127.0.0.1:9230"
