@@ -1,0 +1,471 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Hướng dẫn sử dụng - DatabaseManager</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      line-height: 1.6;
+      color: #18181b;
+      background: #fafafa;
+    }
+    header {
+      background: linear-gradient(135deg, #1f2937 0%, #111827 100%);
+      color: white;
+      padding: 4rem 2rem;
+      text-align: center;
+    }
+    header h1 { font-size: 2.5rem; margin-bottom: 0.5rem; }
+    header p { font-size: 1.1rem; opacity: 0.9; }
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+    nav {
+      background: white;
+      border-radius: 8px;
+      padding: 1.5rem;
+      margin: 2rem 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      position: sticky;
+      top: 0;
+      z-index: 10;
+    }
+    nav ul { list-style: none; display: flex; flex-wrap: wrap; gap: 1rem; }
+    nav a {
+      color: #2563eb;
+      text-decoration: none;
+      font-weight: 500;
+      padding: 0.5rem 1rem;
+      border-radius: 4px;
+      transition: background 0.2s;
+    }
+    nav a:hover { background: #eff6ff; }
+    section {
+      background: white;
+      border-radius: 8px;
+      padding: 2rem;
+      margin: 2rem 0;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+    }
+    section h2 {
+      color: #1f2937;
+      font-size: 1.8rem;
+      margin-bottom: 1rem;
+      padding-bottom: 0.5rem;
+      border-bottom: 2px solid #2563eb;
+    }
+    section h3 {
+      color: #374151;
+      font-size: 1.3rem;
+      margin-top: 1.5rem;
+      margin-bottom: 0.8rem;
+    }
+    .feature-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 1.5rem;
+      margin: 1.5rem 0;
+    }
+    .feature-card {
+      border: 1px solid #e5e7eb;
+      border-radius: 8px;
+      padding: 1.5rem;
+      background: #f9fafb;
+      transition: all 0.3s;
+    }
+    .feature-card:hover {
+      border-color: #2563eb;
+      box-shadow: 0 4px 12px rgba(37, 99, 235, 0.1);
+      transform: translateY(-2px);
+    }
+    .feature-card h4 {
+      color: #2563eb;
+      margin-bottom: 0.8rem;
+      font-size: 1.1rem;
+    }
+    code {
+      background: #f3f4f6;
+      padding: 0.2rem 0.4rem;
+      border-radius: 3px;
+      font-family: 'Monaco', 'Courier New', monospace;
+      font-size: 0.9rem;
+      color: #dc2626;
+    }
+    .step {
+      background: #eff6ff;
+      border-left: 4px solid #2563eb;
+      padding: 1rem;
+      margin: 1rem 0;
+      border-radius: 4px;
+    }
+    .step strong { color: #2563eb; }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+    }
+    table th {
+      background: #f3f4f6;
+      padding: 0.8rem;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid #e5e7eb;
+    }
+    table td {
+      padding: 0.8rem;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    table tr:hover { background: #f9fafb; }
+    .tip {
+      background: #fef3c7;
+      border-left: 4px solid #f59e0b;
+      padding: 1rem;
+      margin: 1rem 0;
+      border-radius: 4px;
+    }
+    .warning {
+      background: #fee2e2;
+      border-left: 4px solid #dc2626;
+      padding: 1rem;
+      margin: 1rem 0;
+      border-radius: 4px;
+    }
+    footer {
+      background: #1f2937;
+      color: white;
+      text-align: center;
+      padding: 2rem;
+      margin-top: 3rem;
+    }
+    footer p { margin: 0.5rem 0; }
+    .btn-back {
+      display: inline-block;
+      background: #2563eb;
+      color: white;
+      padding: 0.8rem 1.5rem;
+      border-radius: 6px;
+      text-decoration: none;
+      margin: 2rem 0;
+      transition: background 0.2s;
+    }
+    .btn-back:hover { background: #1d4ed8; }
+    @media (max-width: 768px) {
+      header h1 { font-size: 1.8rem; }
+      nav ul { flex-direction: column; gap: 0.5rem; }
+      section { padding: 1.5rem; }
+      .feature-grid { grid-template-columns: 1fr; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>📚 Hướng dẫn sử dụng DatabaseManager</h1>
+    <p>Quản lý cơ sở dữ liệu an toàn trên nền web</p>
+  </header>
+
+  <div class="container">
+    <nav>
+      <ul>
+        <li><a href="#dang-nhap">🔐 Đăng nhập</a></li>
+        <li><a href="#ket-noi">🔌 Kết nối DB</a></li>
+        <li><a href="#trac-cuu">🔍 Truy cập dữ liệu</a></li>
+        <li><a href="#nhap-xuat">📥 Nhập/Xuất</a></li>
+        <li><a href="#bao-mat">🛡️ Bảo mật</a></li>
+        <li><a href="#faq">❓ FAQ</a></li>
+      </ul>
+    </nav>
+
+    <!-- Section 1: Đăng nhập -->
+    <section id="dang-nhap">
+      <h2>🔐 Đăng nhập & Xác thực</h2>
+
+      <h3>Bước 1: Truy cập ứng dụng</h3>
+      <p>Mở trình duyệt và tới <code>https://DBManager.allin1site.com</code></p>
+
+      <h3>Bước 2: Đăng nhập Google</h3>
+      <div class="step">
+        <strong>✓ Click nút "Sign in with Google"</strong><br>
+        Bạn sẽ được chuyển hướng tới trang đăng nhập Google. Nhập tài khoản Google của bạn.
+      </div>
+
+      <h3>Bước 3: Xác thực</h3>
+      <div class="step">
+        <strong>✓ Hoàn tất 2-factor authentication (nếu có)</strong><br>
+        Sau khi đăng nhập Google thành công, bạn sẽ được tự động chuyển hướng vào dashboard.
+      </div>
+
+      <div class="tip">
+        <strong>💡 Mẹo:</strong> Để bảo mật, hãy đảm bảo luôn sử dụng HTTPS. Không bao giờ chia sẻ mật khẩu Google của bạn.
+      </div>
+    </section>
+
+    <!-- Section 2: Kết nối DB -->
+    <section id="ket-noi">
+      <h2>🔌 Tạo & Quản lý kết nối cơ sở dữ liệu</h2>
+
+      <h3>Các loại cơ sở dữ liệu được hỗ trợ</h3>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h4>🐬 MySQL / MariaDB</h4>
+          <p>Port: 3306 (mặc định)<br>Hỗ trợ SSL connection</p>
+        </div>
+        <div class="feature-card">
+          <h4>🐘 PostgreSQL</h4>
+          <p>Port: 5432 (mặc định)<br>Hỗ trợ SSL connection</p>
+        </div>
+        <div class="feature-card">
+          <h4>🔷 SQL Server</h4>
+          <p>Port: 1433 (mặc định)<br>Hỗ trợ Windows auth</p>
+        </div>
+      </div>
+
+      <h3>Tạo kết nối mới</h3>
+      <table>
+        <tr>
+          <th>Trường thông tin</th>
+          <th>Mô tả</th>
+          <th>Ví dụ</th>
+        </tr>
+        <tr>
+          <td><code>Database Type</code></td>
+          <td>Chọn loại DB hoặc "Auto" để tự động phát hiện</td>
+          <td>MySQL, PostgreSQL, MSSQL</td>
+        </tr>
+        <tr>
+          <td><code>Host</code></td>
+          <td>Địa chỉ server hoặc IP</td>
+          <td>localhost, 192.168.1.10</td>
+        </tr>
+        <tr>
+          <td><code>Port</code></td>
+          <td>Cổng kết nối</td>
+          <td>3306, 5432, 1433</td>
+        </tr>
+        <tr>
+          <td><code>Username</code></td>
+          <td>Tên người dùng DB (tuỳ chọn)</td>
+          <td>root, admin, sa</td>
+        </tr>
+        <tr>
+          <td><code>Password</code></td>
+          <td>Mật khẩu (được mã hoá RSA client-side)</td>
+          <td>***</td>
+        </tr>
+        <tr>
+          <td><code>SSL</code></td>
+          <td>Kích hoạt SSL nếu cần</td>
+          <td>☑ Enabled / ☐ Disabled</td>
+        </tr>
+      </table>
+
+      <div class="step">
+        <strong>✓ Quy trình kết nối:</strong>
+        <ol style="margin-left: 1.5rem; margin-top: 0.8rem;">
+          <li>Nhập thông tin kết nối</li>
+          <li>Mật khẩu được mã hoá RSA trên trình duyệt (không gửi plain text)</li>
+          <li>Click "Test Connection" để kiểm tra</li>
+          <li>Click "Save Connection" để lưu vào hồ sơ của bạn</li>
+        </ol>
+      </div>
+
+      <div class="warning">
+        <strong>⚠️ Lưu ý:</strong> Mật khẩu được mã hoá với RSA-OAEP 2048-bit trước khi gửi. Tuy nhiên, luôn sử dụng HTTPS để bảo vệ thêm.
+      </div>
+    </section>
+
+    <!-- Section 3: Truy cập dữ liệu -->
+    <section id="trac-cuu">
+      <h2>🔍 Truy cập & Quản lý dữ liệu</h2>
+
+      <h3>Khám phá cơ sở dữ liệu</h3>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h4>📊 Danh sách bảng</h4>
+          <p>Xem tất cả bảng trong database. Bấm vào bảng để xem cột và dữ liệu.</p>
+        </div>
+        <div class="feature-card">
+          <h4>📋 Xem cột</h4>
+          <p>Kiểm tra kiểu dữ liệu, khóa chính, giá trị mặc định cho mỗi cột.</p>
+        </div>
+        <div class="feature-card">
+          <h4>🔗 Quan hệ bảng</h4>
+          <p>Hiển thị các mối quan hệ giữa các bảng (Foreign Key references).</p>
+        </div>
+      </div>
+
+      <h3>Xem & Lọc dữ liệu</h3>
+      <div class="step">
+        <strong>✓ Xem bản ghi (Rows):</strong>
+        <ol style="margin-left: 1.5rem; margin-top: 0.8rem;">
+          <li>Click vào bảng để xem dữ liệu</li>
+          <li>Các hàng được hiển thị dưới dạng bảng với phân trang</li>
+          <li>Click vào hàng để xem chi tiết đầy đủ</li>
+        </ol>
+      </div>
+
+      <div class="step">
+        <strong>✓ Tìm kiếm & Lọc dữ liệu:</strong>
+        <ol style="margin-left: 1.5rem; margin-top: 0.8rem;">
+          <li>Sử dụng Advanced Search để xây dựng điều kiện phức tạp</li>
+          <li>Hỗ trợ các toán tử: =, ≠, >, <, >=, <=, CONTAINS</li>
+          <li>Kết hợp nhiều điều kiện với AND/OR logic</li>
+          <li>Xem SQL WHERE preview trước khi thực thi</li>
+        </ol>
+      </div>
+
+      <h3>Thực thi SQL trực tiếp</h3>
+      <div class="step">
+        <strong>✓ SQL Editor:</strong>
+        <p style="margin-top: 0.8rem;">
+          Nhập trực tiếp câu lệnh SQL (SELECT, EXPLAIN) để thực thi.
+          Hữu ích cho các truy vấn phức tạp mà Advanced Search không thể biểu diễn.
+        </p>
+      </div>
+
+      <div class="warning">
+        <strong>⚠️ Lưu ý:</strong> SQL Editor chỉ cho phép SELECT và EXPLAIN. Các lệnh DELETE, UPDATE, INSERT được chuyển hướng tới Bulk Edit để có thể review.
+      </div>
+    </section>
+
+    <!-- Section 4: Nhập/Xuất -->
+    <section id="nhap-xuat">
+      <h2>📥 Nhập & Xuất dữ liệu</h2>
+
+      <h3>Xuất dữ liệu (Export)</h3>
+      <div class="step">
+        <strong>✓ Xuất tất cả bản ghi:</strong>
+        <ol style="margin-left: 1.5rem; margin-top: 0.8rem;">
+          <li>Chọn bảng muốn xuất</li>
+          <li>Click nút "Export" → CSV</li>
+          <li>File CSV sẽ được tải về máy</li>
+        </ol>
+      </div>
+
+      <h3>Nhập dữ liệu (Import)</h3>
+      <div class="step">
+        <strong>✓ Import CSV vào bảng:</strong>
+        <ol style="margin-left: 1.5rem; margin-top: 0.8rem;">
+          <li>Click nút "Import"</li>
+          <li>Chọn file CSV</li>
+          <li>Hệ thống sẽ:
+            <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
+              <li>Tự động nhận dạng header (cột) từ CSV</li>
+              <li>Cho phép map các cột CSV sang cột bảng</li>
+              <li>Hiển thị preview 10 hàng đầu tiên</li>
+              <li>Bạn review rồi confirm import</li>
+            </ul>
+          </li>
+        </ol>
+      </div>
+
+      <div class="tip">
+        <strong>💡 Mẹo CSV:</strong> Đảm bảo file CSV:
+        <ul style="margin-left: 1.5rem; margin-top: 0.5rem;">
+          <li>Có header row ở dòng đầu tiên</li>
+          <li>Encoding UTF-8</li>
+          <li>Delimiter là dấu phẩy (,) hoặc tab</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Section 5: Bảo mật -->
+    <section id="bao-mat">
+      <h2>🛡️ Bảo mật & Quyền riêng tư</h2>
+
+      <h3>Mã hoá mật khẩu</h3>
+      <div class="feature-grid">
+        <div class="feature-card">
+          <h4>🔐 Client-side Encryption</h4>
+          <p>Mật khẩu được mã hoá RSA-OAEP 2048-bit trên trình duyệt của bạn trước khi gửi tới server.</p>
+        </div>
+        <div class="feature-card">
+          <h4>🔐 Server-side Vault</h4>
+          <p>Trên server, mật khẩu được mã hoá AES-256-GCM với khóa sinh từ HKDF-SHA-256.</p>
+        </div>
+        <div class="feature-card">
+          <h4>🔐 HTTPS / TLS</h4>
+          <p>Tất cả traffic được bảo vệ bằng HTTPS. Certificate được quản lý bởi Cloudflare.</p>
+        </div>
+      </div>
+
+      <h3>Quản lý phiên làm việc (Sessions)</h3>
+      <div class="step">
+        <strong>✓ Session Timeout:</strong>
+        <p style="margin-top: 0.8rem;">
+          Phiên làm việc có thời gian sống là 24 giờ. Sau đó, bạn cần đăng nhập lại để tiếp tục.
+        </p>
+      </div>
+
+      <h3>Chia sẻ an toàn (Share Links)</h3>
+      <div class="step">
+        <strong>✓ Tạo share link read-only:</strong>
+        <ol style="margin-left: 1.5rem; margin-top: 0.8rem;">
+          <li>Click nút "Share" ở trang explorer</li>
+          <li>Hệ thống sinh ra unique token</li>
+          <li>Chia sẻ link với người khác</li>
+          <li>Người nhận chỉ có quyền xem (read-only), không thể sửa/xoá</li>
+        </ol>
+      </div>
+
+      <div class="warning">
+        <strong>⚠️ Quy tắc bảo mật:</strong>
+        <ul style="margin-left: 1.5rem; margin-top: 0.8rem;">
+          <li>Không bao giờ chia sẻ share link publicly (nó chứa connection credentials)</li>
+          <li>Hãy yêu cầu người dùng login bằng Google account của họ</li>
+          <li>Share link có thể bị vô hiệu hoá bất cứ lúc nào từ phía owner</li>
+        </ul>
+      </div>
+    </section>
+
+    <!-- Section 6: FAQ -->
+    <section id="faq">
+      <h2>❓ Câu hỏi thường gặp</h2>
+
+      <h3>Có thể đăng nhập bằng cách khác ngoài Google không?</h3>
+      <p>Hiện tại chỉ hỗ trợ Google Sign-in. Liên hệ admin nếu bạn muốn các phương thức khác.</p>
+
+      <h3>Mật khẩu DB được lưu ở đâu?</h3>
+      <p>
+        Mật khẩu được mã hoá AES-256-GCM và lưu trong database nội bộ. Nó không bao giờ được lưu ở dạng plain text.
+        Server key được quay vòng định kỳ để bảo mật thêm.
+      </p>
+
+      <h3>Có thể thay đổi mật khẩu DB từ app không?</h3>
+      <p>Không. DatabaseManager chỉ đọc và truy cập dữ liệu. Để thay đổi mật khẩu DB, bạn cần truy cập trực tiếp database server.</p>
+
+      <h3>Có giới hạn số bản ghi không?</h3>
+      <p>
+        Mặc định hiển thị 100 bản ghi/trang. Bạn có thể thay đổi limit hoặc sử dụng SQL Editor để thực thi
+        SELECT với LIMIT/OFFSET tuỳ chỉnh.
+      </p>
+
+      <h3>Có thể chia sẻ read-only access với ai không?</h3>
+      <p>
+        Có. Sử dụng Share Link feature để tạo unique token. Người khác có thể xem dữ liệu mà không cần credentials
+        cơ sở dữ liệu.
+      </p>
+
+      <h3>Có log hoạt động không?</h3>
+      <p>
+        Có. Tất cả hoạt động (login, query, import) được ghi log để audit. Admin có thể xem logs để kiểm tra hoạt động.
+      </p>
+
+      <h3>Cách liên hệ support?</h3>
+      <p>Vui lòng gửi email tới admin hoặc kiểm tra trang "Features & Admin" để có thông tin liên hệ.</p>
+    </section>
+
+    <a href="/" class="btn-back">← Quay lại Dashboard</a>
+
+    <footer>
+      <p><strong>DatabaseManager</strong> - Quản lý cơ sở dữ liệu an toàn</p>
+      <p>© 2026 DatabaseManager. All rights reserved.</p>
+      <p>Tài liệu này được cập nhật lần cuối: <strong>21/06/2026</strong></p>
+    </footer>
+  </div>
+</body>
+</html>

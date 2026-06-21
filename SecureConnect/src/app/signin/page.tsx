@@ -29,10 +29,24 @@ function SignInInner() {
 
 export default function SignInPage() {
   return (
-    <main className="min-h-screen flex items-center justify-center p-6">
+    <main className="min-h-screen flex flex-col items-center justify-center p-6">
       <Suspense fallback={<div className="text-sm text-zinc-600">Loading…</div>}>
         <SignInInner />
       </Suspense>
+
+      {/* Footer */}
+      <footer className="absolute bottom-0 w-full py-6 text-center text-xs text-zinc-500 border-t border-zinc-200 bg-zinc-50">
+        <div className="flex justify-center gap-4 flex-wrap mb-2">
+          <a href="/user-manual.html" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+            📚 User Manual
+          </a>
+          <span>•</span>
+          <a href="/features.html" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+            ✨ Features & Admin
+          </a>
+        </div>
+        <p>DatabaseManager • Secure database management • © 2026</p>
+      </footer>
     </main>
   );
 }

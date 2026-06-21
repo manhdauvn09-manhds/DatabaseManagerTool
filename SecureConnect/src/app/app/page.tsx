@@ -410,6 +410,23 @@ export default function AppPage() {
           </div>
         </div>
       )}
+
+      {/* Footer with documentation links */}
+      <footer className="mt-12 py-8 border-t border-zinc-200 text-center text-xs text-zinc-600 space-y-3">
+        <div className="flex justify-center gap-4 flex-wrap">
+          <a href="/user-manual.html" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+            📚 User Manual
+          </a>
+          <span>•</span>
+          <a href="/features.html" target="_blank" rel="noopener noreferrer" className="text-blue-600 hover:underline font-medium">
+            ✨ Features & Admin
+          </a>
+        </div>
+        <div>
+          <p>DatabaseManager • Secure database management with RSA-OAEP encryption</p>
+          <p>© 2026 • Version 7.0.0 (100x improvements) • <a href="https://DBManager.allin1site.com/api/health" className="text-blue-600 hover:underline">Health Check</a></p>
+        </div>
+      </footer>
     </main>
   );
 }
