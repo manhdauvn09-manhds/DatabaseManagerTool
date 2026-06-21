@@ -26,8 +26,6 @@ services:
       - "3000"
     ports:
       - "127.0.0.1:${HOST_PORT:-9230}:3000"
-    env_file:
-      - ./SecureConnect/.env.production
     environment:
       # Shared state backend (rate-limit, confirm-tokens, encrypted connection
       # records). Lets the app survive restarts + scale horizontally.
@@ -37,6 +35,8 @@ services:
         condition: service_healthy
     volumes:
       - dbmanager_data:/data
+      - ./SecureConnect/.env.production:/app/.env.production:ro
+    command: sh -c 'set -a && . /app/.env.production && set +a && node server.js'
     healthcheck:
       # GET (not HEAD) — Next.js /api/health only exports GET so HEAD would 405.
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "--tries=1", "http://127.0.0.1:3000/api/health"]
