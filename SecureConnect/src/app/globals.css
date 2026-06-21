@@ -2,67 +2,10 @@
 @tailwind components;
 @tailwind utilities;
 
-/* Light theme (default) - WCAG AA contrast ratios */
 :root {
   color-scheme: light;
-  --bg-primary: #fafafa;     /* zinc-50 */
-  --bg-secondary: #ffffff;   /* white */
-  --bg-tertiary: #f4f4f5;    /* zinc-100 */
-  --text-primary: #18181b;   /* zinc-900 */
-  --text-secondary: #71717a; /* zinc-500 */
-  --text-tertiary: #a1a1aa;  /* zinc-400 */
-  --border-color: #e4e4e7;   /* zinc-200 */
-  --focus-ring: #2563eb;     /* blue-600 */
-}
-
-/* Dark theme - WCAG AA contrast ratios */
-[data-theme="dark"] {
-  color-scheme: dark;
-  --bg-primary: #09090b;     /* zinc-950 */
-  --bg-secondary: #18181b;   /* zinc-900 */
-  --bg-tertiary: #27272a;    /* zinc-800 */
-  --text-primary: #fafafa;   /* zinc-50 */
-  --text-secondary: #d4d4d8; /* zinc-300 */
-  --text-tertiary: #a1a1aa;  /* zinc-400 */
-  --border-color: #3f3f46;   /* zinc-700 */
-  --focus-ring: #3b82f6;     /* blue-500 (lighter for dark) */
 }
 
 body {
-  @apply bg-[var(--bg-primary)] text-[var(--text-primary)];
-  transition: background-color 0.3s ease, color 0.3s ease;
-}
-
-/* Ensure sufficient contrast for all text */
-a {
-  @apply text-[var(--focus-ring)] hover:underline;
-  text-decoration-skip-ink: auto;
-}
-
-/* Improve button contrast */
-button {
-  outline-offset: 2px;
-}
-
-button:focus-visible {
-  outline: 2px solid var(--focus-ring);
-}
-
-/* Improve input contrast */
-input, select, textarea {
-  @apply bg-[var(--bg-secondary)] text-[var(--text-primary)] border-[var(--border-color)];
-}
-
-input:focus-visible, select:focus-visible, textarea:focus-visible {
-  outline: 2px solid var(--focus-ring);
-  outline-offset: 2px;
-}
-
-/* Reduce motion for accessibility */
-@media (prefers-reduced-motion: reduce) {
-  * {
-    animation-duration: 0.01ms !important;
-    animation-iteration-count: 1 !important;
-    transition-duration: 0.01ms !important;
-  }
+  @apply bg-zinc-50 text-zinc-900;
 }
