@@ -14,7 +14,6 @@
     "e2e": "playwright test"
   },
   "dependencies": {
-    "@anthropic-ai/sdk": "^0.112.1",
     "ioredis": "5.4.1",
     "mssql": "10.0.4",
     "mysql2": "3.11.0",
