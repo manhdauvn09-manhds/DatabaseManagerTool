@@ -25,6 +25,20 @@ export function toCsv(columns: string[], rows: Record<string, unknown>[]): strin
   return lines.join("\r\n") + "\r\n";
 }
 
+/** CSV header line (with trailing CRLF) — for streaming exports. */
+export function csvHeader(columns: string[]): string {
+  return columns.map(csvCell).join(",") + "\r\n";
+}
+
+/** CSV body chunk for a batch of rows (each line CRLF-terminated) — for streaming. */
+export function csvRowsChunk(columns: string[], rows: Record<string, unknown>[]): string {
+  let out = "";
+  for (const r of rows) {
+    out += columns.map((c) => csvCell(r[c])).join(",") + "\r\n";
+  }
+  return out;
+}
+
 function jsonReplacer(_key: string, value: unknown): unknown {
   if (typeof value === "bigint") return value.toString();
   if (value instanceof Date) return value.toISOString();

@@ -639,6 +639,15 @@ function ExplorerInner() {
                             {fmt}
                           </a>
                         ))}
+                        <a
+                          title="Stream the WHOLE table as CSV (not capped at one page)"
+                          href={selectedDb && selectedTable
+                            ? `/api/db/${cid}/export/stream?database=${encodeURIComponent(selectedDb)}&table=${encodeURIComponent(selectedTable)}${sortCol ? `&sort=${encodeURIComponent(sortCol)}&dir=${sortDir}` : ""}${filtersQs}`
+                            : "#"}
+                          className="px-2 py-1 hover:bg-zinc-100 border-l bg-emerald-50 text-emerald-700"
+                        >
+                          CSV all ⇩
+                        </a>
                       </div>
                     </>
                   )}

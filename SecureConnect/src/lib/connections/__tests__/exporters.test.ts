@@ -1,5 +1,22 @@
 import { describe, test, expect } from "vitest";
-import { toCsv, toJson, toSqlInserts } from "../exporters";
+import { toCsv, toJson, toSqlInserts, csvHeader, csvRowsChunk } from "../exporters";
+
+describe("streaming CSV helpers", () => {
+  test("csvHeader escapes and terminates with CRLF", () => {
+    expect(csvHeader(["a", "b,c"])).toBe('a,"b,c"\r\n');
+  });
+
+  test("csvRowsChunk serialises a batch, one CRLF-terminated line per row", () => {
+    const chunk = csvRowsChunk(["a", "b"], [{ a: 1, b: "x" }, { a: 2, b: "y,z" }]);
+    expect(chunk).toBe('1,x\r\n2,"y,z"\r\n');
+  });
+
+  test("csvHeader + concatenated chunks reproduce toCsv output", () => {
+    const cols = ["a", "b"];
+    const rows = [{ a: 1, b: 2 }, { a: 3, b: 4 }];
+    expect(csvHeader(cols) + csvRowsChunk(cols, rows)).toBe(toCsv(cols, rows));
+  });
+});
 
 describe("toCsv", () => {
   test("escapes commas, quotes, newlines", () => {

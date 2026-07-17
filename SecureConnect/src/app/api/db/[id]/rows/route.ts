@@ -1,12 +1,13 @@
 import { NextResponse } from "next/server";
 import { authorize, jerr, logInternal } from "@/lib/db-api/route-helper";
 import { withConnection } from "@/lib/connections/dbConnector";
-import { listRows, type OrderBy, type Filter } from "@/lib/connections/introspection";
+import { fetchRowsPage, countRows, type OrderBy, type Filter } from "@/lib/connections/introspection";
 import { parseFiltersParam } from "@/lib/db-api/parseFilters";
 import { insertRow, executeUpdate, executeDelete, type RowMap } from "@/lib/connections/mutate";
 import { consumeToken } from "@/lib/security/confirmTokens";
 import { audit } from "@/lib/security/auditLog";
 import { writeBackup } from "@/lib/connections/backup";
+import { getCountFromCache, setCountToCache } from "@/lib/connections/schemaCache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -39,9 +40,21 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
   } catch (e) {
     return jerr("BAD_REQUEST", e instanceof Error ? e.message : "Invalid filters", 400);
   }
+  // Stable cache key for the count: same table + same filters ⇒ same count.
+  const filtersKey = url.searchParams.get("filters") ?? "-";
+
   const t0 = Date.now();
   try {
-    const data = await withConnection(ctx.rec, async (q, c) => listRows(q, c.driver, database, table, limit, offset, orderBy, filters));
+    const data = await withConnection(ctx.rec, async (q, c) => {
+      // Cache the (expensive on large tables) COUNT so paging doesn't re-count each page.
+      let total = await getCountFromCache(params.id, database, table, filtersKey);
+      if (total == null) {
+        total = await countRows(q, c.driver, database, table, filters);
+        await setCountToCache(params.id, database, table, filtersKey, total);
+      }
+      const page = await fetchRowsPage(q, c.driver, database, table, limit, offset, orderBy, filters);
+      return { ...page, total };
+    });
     audit({ action: "db.rows", email: ctx.email, ip: ctx.ip, host: ctx.rec.host, port: ctx.rec.port, dbType: ctx.rec.dbType, ok: true, ms: Date.now() - t0 });
     return new NextResponse(
       JSON.stringify({ columns: data.columns, rows: data.rows, total: data.total, limit, offset }, replacer),

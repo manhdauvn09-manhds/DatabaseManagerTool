@@ -189,6 +189,65 @@ export function buildFilterWhere(
   return { sql: `WHERE ${parts.join(" AND ")}`, params };
 }
 
+// Max rows a single page fetch may return. Browse UI caps at 1000; streaming
+// export uses larger batches to move big tables efficiently.
+export const MAX_PAGE_ROWS = 1000;
+export const MAX_EXPORT_BATCH_ROWS = 5000;
+
+/** COUNT(*) for a table with optional filters. Split out so callers (pagination,
+ *  streaming export) can cache it instead of re-counting on every page. */
+export async function countRows(
+  q: QueryFn,
+  driver: DriverType,
+  database: string,
+  table: string,
+  filters?: Filter[]
+): Promise<number> {
+  validateIdent(database, "database");
+  validateIdent(table, "table");
+  const where = buildFilterWhere(filters, driver);
+  const fq = `${quoteIdent(database, driver)}.${quoteIdent(table, driver)}`;
+  const totalRes = await q(`SELECT COUNT(*) AS total FROM ${fq} ${where.sql}`, where.params);
+  return Number((totalRes.rows[0] as { total: number | string }).total ?? 0);
+}
+
+/** Fetch a single page of rows (no COUNT). `maxCap` bounds the page size. */
+export async function fetchRowsPage(
+  q: QueryFn,
+  driver: DriverType,
+  database: string,
+  table: string,
+  limit: number,
+  offset: number,
+  orderBy?: OrderBy,
+  filters?: Filter[],
+  maxCap: number = MAX_PAGE_ROWS
+): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
+  validateIdent(database, "database");
+  validateIdent(table, "table");
+
+  const lim = Math.max(1, Math.min(maxCap, Math.floor(limit)));
+  const off = Math.max(0, Math.floor(offset));
+  const order = orderClause(orderBy, driver);
+  const where = buildFilterWhere(filters, driver);
+  const fq = `${quoteIdent(database, driver)}.${quoteIdent(table, driver)}`;
+
+  let data;
+  if (driver === "mssql") {
+    const mssqlOrder = order || "ORDER BY (SELECT NULL)";
+    data = await q(
+      `SELECT * FROM ${fq} ${where.sql} ${mssqlOrder} OFFSET ? ROWS FETCH NEXT ? ROWS ONLY`,
+      [...where.params, off, lim]
+    );
+  } else {
+    data = await q(
+      `SELECT * FROM ${fq} ${where.sql} ${order} LIMIT ? OFFSET ?`,
+      [...where.params, lim, off]
+    );
+  }
+  return { columns: data.columns, rows: data.rows };
+}
+
 export async function listRows(
   q: QueryFn,
   driver: DriverType,

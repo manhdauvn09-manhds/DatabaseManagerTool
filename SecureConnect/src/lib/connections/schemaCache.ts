@@ -79,6 +79,39 @@ export async function setColumnsToCache(
   }
 }
 
+const COUNT_TTL_SECONDS = 30; // row counts drift; short TTL keeps pagination cheap without going stale
+
+/** Cache key for a filtered row count. `filtersKey` should be a stable string. */
+function cacheKeyCount(connId: string, db: string, table: string, filtersKey: string): string {
+  return `count:${connId}:${db}:${table}:${filtersKey}`;
+}
+
+export async function getCountFromCache(
+  connId: string, db: string, table: string, filtersKey: string
+): Promise<number | null> {
+  const redis = getRedis();
+  if (!redis) return null;
+  try {
+    const cached = await redis.get(cacheKeyCount(connId, db, table, filtersKey));
+    recordCache(cached != null);
+    return cached != null ? Number(cached) : null;
+  } catch {
+    return null;
+  }
+}
+
+export async function setCountToCache(
+  connId: string, db: string, table: string, filtersKey: string, count: number
+): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  try {
+    await redis.setex(cacheKeyCount(connId, db, table, filtersKey), COUNT_TTL_SECONDS, String(count));
+  } catch {
+    // Fail silently
+  }
+}
+
 /** Invalidate all schema cache for a connection (after schema changes). */
 export async function invalidateConnectionSchemaCache(connId: string): Promise<void> {
   const redis = getRedis();
