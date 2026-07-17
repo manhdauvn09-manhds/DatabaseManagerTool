@@ -191,6 +191,9 @@ export default function AppPage() {
           </div>
           <div className="flex items-center gap-2">
             <ThemeToggle />
+            <a href="/app/metrics" className="text-sm px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50" title="Observability dashboard">
+              📊 Metrics
+            </a>
             <a href="/app/tokens" className="text-sm px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50" title="API tokens for the CLI">
               🔑 API Tokens
             </a>

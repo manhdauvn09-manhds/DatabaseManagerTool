@@ -1,3 +1,5 @@
+import { recordRequest } from "@/lib/observability/metrics";
+
 export type AuditEvent = {
   action: string;
   email?: string;
@@ -25,4 +27,9 @@ export function audit(event: AuditEvent): void {
   }
   // eslint-disable-next-line no-console
   console.log(JSON.stringify(record));
+
+  // Feed observability metrics for timed operations (fire-and-forget, never throws).
+  if (typeof event.ms === "number") {
+    recordRequest(event.action, event.ok, event.ms);
+  }
 }

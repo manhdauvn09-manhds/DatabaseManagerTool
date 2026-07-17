@@ -1,6 +1,7 @@
 /** Redis-backed schema cache (5min TTL) for listTables / listColumns. Reduces DB introspection overhead. */
 
 import { getRedis } from "@/lib/redis/client";
+import { recordCache } from "@/lib/observability/metrics";
 
 const CACHE_TTL_SECONDS = 5 * 60; // 5 minutes
 
@@ -23,6 +24,7 @@ export async function getTablesFromCache(
 
   try {
     const cached = await redis.get(cacheKeyTables(connId, db));
+    recordCache(cached != null);
     return cached ? JSON.parse(cached) : null;
   } catch {
     return null;
@@ -54,6 +56,7 @@ export async function getColumnsFromCache(
 
   try {
     const cached = await redis.get(cacheKeyCols(connId, db, table));
+    recordCache(cached != null);
     return cached ? JSON.parse(cached) : null;
   } catch {
     return null;
