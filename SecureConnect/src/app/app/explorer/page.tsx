@@ -833,7 +833,7 @@ function ExplorerInner() {
                   </table>
                 )}
                 {view === "data" && loading && !rowsData && <div className="p-4 text-sm text-zinc-500">Loading…</div>}
-                {view === "sql" && <SQLEditor connectionId={cid} shareToken={shareToken || undefined} />}
+                {view === "sql" && <SQLEditor connectionId={cid} shareToken={shareToken || undefined} database={selectedDb || undefined} />}
                 {view === "search" && selectedDb && selectedTable && (
                   <AdvancedSearch
                     connectionId={cid}

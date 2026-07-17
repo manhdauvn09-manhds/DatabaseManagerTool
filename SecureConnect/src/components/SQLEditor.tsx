@@ -5,6 +5,7 @@ import { useState } from "react";
 export interface SQLEditorProps {
   connectionId: string;
   shareToken?: string;
+  database?: string;
   onError?: (msg: string) => void;
 }
 
@@ -17,14 +18,45 @@ interface QueryResult {
   limit: number;
 }
 
-export function SQLEditor({ connectionId, shareToken }: SQLEditorProps) {
+export function SQLEditor({ connectionId, shareToken, database }: SQLEditorProps) {
   const [sql, setSql] = useState("SELECT * FROM ");
   const [result, setResult] = useState<QueryResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // AI SQL assistant state
+  const [aiPrompt, setAiPrompt] = useState("");
+  const [aiBusy, setAiBusy] = useState(false);
+  const [aiNote, setAiNote] = useState<string | null>(null);
+  const [aiDisabled, setAiDisabled] = useState(false);
+
   const headers: Record<string, string> = { "Content-Type": "application/json" };
   if (shareToken) headers["x-share-token"] = shareToken;
+
+  async function askAi() {
+    if (!aiPrompt.trim() || !database) return;
+    setAiBusy(true);
+    setAiNote(null);
+    try {
+      const res = await fetch(`/api/db/${connectionId}/ai-sql`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify({ database, prompt: aiPrompt.trim() })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.status === 503) { setAiDisabled(true); setAiNote(data?.error?.message ?? "AI not enabled."); return; }
+      if (!res.ok) { setAiNote(data?.error?.message ?? `HTTP ${res.status}`); return; }
+      if (data.sql) setSql(data.sql);
+      const parts: string[] = [];
+      if (data.explanation) parts.push(data.explanation);
+      if (Array.isArray(data.warnings) && data.warnings.length) parts.push("⚠️ " + data.warnings.join(" · "));
+      setAiNote(parts.join("  ") || "Generated.");
+    } catch (e) {
+      setAiNote(e instanceof Error ? e.message : "AI request failed");
+    } finally {
+      setAiBusy(false);
+    }
+  }
 
   async function executeQuery() {
     if (!sql.trim()) {
@@ -92,6 +124,30 @@ export function SQLEditor({ connectionId, shareToken }: SQLEditorProps) {
     <div className="flex flex-col h-full">
       {/* Editor */}
       <div className="flex-1 min-h-0 flex flex-col border-b bg-white">
+        {database && !aiDisabled && (
+          <div className="px-4 py-3 border-b bg-indigo-50/60">
+            <div className="flex gap-2 items-center">
+              <span className="text-sm" title="AI SQL assistant">🤖</span>
+              <input
+                value={aiPrompt}
+                onChange={(e) => setAiPrompt(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); askAi(); } }}
+                disabled={aiBusy}
+                placeholder="Ask in plain language — e.g. “top 10 customers by total order value this year”"
+                className="flex-1 text-sm rounded-lg border px-3 py-1.5 bg-white disabled:opacity-50"
+              />
+              <button
+                onClick={askAi}
+                disabled={aiBusy || !aiPrompt.trim()}
+                className="px-3 py-1.5 text-sm rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 disabled:opacity-50"
+              >
+                {aiBusy ? "Generating…" : "Generate SQL"}
+              </button>
+            </div>
+            {aiNote && <div className="mt-2 text-xs text-indigo-800">{aiNote}</div>}
+          </div>
+        )}
+
         <div className="flex items-center justify-between px-4 py-3 border-b bg-zinc-50">
           <span className="text-xs font-semibold uppercase text-zinc-500">SQL Query</span>
           <div className="flex gap-2">
