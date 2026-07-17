@@ -503,33 +503,17 @@
     <section id="admin">
       <h2>👨‍💼 Hướng dẫn Admin & Deployment</h2>
 
-      <h3>Thông tin triển khai (Production)</h3>
       <div class="cred-box">
-        <strong>📍 Server Configuration</strong>
-        <div class="cred-item">
-          <span class="cred-key">Server:</span>
-          <span class="cred-val">mcp-80 (65.108.62.80)</span>
-        </div>
-        <div class="cred-item">
-          <span class="cred-key">Domain:</span>
-          <span class="cred-val">https://DBManager.allin1site.com</span>
-        </div>
-        <div class="cred-item">
-          <span class="cred-key">App Port:</span>
-          <span class="cred-val">127.0.0.1:9230 (nginx reverse proxy)</span>
-        </div>
-        <div class="cred-item">
-          <span class="cred-key">Workdir:</span>
-          <span class="cred-val">/opt/dbmanager</span>
-        </div>
-        <div class="cred-item">
-          <span class="cred-key">Branch:</span>
-          <span class="cred-val">main (gitPull: false, manual deploy)</span>
-        </div>
+        <strong>🔒 Chi tiết hạ tầng đã ẩn</strong>
+        <p style="margin-top:.5rem;color:#78350f">
+          Địa chỉ server, IP, port nội bộ, đường dẫn deploy và các lệnh vận hành
+          <b>không được công bố trên trang public này</b>. Tài liệu vận hành đầy đủ nằm
+          trong repo nội bộ (<code>CLAUDE.md</code> + <code>docs/</code>) và chỉ dành cho quản trị viên.
+        </p>
       </div>
 
-      <h3>Environment Variables (Server)</h3>
-      <p>File: <code>/opt/dbmanager/SecureConnect/.env.production</code></p>
+      <h3>Environment Variables (tên biến — không có giá trị)</h3>
+      <p>App đọc cấu hình từ một file <code>.env.production</code> ở phía server (không nằm trong Git):</p>
       <table>
         <tr>
           <th>Variable</th>
@@ -548,7 +532,7 @@
         </tr>
         <tr>
           <td><code>AUTH_GOOGLE_SECRET</code></td>
-          <td>GOCSPX-***</td>
+          <td>(Google OAuth client secret)</td>
           <td>✓</td>
         </tr>
         <tr>
@@ -581,60 +565,23 @@
           <th>Role</th>
         </tr>
         <tr>
-          <td><code>dbmanager-app</code></td>
-          <td>dbmanager:latest</td>
-          <td>Next.js app, port 9230</td>
+          <td><code>app</code></td>
+          <td>Next.js standalone</td>
+          <td>Ứng dụng web + API</td>
         </tr>
         <tr>
-          <td><code>dbmanager-redis</code></td>
+          <td><code>redis</code></td>
           <td>redis:7-alpine</td>
           <td>Session + schema cache, AOF persistence</td>
         </tr>
       </table>
 
       <h3>Deployment Process</h3>
-      <ol style="margin-left: 1.5rem; margin-top: 1rem;">
-        <li><strong>Push code:</strong> <code>git push origin main</code></li>
-        <li><strong>SSH to server:</strong> <code>ssh root@mcp-80</code></li>
-        <li><strong>Pull & build:</strong>
-          <pre style="background: #f3f4f6; padding: 1rem; border-radius: 4px; margin: 0.5rem 0; overflow-x: auto;">
-cd /opt/dbmanager
-git pull origin main
-docker compose build --no-cache app
-docker compose up -d --force-recreate app
-          </pre>
-        </li>
-        <li><strong>Verify:</strong> <code>curl https://DBManager.allin1site.com/api/health</code></li>
-      </ol>
-
-      <h3>Monitoring & Logs</h3>
-      <p>SSH vào server và chạy:</p>
-      <table style="margin-top: 1rem;">
-        <tr>
-          <th>Command</th>
-          <th>Mục đích</th>
-        </tr>
-        <tr>
-          <td><code>docker ps -a | grep dbmanager</code></td>
-          <td>Kiểm tra container status</td>
-        </tr>
-        <tr>
-          <td><code>docker logs dbmanager-app --tail 50</code></td>
-          <td>Xem logs app</td>
-        </tr>
-        <tr>
-          <td><code>docker exec dbmanager-app npm run type-check</code></td>
-          <td>Run TypeScript check</td>
-        </tr>
-        <tr>
-          <td><code>curl -s http://127.0.0.1:9230/api/health</code></td>
-          <td>Health check local</td>
-        </tr>
-        <tr>
-          <td><code>redis-cli -h redis info stats</code></td>
-          <td>Redis stats (schema cache)</td>
-        </tr>
-      </table>
+      <p style="color:var(--tx2)">
+        Quy trình CI/CD, lệnh SSH và địa chỉ server được giữ trong tài liệu vận hành nội bộ.
+        Ở mức tổng quát: code đẩy lên nhánh <code>main</code> → build image Docker → recreate container
+        (app + redis) → health-check tự động. Chi tiết xem repo nội bộ.
+      </p>
 
       <h3>Scaling & Resource Limits</h3>
       <div class="spec-grid">
@@ -672,7 +619,7 @@ docker compose up -d --force-recreate app
         <tr>
           <td>502 Bad Gateway</td>
           <td>Check nginx → app port mapping</td>
-          <td>Verify port 9230, restart nginx</td>
+          <td>Kiểm tra nginx upstream port khớp container, reload nginx</td>
         </tr>
         <tr>
           <td>Slow queries</td>

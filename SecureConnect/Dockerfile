@@ -32,6 +32,9 @@ RUN addgroup --system --gid 1001 nodejs && \
 COPY --from=builder /app/public ./public
 COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# Entrypoint that strips a BOM from the runtime env file before loading it.
+COPY --from=builder --chown=nextjs:nodejs /app/docker-entrypoint.sh ./docker-entrypoint.sh
+RUN chmod +x ./docker-entrypoint.sh
 
 # Persistent data dir for saved-connection profiles (mounted via volume in compose).
 # Pre-create so the named volume inherits ownership on first mount.
@@ -46,4 +49,4 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
   CMD wget -q -O /dev/null --tries=1 http://127.0.0.1:3000/api/health || exit 1
 
-CMD ["node", "server.js"]
+CMD ["sh", "./docker-entrypoint.sh"]

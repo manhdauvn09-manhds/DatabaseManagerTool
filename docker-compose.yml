@@ -35,8 +35,11 @@ services:
         condition: service_healthy
     volumes:
       - dbmanager_data:/data
+      # Runtime secrets (bind-mounted, not baked into the image). The image's
+      # entrypoint strips a leading UTF-8 BOM before loading, so a file saved by a
+      # Windows editor still parses correctly. Keep this file 600 and owned by the
+      # container's app uid (1001) on the host — never world-readable.
       - ./SecureConnect/.env.production:/app/.env.production:ro
-    command: sh -c 'set -a && . /app/.env.production && set +a && node server.js'
     healthcheck:
       # GET (not HEAD) — Next.js /api/health only exports GET so HEAD would 405.
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "--tries=1", "http://127.0.0.1:3000/api/health"]

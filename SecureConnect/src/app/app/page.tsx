@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { signOut } from "next-auth/react";
 import { encryptPasswordRSAOAEP, type PublicKeyResponse } from "@/lib/crypto/client";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 type DbType = "auto" | "mysql" | "postgresql" | "mssql";
 
@@ -189,6 +190,7 @@ export default function AppPage() {
             <p className="text-sm text-zinc-600">Secure Connect (HTTPS + RSA-OAEP in browser)</p>
           </div>
           <div className="flex items-center gap-2">
+            <ThemeToggle />
             <a href="/app/tokens" className="text-sm px-4 py-2 rounded-xl border bg-white hover:bg-zinc-50" title="API tokens for the CLI">
               🔑 API Tokens
             </a>

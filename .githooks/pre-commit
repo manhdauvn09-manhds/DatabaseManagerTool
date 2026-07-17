@@ -1,0 +1,24 @@
+#!/bin/sh
+# Pre-commit gate: type-check + lint + unit tests before a commit lands.
+# Enable once per clone:  git config core.hooksPath .githooks
+# (Kept out of the default hooks path so it never blocks the Docker build.)
+set -e
+
+cd "$(git rev-parse --show-toplevel)/SecureConnect" || exit 0
+
+# Only run if node_modules is present (skip gracefully in fresh clones).
+if [ ! -d node_modules ]; then
+  echo "pre-commit: node_modules missing in SecureConnect — skipping checks."
+  exit 0
+fi
+
+echo "pre-commit: type-check…"
+npm run --silent type-check
+
+echo "pre-commit: lint…"
+npm run --silent lint
+
+echo "pre-commit: unit tests…"
+npm test --silent
+
+echo "pre-commit: OK"
