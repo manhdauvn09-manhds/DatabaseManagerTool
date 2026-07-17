@@ -1,5 +1,3 @@
-import { recordRequest } from "@/lib/observability/metrics";
-
 export type AuditEvent = {
   action: string;
   email?: string;
@@ -29,7 +27,14 @@ export function audit(event: AuditEvent): void {
   console.log(JSON.stringify(record));
 
   // Feed observability metrics for timed operations (fire-and-forget, never throws).
+  // Dynamic import so the metrics module (which pulls in ioredis, a Node-only
+  // dependency) is NEVER bundled into the edge middleware — auditLog is reached
+  // from the middleware via @/auth, and a static import of ioredis there crashes
+  // the edge runtime. Timed events only originate in Node route handlers anyway.
   if (typeof event.ms === "number") {
-    recordRequest(event.action, event.ok, event.ms);
+    const ms = event.ms;
+    void import("@/lib/observability/metrics")
+      .then((m) => m.recordRequest(event.action, event.ok, ms))
+      .catch(() => { /* observability must never break a request */ });
   }
 }
