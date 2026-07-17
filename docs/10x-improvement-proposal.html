@@ -1,0 +1,336 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Đề xuất cải tiến 10x — DatabaseManager</title>
+<style>
+  :root{
+    --bg:#0b0f19; --card:#141b2d; --card2:#1b2438; --line:#26314b;
+    --tx:#e6ebf5; --tx2:#9fb0cc; --tx3:#6b7a99;
+    --brand:#6366f1; --brand2:#818cf8;
+    --red:#f87171; --amber:#fbbf24; --green:#34d399; --blue:#60a5fa;
+    --radius:14px;
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Arial,sans-serif;
+    background:var(--bg);color:var(--tx);line-height:1.65;
+    background-image:radial-gradient(1200px 600px at 20% -10%,rgba(99,102,241,.18),transparent),radial-gradient(1000px 500px at 100% 0%,rgba(52,211,153,.10),transparent);
+  }
+  .wrap{max-width:1080px;margin:0 auto;padding:2rem 1.5rem 5rem}
+  header.hero{text-align:center;padding:3.5rem 1rem 2rem}
+  .hero .kicker{color:var(--brand2);font-weight:700;letter-spacing:.15em;text-transform:uppercase;font-size:.8rem}
+  .hero h1{font-size:2.6rem;margin:.6rem 0;background:linear-gradient(90deg,#fff,#a5b4fc);-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent}
+  .hero p{color:var(--tx2);font-size:1.1rem;max-width:640px;margin:0 auto}
+  .meta{display:flex;gap:.6rem;justify-content:center;flex-wrap:wrap;margin-top:1.2rem}
+  .pill{background:var(--card);border:1px solid var(--line);border-radius:999px;padding:.35rem .9rem;font-size:.82rem;color:var(--tx2)}
+  .pill b{color:var(--green)}
+
+  h2.sec{font-size:1.5rem;margin:2.6rem 0 1rem;display:flex;align-items:center;gap:.6rem}
+  h2.sec .n{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:9px;background:var(--brand);color:#fff;font-size:.95rem;font-weight:700}
+
+  .grid{display:grid;gap:1rem}
+  .g2{grid-template-columns:repeat(auto-fit,minmax(320px,1fr))}
+  .g3{grid-template-columns:repeat(auto-fit,minmax(240px,1fr))}
+
+  .card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:1.3rem}
+  .card h3{font-size:1.08rem;margin-bottom:.5rem;display:flex;align-items:center;gap:.5rem}
+  .card p{color:var(--tx2);font-size:.94rem}
+
+  /* status tiles */
+  .tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.8rem;margin:1rem 0}
+  .tile{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:1rem;text-align:center}
+  .tile .v{font-size:1.5rem;font-weight:700}
+  .tile .l{color:var(--tx3);font-size:.78rem;margin-top:.2rem}
+  .ok{color:var(--green)} .warn{color:var(--amber)} .bad{color:var(--red)}
+
+  /* findings */
+  .finding{background:var(--card);border:1px solid var(--line);border-left-width:4px;border-radius:10px;padding:1rem 1.2rem;margin:.7rem 0;display:flex;gap:1rem;align-items:flex-start}
+  .finding.sev-high{border-left-color:var(--red)}
+  .finding.sev-med{border-left-color:var(--amber)}
+  .finding.sev-low{border-left-color:var(--blue)}
+  .finding .sv{flex-shrink:0;font-size:.7rem;font-weight:700;padding:.2rem .55rem;border-radius:6px;text-transform:uppercase;letter-spacing:.05em}
+  .sev-high .sv{background:rgba(248,113,113,.15);color:var(--red)}
+  .sev-med .sv{background:rgba(251,191,36,.15);color:var(--amber)}
+  .sev-low .sv{background:rgba(96,165,250,.15);color:var(--blue)}
+  .finding h4{font-size:1rem;margin-bottom:.25rem}
+  .finding p{color:var(--tx2);font-size:.9rem}
+  .finding code{background:var(--card2);padding:.1rem .4rem;border-radius:5px;font-size:.82rem;color:var(--brand2)}
+
+  /* proposal cards */
+  .prop{background:linear-gradient(160deg,var(--card),var(--card2));border:1px solid var(--line);border-radius:var(--radius);padding:1.4rem;position:relative;overflow:hidden}
+  .prop::before{content:"";position:absolute;inset:0 0 auto 0;height:3px;background:linear-gradient(90deg,var(--brand),var(--green))}
+  .prop .top{display:flex;justify-content:space-between;align-items:flex-start;gap:1rem;margin-bottom:.6rem}
+  .prop h3{font-size:1.12rem}
+  .prop .impact{font-size:.72rem;font-weight:700;color:var(--brand2);white-space:nowrap}
+  .prop ul{list-style:none;margin-top:.7rem}
+  .prop li{color:var(--tx2);font-size:.9rem;padding:.15rem 0 .15rem 1.3rem;position:relative}
+  .prop li::before{content:"→";position:absolute;left:0;color:var(--brand2)}
+  .badges{display:flex;gap:.4rem;flex-wrap:wrap;margin-top:.9rem}
+  .b{font-size:.72rem;padding:.2rem .6rem;border-radius:6px;border:1px solid var(--line);color:var(--tx2)}
+  .b.eff-low{background:rgba(52,211,153,.12);color:var(--green);border-color:transparent}
+  .b.eff-med{background:rgba(251,191,36,.12);color:var(--amber);border-color:transparent}
+  .b.eff-high{background:rgba(248,113,113,.12);color:var(--red);border-color:transparent}
+
+  /* matrix */
+  table{width:100%;border-collapse:collapse;margin:1rem 0;font-size:.9rem;background:var(--card);border-radius:12px;overflow:hidden}
+  th{background:var(--card2);text-align:left;padding:.8rem;color:var(--tx2);font-weight:600;border-bottom:1px solid var(--line)}
+  td{padding:.8rem;border-bottom:1px solid var(--line);color:var(--tx2)}
+  tr:last-child td{border-bottom:none}
+  td b{color:var(--tx)}
+  .dot{display:inline-block;width:9px;height:9px;border-radius:50%}
+  .p1{background:var(--red)} .p2{background:var(--amber)} .p3{background:var(--blue)}
+
+  /* roadmap */
+  .road{border-left:2px solid var(--line);margin-left:1rem;padding-left:1.6rem}
+  .road .item{position:relative;padding:.5rem 0 1.4rem}
+  .road .item::before{content:"";position:absolute;left:calc(-1.6rem - 6px);top:.8rem;width:12px;height:12px;border-radius:50%;background:var(--brand);border:3px solid var(--bg)}
+  .road h4{font-size:1.05rem}
+  .road .when{color:var(--brand2);font-size:.8rem;font-weight:700;text-transform:uppercase;letter-spacing:.05em}
+  .road p{color:var(--tx2);font-size:.9rem}
+
+  footer{text-align:center;color:var(--tx3);font-size:.85rem;margin-top:3rem;padding-top:2rem;border-top:1px solid var(--line)}
+  @media(max-width:640px){.hero h1{font-size:1.9rem}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <header class="hero">
+    <div class="kicker">Technical Assessment · 10x Roadmap</div>
+    <h1>Đề xuất cải tiến DatabaseManager</h1>
+    <p>Kết quả kiểm tra sức khoẻ hệ thống và lộ trình nâng cấp lên tầm 10x — ưu tiên theo tác động &amp; công sức.</p>
+    <div class="meta">
+      <span class="pill">Ngày đánh giá: <b>17/07/2026</b></span>
+      <span class="pill">Version: <b>7.0.0</b></span>
+      <span class="pill">Trạng thái: <b>🟢 Healthy</b></span>
+    </div>
+  </header>
+
+  <!-- 1. Health snapshot -->
+  <h2 class="sec"><span class="n">1</span>Ảnh chụp sức khoẻ hệ thống</h2>
+  <p style="color:var(--tx2)">Xác minh trực tiếp trên production (mcp-80 · 65.108.62.80) tại thời điểm đánh giá.</p>
+  <div class="tiles">
+    <div class="tile"><div class="v ok">200</div><div class="l">Health API (4ms)</div></div>
+    <div class="tile"><div class="v ok">151ms</div><div class="l">Public HTTPS latency</div></div>
+    <div class="tile"><div class="v ok">38MB</div><div class="l">RAM app / 512MB</div></div>
+    <div class="tile"><div class="v ok">1.5MB</div><div class="l">RAM redis / 192MB</div></div>
+    <div class="tile"><div class="v ok">0%</div><div class="l">CPU idle</div></div>
+    <div class="tile"><div class="v ok">37%</div><div class="l">Disk (92G free)</div></div>
+    <div class="tile"><div class="v ok">229</div><div class="l">Unit tests pass</div></div>
+    <div class="tile"><div class="v ok">✓</div><div class="l">Code = origin/main</div></div>
+  </div>
+  <div class="card" style="margin-top:.5rem">
+    <p>✅ <b style="color:var(--green)">Kết luận:</b> Hệ thống vận hành ổn định, tài nguyên dư dả, không có lỗi trong log 30 phút gần nhất. CSP/HSTS/X-Frame-Options đã bật. Hai trang tài liệu (user-manual, features) đang live. <b>Không có sự cố nghiêm trọng đang diễn ra.</b></p>
+  </div>
+
+  <!-- 2. Findings -->
+  <h2 class="sec"><span class="n">2</span>Vấn đề phát hiện được</h2>
+  <p style="color:var(--tx2)">Không có lỗi chặn vận hành, nhưng có một số rủi ro về bảo mật &amp; độ bền cần xử lý.</p>
+
+  <div class="finding sev-high">
+    <span class="sv">High</span>
+    <div>
+      <h4>🔐 File <code>.env.production</code> đang ở quyền 644 (world-readable)</h4>
+      <p>Trong lúc sửa lỗi OAuth, quyền file bị hạ từ <code>600</code> → <code>644</code>. File chứa <code>AUTH_SECRET</code> và <code>AUTH_GOOGLE_SECRET</code> — mọi user/process trên box đều đọc được. Cần đưa về <code>600</code> hoặc dùng Docker secrets.</p>
+    </div>
+  </div>
+
+  <div class="finding sev-high">
+    <span class="sv">High</span>
+    <div>
+      <h4>💾 Chưa có backup tự động cho dữ liệu quan trọng</h4>
+      <p><code>/data/saved-connections.json</code> và <code>server-keypair.json</code> là dữ liệu không thể tái tạo — nếu mất keypair, toàn bộ connection đã lưu không giải mã được. Các app khác trên server đã có cron backup, riêng dbmanager thì chưa. Script <code>deploy/backup-data.sh</code> có sẵn nhưng chưa được lên lịch.</p>
+    </div>
+  </div>
+
+  <div class="finding sev-med">
+    <span class="sv">Med</span>
+    <div>
+      <h4>🚀 Deploy thủ công, dễ sai sót — chưa có CI/CD</h4>
+      <p>Deploy hiện tại là SSH + docker compose bằng tay. Đã từng gây sự cố: <code>git clean</code> xoá nhầm <code>.env</code>, port lệch 13000/9230, mount env thiếu. Một pipeline GitHub Actions (build → test → deploy) sẽ loại bỏ hoàn toàn nhóm lỗi này.</p>
+    </div>
+  </div>
+
+  <div class="finding sev-med">
+    <span class="sv">Med</span>
+    <div>
+      <h4>🌗 Dark mode nửa vời</h4>
+      <p>CSS variables cho light/dark (WCAG AA) đã có trong <code>globals.css</code> + <code>tailwind.config.ts</code>, nhưng <b>không có nút toggle</b> hoàn chỉnh và <code>ThemeProvider</code> đã bị gỡ (từng gây crash trắng màn hình). Feature đang ở trạng thái dở dang — hoặc hoàn thiện đúng cách, hoặc gỡ hẳn.</p>
+    </div>
+  </div>
+
+  <div class="finding sev-low">
+    <span class="sv">Low</span>
+    <div>
+      <h4>🧪 Chỉ có unit test, chưa có E2E &amp; pre-commit hook</h4>
+      <p>229 unit test rất tốt, nhưng luồng đăng nhập Google → kết nối DB → truy vấn chưa được kiểm thử end-to-end. Không có pre-commit hook nên lỗi lint/type có thể lọt tới lúc build (đã từng xảy ra với ESLint quote).</p>
+    </div>
+  </div>
+
+  <div class="finding sev-low">
+    <span class="sv">Low</span>
+    <div>
+      <h4>📄 <code>features.html</code> công khai lộ chi tiết hạ tầng</h4>
+      <p>Trang tài liệu public đang hiển thị IP server, port nội bộ, tên biến môi trường, đường dẫn deploy. Nên tách phần "Admin" ra khỏi trang công khai hoặc đặt sau đăng nhập.</p>
+    </div>
+  </div>
+
+  <!-- 3. 10x proposals -->
+  <h2 class="sec"><span class="n">3</span>Đề xuất nâng cấp 10x</h2>
+  <p style="color:var(--tx2)">Chín sáng kiến, mỗi cái kèm ước lượng tác động &amp; công sức để bạn chọn thứ tự.</p>
+
+  <div class="grid g2" style="margin-top:1rem">
+
+    <div class="prop">
+      <div class="top"><h3>🛡️ Security Hardening</h3><span class="impact">Impact ×10</span></div>
+      <p>Loại bỏ rủi ro rò rỉ secret và siết chặt bề mặt tấn công.</p>
+      <ul>
+        <li>Đưa <code>.env</code> về 600 hoặc dùng Docker secrets</li>
+        <li>Quét secret trong CI (gitleaks)</li>
+        <li>Review lại rate-limit &amp; SSRF guard</li>
+        <li>Tách admin docs khỏi trang public</li>
+      </ul>
+      <div class="badges"><span class="b eff-low">Effort: Thấp</span><span class="b">Bảo mật</span></div>
+    </div>
+
+    <div class="prop">
+      <div class="top"><h3>💾 Automated Backup &amp; Restore</h3><span class="impact">Impact ×10</span></div>
+      <p>Bảo vệ dữ liệu không thể tái tạo, có thể khôi phục trong vài phút.</p>
+      <ul>
+        <li>Cron hàng ngày: <code>saved-connections.json</code> + keypair + redis snapshot</li>
+        <li>Mã hoá backup, giữ 30 ngày, lưu offsite</li>
+        <li>Kịch bản restore + kiểm thử định kỳ</li>
+      </ul>
+      <div class="badges"><span class="b eff-low">Effort: Thấp</span><span class="b">Độ bền</span></div>
+    </div>
+
+    <div class="prop">
+      <div class="top"><h3>🚀 CI/CD Pipeline</h3><span class="impact">Impact ×10</span></div>
+      <p>Deploy tự động, an toàn, không còn thao tác tay dễ sai.</p>
+      <ul>
+        <li>GitHub Actions: lint → test → build → deploy</li>
+        <li>Deploy an toàn với health-check + auto-rollback</li>
+        <li>Preview build cho mỗi PR</li>
+      </ul>
+      <div class="badges"><span class="b eff-med">Effort: Vừa</span><span class="b">DevOps</span></div>
+    </div>
+
+    <div class="prop">
+      <div class="top"><h3>📊 Observability</h3><span class="impact">Impact ×8</span></div>
+      <p>Nhìn thấy vấn đề trước khi user báo lỗi.</p>
+      <ul>
+        <li>Structured logging (JSON) + request id</li>
+        <li>Metrics: query latency, cache hit rate, error rate</li>
+        <li>Alerting qua uptime-kuma có sẵn trên server</li>
+      </ul>
+      <div class="badges"><span class="b eff-med">Effort: Vừa</span><span class="b">Vận hành</span></div>
+    </div>
+
+    <div class="prop">
+      <div class="top"><h3>🧪 E2E Testing (Playwright)</h3><span class="impact">Impact ×8</span></div>
+      <p>Bắt lỗi hồi quy toàn luồng — như sự cố trắng màn hình vừa rồi.</p>
+      <ul>
+        <li>Smoke test: signin → app → explorer render OK</li>
+        <li>Test luồng connect DB &amp; query (mock)</li>
+        <li>Chạy trong CI trên mỗi PR</li>
+      </ul>
+      <div class="badges"><span class="b eff-med">Effort: Vừa</span><span class="b">Chất lượng</span></div>
+    </div>
+
+    <div class="prop">
+      <div class="top"><h3>⚡ Performance cho dữ liệu lớn</h3><span class="impact">Impact ×9</span></div>
+      <p>Mượt mà với bảng hàng triệu bản ghi.</p>
+      <ul>
+        <li>Virtual scrolling cho grid dữ liệu</li>
+        <li>Streaming/cursor cho export lớn</li>
+        <li>Bật connection pooling mặc định</li>
+        <li>Server-side pagination tối ưu</li>
+      </ul>
+      <div class="badges"><span class="b eff-med">Effort: Vừa</span><span class="b">Hiệu năng</span></div>
+    </div>
+
+    <div class="prop">
+      <div class="top"><h3>🤖 AI SQL Assistant</h3><span class="impact">Impact ×9</span></div>
+      <p>Sinh câu SQL từ ngôn ngữ tự nhiên bằng Claude.</p>
+      <ul>
+        <li>"Lấy top 10 khách hàng theo doanh thu" → SQL</li>
+        <li>Giải thích &amp; tối ưu query có sẵn</li>
+        <li>Gợi ý index dựa trên schema + EXPLAIN</li>
+      </ul>
+      <div class="badges"><span class="b eff-high">Effort: Cao</span><span class="b">Tính năng mới</span></div>
+    </div>
+
+    <div class="prop">
+      <div class="top"><h3>📋 Audit Trail UI</h3><span class="impact">Impact ×7</span></div>
+      <p>Biến audit log (đã có) thành màn hình tra cứu.</p>
+      <ul>
+        <li>Ai đã login / query / import, khi nào</li>
+        <li>Lọc theo user, action, thời gian</li>
+        <li>Export log cho compliance</li>
+      </ul>
+      <div class="badges"><span class="b eff-med">Effort: Vừa</span><span class="b">Bảo mật</span></div>
+    </div>
+
+    <div class="prop">
+      <div class="top"><h3>🌗 Hoàn thiện Dark Mode</h3><span class="impact">Impact ×6</span></div>
+      <p>Làm đúng chuẩn App Router, không gây remount/crash.</p>
+      <ul>
+        <li>ThemeProvider luôn render Provider (không đổi element type)</li>
+        <li>Script chống FOUC (set data-theme trước hydrate)</li>
+        <li>Nút toggle ở header + lưu localStorage</li>
+      </ul>
+      <div class="badges"><span class="b eff-low">Effort: Thấp</span><span class="b">UX</span></div>
+    </div>
+
+  </div>
+
+  <!-- 4. Priority matrix -->
+  <h2 class="sec"><span class="n">4</span>Ma trận ưu tiên</h2>
+  <table>
+    <tr><th>Ưu tiên</th><th>Sáng kiến</th><th>Tác động</th><th>Công sức</th><th>Vì sao trước</th></tr>
+    <tr><td><span class="dot p1"></span> P1</td><td><b>Security Hardening</b></td><td>Cao</td><td>Thấp</td><td>Rủi ro rò rỉ secret đang mở</td></tr>
+    <tr><td><span class="dot p1"></span> P1</td><td><b>Automated Backup</b></td><td>Cao</td><td>Thấp</td><td>Mất keypair = mất dữ liệu vĩnh viễn</td></tr>
+    <tr><td><span class="dot p1"></span> P1</td><td><b>CI/CD Pipeline</b></td><td>Cao</td><td>Vừa</td><td>Chặn nhóm lỗi deploy tay</td></tr>
+    <tr><td><span class="dot p2"></span> P2</td><td>E2E Testing</td><td>Cao</td><td>Vừa</td><td>Bắt hồi quy như crash vừa rồi</td></tr>
+    <tr><td><span class="dot p2"></span> P2</td><td>Observability</td><td>Cao</td><td>Vừa</td><td>Chủ động thay vì bị động</td></tr>
+    <tr><td><span class="dot p2"></span> P2</td><td>Performance dữ liệu lớn</td><td>Cao</td><td>Vừa</td><td>Trải nghiệm ở quy mô thật</td></tr>
+    <tr><td><span class="dot p3"></span> P3</td><td>Hoàn thiện Dark Mode</td><td>Vừa</td><td>Thấp</td><td>Quick win, dọn nợ kỹ thuật</td></tr>
+    <tr><td><span class="dot p3"></span> P3</td><td>Audit Trail UI</td><td>Vừa</td><td>Vừa</td><td>Giá trị compliance</td></tr>
+    <tr><td><span class="dot p3"></span> P3</td><td>AI SQL Assistant</td><td>Cao</td><td>Cao</td><td>Điểm nhấn khác biệt, làm sau nền tảng</td></tr>
+  </table>
+
+  <!-- 5. Roadmap -->
+  <h2 class="sec"><span class="n">5</span>Lộ trình đề xuất</h2>
+  <div class="road">
+    <div class="item">
+      <div class="when">Đợt 1 · Nền tảng an toàn (1–2 ngày)</div>
+      <h4>🛡️ Bảo mật + 💾 Backup + 🌗 Dark mode</h4>
+      <p>Ba quick-win công sức thấp, đóng ngay các rủi ro cao. Chmod env, lên cron backup, hoàn thiện toggle theme.</p>
+    </div>
+    <div class="item">
+      <div class="when">Đợt 2 · Tự động hoá (3–5 ngày)</div>
+      <h4>🚀 CI/CD + 🧪 E2E Testing</h4>
+      <p>Pipeline build/test/deploy + smoke test toàn luồng. Từ đây mỗi thay đổi được kiểm chứng tự động trước khi lên production.</p>
+    </div>
+    <div class="item">
+      <div class="when">Đợt 3 · Quy mô &amp; giám sát (1 tuần)</div>
+      <h4>📊 Observability + ⚡ Performance</h4>
+      <p>Structured log, metrics, alerting; virtual scroll + streaming export cho dữ liệu lớn.</p>
+    </div>
+    <div class="item">
+      <div class="when">Đợt 4 · Tính năng khác biệt (2 tuần)</div>
+      <h4>🤖 AI SQL Assistant + 📋 Audit Trail UI</h4>
+      <p>Sinh SQL từ ngôn ngữ tự nhiên, gợi ý index; màn hình tra cứu audit log cho compliance.</p>
+    </div>
+  </div>
+
+  <footer>
+    <p><b style="color:var(--tx)">DatabaseManager</b> — Technical Assessment &amp; 10x Roadmap</p>
+    <p>Đánh giá dựa trên kiểm tra production thực tế · 17/07/2026</p>
+  </footer>
+
+</div>
+</body>
+</html>
