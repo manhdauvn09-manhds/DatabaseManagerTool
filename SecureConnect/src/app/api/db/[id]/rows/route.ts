@@ -7,7 +7,7 @@ import { insertRow, executeUpdate, executeDelete, type RowMap } from "@/lib/conn
 import { consumeToken } from "@/lib/security/confirmTokens";
 import { audit } from "@/lib/security/auditLog";
 import { writeBackup } from "@/lib/connections/backup";
-import { getCountFromCache, setCountToCache } from "@/lib/connections/schemaCache";
+import { getCountFromCache, setCountToCache, invalidateCountCache } from "@/lib/connections/schemaCache";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -99,6 +99,8 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       ok: true,
       ms: Date.now() - t0
     });
+    // P-2 fix: invalidate cached row count so paging totals stay accurate after mutations.
+    invalidateCountCache(params.id, database, table).catch(() => undefined);
     return NextResponse.json({ inserted: result.inserted, insertId: result.insertId ?? null });
   } catch (e) {
     logInternal("db.rows.insert", e);
@@ -146,6 +148,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
   try {
     const result = await withConnection(ctx.rec, async (q, c) => executeUpdate(q, c.driver, database, table, set, where));
     audit({ action: "db.rows.update", email: ctx.email, ip: ctx.ip, host: ctx.rec.host, port: ctx.rec.port, dbType: ctx.rec.dbType, ok: true, ms: Date.now() - t0 });
+    invalidateCountCache(params.id, database, table).catch(() => undefined);
     return NextResponse.json({ affected: result.affected });
   } catch (e) {
     logInternal("db.rows.update", e);
@@ -197,6 +200,7 @@ export async function DELETE(req: Request, { params }: { params: { id: string } 
       }).catch((e) => { logInternal("db.rows.delete.backup", e); return null; });
     }
     audit({ action: "db.rows.delete", email: ctx.email, ip: ctx.ip, host: ctx.rec.host, port: ctx.rec.port, dbType: ctx.rec.dbType, ok: true, ms: Date.now() - t0 });
+    invalidateCountCache(params.id, database, table).catch(() => undefined);
     return NextResponse.json({ affected: result.affected, backupPath });
   } catch (e) {
     logInternal("db.rows.delete", e);

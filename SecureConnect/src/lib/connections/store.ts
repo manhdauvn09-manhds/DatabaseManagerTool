@@ -29,9 +29,12 @@ export type ConnectionRecord = {
 };
 
 const DEFAULT_TTL_MS = 30 * 60 * 1000; // 30 min sliding
-const TTL_MS = Math.max(60_000, Number(process.env.CONNECTION_TTL_MS ?? DEFAULT_TTL_MS));
+// C-1 fix: validate env values with Number.isFinite before use; NaN from "30m" etc. would silently disable expiry.
+const _ttlRaw = Number(process.env.CONNECTION_TTL_MS ?? DEFAULT_TTL_MS);
+const TTL_MS = Number.isFinite(_ttlRaw) && _ttlRaw >= 60_000 ? _ttlRaw : DEFAULT_TTL_MS;
 const DEFAULT_MAX_SESSION_MS = 2 * 60 * 60 * 1000; // 2h hard cap
-const MAX_SESSION_MS = Math.max(TTL_MS, Number(process.env.CONNECTION_MAX_SESSION_MS ?? DEFAULT_MAX_SESSION_MS));
+const _maxRaw = Number(process.env.CONNECTION_MAX_SESSION_MS ?? DEFAULT_MAX_SESSION_MS);
+const MAX_SESSION_MS = Number.isFinite(_maxRaw) && _maxRaw >= TTL_MS ? _maxRaw : DEFAULT_MAX_SESSION_MS;
 const MAX_RECORDS = Math.max(10, Number(process.env.CONNECTION_MAX_RECORDS ?? "1000"));
 
 // ---------- Redis decision ----------
@@ -39,8 +42,17 @@ const MAX_RECORDS = Math.max(10, Number(process.env.CONNECTION_MAX_RECORDS ?? "1
 // when a vault master is configured, so the password can be encrypted at rest
 // (AES-256-GCM via serverVault). Without a master we keep records in-memory even
 // if REDIS_URL is set — never write plaintext credentials to Redis.
+let _warnedNoVault = false;
 function redisActive(): boolean {
-  return !!getRedis() && isVaultConfigured();
+  const hasRedis = !!getRedis();
+  const hasVault = isVaultConfigured();
+  // S-6 fix: warn once when Redis is present but vault is absent so the silent fallback is visible in logs.
+  if (hasRedis && !hasVault && !_warnedNoVault) {
+    _warnedNoVault = true;
+    // eslint-disable-next-line no-console
+    console.warn("[store] Redis configured but VAULT_MASTER_SECRET is absent — falling back to in-memory store. Credentials will NOT be persisted across restarts.");
+  }
+  return hasRedis && hasVault;
 }
 
 // ---------- in-memory backend ----------

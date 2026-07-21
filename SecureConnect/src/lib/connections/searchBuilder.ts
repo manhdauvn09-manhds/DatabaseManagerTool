@@ -118,6 +118,12 @@ export function parseSearchQuery(raw: unknown): SearchQuery {
   return { combinator, groups };
 }
 
+// C-3 fix: escape LIKE metacharacters so user-supplied % and _ are treated as literals.
+// All three engines (MySQL, PostgreSQL, MSSQL) support ESCAPE '\'
+function escapeLike(val: string): string {
+  return val.replace(/\\/g, "\\\\").replace(/%/g, "\\%").replace(/_/g, "\\_");
+}
+
 // Build the SQL fragment + params for a single condition.
 function conditionSql(c: SearchCondition, driver: DriverType): { sql: string; params: unknown[] } {
   validateIdent(c.column, "search column");
@@ -127,13 +133,13 @@ function conditionSql(c: SearchCondition, driver: DriverType): { sql: string; pa
     case "eq": case "ne": case "gt": case "lt": case "gte": case "lte":
       return { sql: `${col} ${SIMPLE_OP_SQL[c.op]} ?`, params: [c.value] };
     case "contains":
-      return { sql: `${col} LIKE ?`, params: [`%${c.value}%`] };
+      return { sql: `${col} LIKE ? ESCAPE '\\'`, params: [`%${escapeLike(c.value ?? "")}%`] };
     case "not_contains":
-      return { sql: `${col} NOT LIKE ?`, params: [`%${c.value}%`] };
+      return { sql: `${col} NOT LIKE ? ESCAPE '\\'`, params: [`%${escapeLike(c.value ?? "")}%`] };
     case "starts_with":
-      return { sql: `${col} LIKE ?`, params: [`${c.value}%`] };
+      return { sql: `${col} LIKE ? ESCAPE '\\'`, params: [`${escapeLike(c.value ?? "")}%`] };
     case "ends_with":
-      return { sql: `${col} LIKE ?`, params: [`%${c.value}`] };
+      return { sql: `${col} LIKE ? ESCAPE '\\'`, params: [`%${escapeLike(c.value ?? "")}`] };
     case "is_null":
       return { sql: `${col} IS NULL`, params: [] };
     case "is_not_null":

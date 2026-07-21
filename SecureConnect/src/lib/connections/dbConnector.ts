@@ -25,6 +25,8 @@ export type QueryFn = (sql: string, params?: unknown[]) => Promise<QueryResult>;
 const CONNECT_TIMEOUT_MS = 5000;
 const QUERY_TIMEOUT_MS = 15000;
 const SSL_STRICT = process.env.DB_SSL_STRICT === "true";
+// S-2 fix: MySQL defaults to opportunistic TLS. Set DB_SSL_DISABLED=true only for servers that cannot do TLS.
+const SSL_DISABLED = process.env.DB_SSL_DISABLED === "true";
 
 // ---------- identifier safety ----------
 
@@ -99,7 +101,8 @@ async function connectMysql(rec: ConnectionRecord): Promise<Handle> {
       password: rec.password,
       connectTimeout: CONNECT_TIMEOUT_MS,
       multipleStatements: false,
-      dateStrings: true
+      dateStrings: true,
+      ssl: SSL_DISABLED ? undefined : (SSL_STRICT ? { rejectUnauthorized: true } : { rejectUnauthorized: false })
     }),
     CONNECT_TIMEOUT_MS + 500,
     "mysql connect"
