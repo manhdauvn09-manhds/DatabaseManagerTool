@@ -68,11 +68,43 @@ export function isPrivateIPv4(ip: string): boolean {
   return matchAny(n, PRIVATE_V4);
 }
 
+// Expand a compressed IPv6 address into 8 numeric groups.
+// Returns null for malformed input.
+function expandIPv6(ip: string): number[] | null {
+  const halves = ip.split("::");
+  if (halves.length > 2) return null;
+  const parseHalf = (s: string): number[] =>
+    s === "" ? [] : s.split(":").map((g) => parseInt(g || "0", 16));
+  if (halves.length === 1) {
+    const parts = ip.split(":");
+    if (parts.length !== 8) return null;
+    return parts.map((g) => parseInt(g || "0", 16));
+  }
+  const left = parseHalf(halves[0]);
+  const right = parseHalf(halves[1]);
+  const fill = 8 - left.length - right.length;
+  if (fill < 0) return null;
+  return [...left, ...Array(fill).fill(0), ...right];
+}
+
 export function isForbiddenIPv6(ip: string): boolean {
   const l = ip.toLowerCase();
+  // Fast path for canonical compressed forms.
   if (l === "::1" || l === "::") return true;
   if (l.startsWith("::ffff:")) {
     const v4 = l.slice("::ffff:".length);
+    return isForbiddenIPv4(v4) || isPrivateIPv4(v4);
+  }
+  // C-4/S-4 fix: also catch expanded forms like 0:0:0:0:0:0:0:1.
+  const groups = expandIPv6(l);
+  if (!groups || groups.length !== 8) return false;
+  const isLoopback = groups.every((g, i) => (i < 7 ? g === 0 : g === 1));
+  const isUnspecified = groups.every((g) => g === 0);
+  if (isLoopback || isUnspecified) return true;
+  // Expanded IPv4-mapped: 0:0:0:0:0:ffff:x:x
+  if (groups[0] === 0 && groups[1] === 0 && groups[2] === 0 &&
+      groups[3] === 0 && groups[4] === 0 && groups[5] === 0xffff) {
+    const v4 = `${groups[6] >> 8}.${groups[6] & 0xff}.${groups[7] >> 8}.${groups[7] & 0xff}`;
     return isForbiddenIPv4(v4) || isPrivateIPv4(v4);
   }
   return false;

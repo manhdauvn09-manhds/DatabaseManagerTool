@@ -110,18 +110,26 @@ export async function executeUpdate(
   validateColumnsList(setCols);
   const cap = maxAffectRows();
 
-  // Pre-check: how many rows would this affect?
-  const matched = await previewMatch(q, driver, database, table, where, 1);
-  if (matched.total > cap) {
-    throw new Error(`Operation affects ${matched.total} rows, exceeds cap (${cap}). Refine WHERE or raise MAX_AFFECT_ROWS.`);
+  // P-1 fix: issue only a COUNT (not COUNT + sample SELECT) for the cap check.
+  // This halves DB roundtrips vs. calling previewMatch, which is designed for the
+  // preview step already shown to the user.
+  const { sql: whereCountSql, params: whereCountParams } = buildWhere(where, driver);
+  const fq = fqTable(database, table, driver);
+  const countRes = await q(`SELECT COUNT(*) AS total FROM ${fq} WHERE ${whereCountSql}`, whereCountParams);
+  const matchCount = Number((countRes.rows[0] as { total: number | string }).total ?? 0);
+  if (matchCount > cap) {
+    throw new Error(`Operation affects ${matchCount} rows, exceeds cap (${cap}). Refine WHERE or raise MAX_AFFECT_ROWS.`);
   }
 
-  const fq = fqTable(database, table, driver);
   const setSql = setCols.map((c) => `${quoteIdent(c, driver)} = ?`).join(", ");
   const setValues: CellValue[] = setCols.map((c) => set[c]);
   const { sql: whereSql, params: whereParams } = buildWhere(where, driver);
   const sql = `UPDATE ${fq} SET ${setSql} WHERE ${whereSql}`;
   const result = await q(sql, [...setValues, ...whereParams]);
+  // C-2 fix: post-check affectedRows to catch the TOCTOU window between COUNT and UPDATE.
+  if ((result.affectedRows ?? 0) > cap) {
+    throw new Error(`UPDATE affected ${result.affectedRows} rows, exceeds cap (${cap}).`);
+  }
   return { affected: result.affectedRows ?? 0 };
 }
 
@@ -143,13 +151,11 @@ export async function executeDelete(
     throw new Error(`DELETE would remove ${matched.total} rows, exceeds cap (${cap}). Refine WHERE or raise MAX_AFFECT_ROWS.`);
   }
 
-  // Optional: capture rows for backup BEFORE delete.
+  // P-1 fix: reuse the sample rows already fetched by previewMatch instead of issuing
+  // a second SELECT * for backup — previewMatch already queried up to cap rows.
   let backup: Record<string, unknown>[] | undefined;
   if (process.env.BACKUP_BEFORE_DELETE === "true") {
-    // Fetch ALL matched rows (up to cap, already enforced).
-    const { sql: whereSql, params } = buildWhere(where, driver);
-    const all = await q(`SELECT * FROM ${fqTable(database, table, driver)} WHERE ${whereSql}`, params);
-    backup = all.rows;
+    backup = matched.sample;
   }
 
   const fq = fqTable(database, table, driver);

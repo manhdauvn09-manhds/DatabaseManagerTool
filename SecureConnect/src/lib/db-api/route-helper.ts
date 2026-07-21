@@ -16,7 +16,8 @@ const UUID_REGEX = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12
 
 function originOk(req: Request): boolean {
   const expectedOrigin = process.env.AUTH_URL?.toLowerCase();
-  if (!expectedOrigin) return true;
+  // S-1 fix: fail-closed when AUTH_URL is not configured — never allow arbitrary origins.
+  if (!expectedOrigin) return false;
   const origin = req.headers.get("origin")?.toLowerCase();
   const referer = req.headers.get("referer")?.toLowerCase();
   if (origin && origin === expectedOrigin) return true;

@@ -112,6 +112,18 @@ export async function setCountToCache(
   }
 }
 
+/** P-2 fix: Invalidate all count cache entries for a table after any mutation (INSERT/UPDATE/DELETE). */
+export async function invalidateCountCache(connId: string, db: string, table: string): Promise<void> {
+  const redis = getRedis();
+  if (!redis) return;
+  try {
+    const keys = await redis.keys(`count:${connId}:${db}:${table}:*`);
+    if (keys.length > 0) await redis.del(...keys);
+  } catch {
+    // Fail silently; stale count is self-healing within COUNT_TTL_SECONDS.
+  }
+}
+
 /** Invalidate all schema cache for a connection (after schema changes). */
 export async function invalidateConnectionSchemaCache(connId: string): Promise<void> {
   const redis = getRedis();

@@ -3,7 +3,10 @@
  */
 
 const WHITELIST_REGEX = /^\s*(?:EXPLAIN|SELECT|WITH|DESC|SHOW|DESCRIBE|PRAGMA)[\s\S]*$/i;
-const DANGEROUS_KEYWORDS = /\b(?:INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|CALL|EXEC|GRANT|REVOKE|BEGIN|COMMIT|ROLLBACK|LOCK|UNLOCK|SAVEPOINT)\b/i;
+// S-3 fix: added INTO OUTFILE/DUMPFILE and LOAD DATA/LOAD_FILE to block file-system exfiltration.
+// UNION is intentionally NOT blocked — it is a valid read-only combinator; DB credentials already
+// scope what the user can access.
+const DANGEROUS_KEYWORDS = /\b(?:INSERT|UPDATE|DELETE|DROP|CREATE|ALTER|TRUNCATE|CALL|EXEC|GRANT|REVOKE|BEGIN|COMMIT|ROLLBACK|LOCK|UNLOCK|SAVEPOINT)\b|INTO\s+(?:OUTFILE|DUMPFILE)\b|LOAD_FILE\s*\(|LOAD\s+DATA\b/i;
 
 export interface SqlValidationResult {
   ok: boolean;
