@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DatabaseManager — Software Requirements Specification</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body {
+      font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+      background: #f9fafb;
+      color: #1f2937;
+      padding: 2rem;
+      line-height: 1.6;
+    }
+    .container {
+      max-width: 1100px;
+      margin: 0 auto;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+      padding: 2.5rem;
+    }
+    h1 {
+      font-size: 2rem;
+      color: #1e40af;
+      margin-bottom: 0.5rem;
+      border-bottom: 3px solid #1e40af;
+      padding-bottom: 1rem;
+    }
+    .meta {
+      color: #6b7280;
+      font-size: 0.95rem;
+      margin-bottom: 2rem;
+      background: #f3f4f6;
+      padding: 1rem;
+      border-radius: 6px;
+    }
+    h2 {
+      font-size: 1.4rem;
+      color: #1f2937;
+      margin: 2rem 0 1rem;
+      border-bottom: 1px solid #e5e7eb;
+      padding-bottom: 0.5rem;
+    }
+    h3 {
+      font-size: 1.1rem;
+      color: #374151;
+      margin: 1.5rem 0 0.75rem;
+    }
+    .section {
+      margin-bottom: 2rem;
+      padding-bottom: 2rem;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .feature-list {
+      list-style: none;
+      padding-left: 0;
+    }
+    .feature-list li {
+      margin: 0.75rem 0;
+      padding: 0.75rem;
+      background: #f9fafb;
+      border-left: 3px solid #1e40af;
+      padding-left: 1rem;
+      border-radius: 4px;
+    }
+    .new-feature {
+      color: #0891b2;
+      font-weight: 600;
+    }
+    .removed-feature {
+      color: #dc2626;
+      text-decoration: line-through;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1rem 0;
+      font-size: 0.95rem;
+    }
+    th {
+      background: #f3f4f6;
+      padding: 0.75rem;
+      text-align: left;
+      font-weight: 600;
+      border-bottom: 2px solid #d1d5db;
+    }
+    td {
+      padding: 0.75rem;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    code {
+      background: #f3f4f6;
+      padding: 0.25rem 0.5rem;
+      border-radius: 3px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.9rem;
+    }
+    .status-badge {
+      display: inline-block;
+      padding: 0.35rem 0.75rem;
+      border-radius: 12px;
+      font-size: 0.8rem;
+      font-weight: 600;
+      margin-right: 0.5rem;
+    }
+    .status-done { background: #d1fae5; color: #065f46; }
+    .status-wip { background: #fef3c7; color: #92400e; }
+    .status-deferred { background: #f3e8ff; color: #6b21a8; }
+    .note {
+      background: #eff6ff;
+      border-left: 4px solid #1e40af;
+      padding: 1rem;
+      margin: 1rem 0;
+      border-radius: 4px;
+      font-size: 0.95rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>📋 DatabaseManager — Software Requirements Specification</h1>
+    <div class="meta">
+      <div><strong>Project:</strong> DatabaseManager (Next.js web UI + CSV importer + multi-dialect SQL editor)</div>
+      <div><strong>Version:</strong> <span style="text-decoration:line-through;color:red">Post Wave-3</span> <span style="color:#2196F3;font-weight:bold">Post Wave-3 + CASAN Security Uplift</span></div>
+      <div><strong>Last Updated:</strong> <span style="color:#2196F3;font-weight:bold">2026-07-21</span></div>
+      <div><strong>Status:</strong> ✅ Production Ready</div>
+    </div>
+
+    <div class="section">
+      <h2>1. Platform & Architecture</h2>
+      <h3>Technology Stack</h3>
+      <ul class="feature-list">
+        <li><strong>Frontend:</strong> Next.js 14 (TypeScript, React Server Components)</li>
+        <li><strong>Authentication:</strong> NextAuth v5 (Google OAuth + allowlist)</li>
+        <li><strong>Backend:</strong> Next.js API routes (Node.js runtime)</li>
+        <li><strong>Database Support:</strong> MySQL, PostgreSQL, MSSQL, SQLite</li>
+        <li><strong>Encryption:</strong> RSA keypair (HKDF-SHA256 + AES-256-GCM at rest)</li>
+        <li><strong>Shared State:</strong> <span class="new-feature">Redis 7 (opt-in via REDIS_URL)</span></li>
+        <li><strong>Deployment:</strong> Docker Compose (isolated network, 512MB RAM limit)</li>
+      </ul>
+
+      <h3>Hosting</h3>
+      <ul class="feature-list">
+        <li>Server: prod-106 ([DEPRECATED: prod-106]) — Hetzner Cloud</li>
+        <li>Container: <code>dbmanager-app</code></li>
+        <li>Port: <code>127.0.0.1:9230</code> (behind nginx reverse proxy)</li>
+        <li>Public URL: <code>https://dbmanager.allin1site.com</code> (TLS via shared proxy)</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>2. Core Features</h2>
+
+      <h3>Wave 1: Persistence & UI Foundation</h3>
+      <span class="status-badge status-done">✅ DONE</span>
+      <ul class="feature-list">
+        <li><strong>RSA Key Persistence (#2):</strong> Server keypair survives restarts/deploys (encrypted via VAULT_MASTER_SECRET)</li>
+        <li><strong>Column Sort (#5):</strong> Click column headers to sort ASC/DESC; state persists in URL query params</li>
+        <li><strong>Row-Detail Modal (#4):</strong> Expand rows to view full column values; works with filters/sort</li>
+      </ul>
+
+      <h3>Wave 2: Filtering & Type-Aware Forms</h3>
+      <span class="status-badge status-done">✅ DONE</span>
+      <ul class="feature-list">
+        <li><strong>Filter/Search (#3):</strong> Multi-column WHERE clause builder with operators (=, LIKE, &gt;, &lt;, IN, NULL); URL-encoded params</li>
+        <li><strong>Type-Aware Insert/Edit (#6):</strong> Form validates data types (INT, TEXT, DATE, BOOLEAN); prevents truncation/cast errors</li>
+        <li><strong>Vault Key Rotation (#8):</strong> <code>VAULT_MASTER_SECRET_OLD</code> decrypt-only during migration; re-saving encrypts with new key</li>
+        <li><strong>Auto Backup (#11):</strong> <code>deploy/backup.sh</code> on every DELETE; stores in <code>/data/backups/</code> per user/connection</li>
+      </ul>
+
+      <h3>Wave 3: Shared State & Infrastructure Hardening</h3>
+      <span class="status-badge status-done">✅ DONE</span>
+      <ul class="feature-list">
+        <li><strong>Redis-Backed State (#1):</strong> <span class="new-feature">opt-in via REDIS_URL; rate-limit (ZSET), confirm-tokens (SET NX), encrypted connection records persist across restarts</span></li>
+        <li><strong>Rate Limiting (#7):</strong> <code>rateLimit(key, max, windowMs)</code> — ZSET sliding window in Redis (fallback: in-memory Map)</li>
+        <li><strong>Single-Use Tokens (#9):</strong> <code>confirmTokens</code> — issue/consume for row-detail preview; 2-min TTL; atomic GETDEL in Redis</li>
+        <li><strong>Connection Pool (opt-in #15):</strong> <code>DB_POOL_ENABLED=false</code> by default; when true: reuse driver handle per connection ID with idle eviction</li>
+        <li><strong>SSH Hardening (#14):</strong> <span class="new-feature">fail2ban sshd jail (10m findtime, 5 maxretry, 1h ban); operator IP auto-whitelisted</span></li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>3. API Endpoints</h2>
+      <table>
+        <thead>
+          <tr>
+            <th>Endpoint</th>
+            <th>Method</th>
+            <th>Purpose</th>
+            <th>Auth</th>
+            <th>Rate Limit</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><code>GET /api/crypto/public-key</code></td>
+            <td>GET</td>
+            <td>Fetch server RSA public key (JWK format)</td>
+            <td>Session</td>
+            <td>30/min</td>
+          </tr>
+          <tr>
+            <td><code>POST /api/connect</code></td>
+            <td>POST</td>
+            <td>Test DB connection; create temp session record</td>
+            <td>Session</td>
+            <td>10 global / 2 per-user</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/db/:id/databases</code></td>
+            <td>GET</td>
+            <td>List databases on connection</td>
+            <td>Session + record</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/db/:id/rows</code></td>
+            <td>GET</td>
+            <td>Fetch rows with pagination, filter, sort, limit/offset</td>
+            <td>Session + record</td>
+            <td>—</td>
+          </tr>
+          <tr>
+            <td><code>POST /api/db/:id/rows/preview</code></td>
+            <td>POST</td>
+            <td>Preview UPDATE/DELETE with sample rows; issue confirmation token</td>
+            <td>Session + record</td>
+            <td>30/min</td>
+          </tr>
+          <tr>
+            <td><code>PUT /api/db/:id/rows</code></td>
+            <td>PUT</td>
+            <td>Execute UPDATE with valid token; verify WHERE matches preview</td>
+            <td>Token + record</td>
+            <td>30/min</td>
+          </tr>
+          <tr>
+            <td><code>DELETE /api/db/:id/rows</code></td>
+            <td>DELETE</td>
+            <td>Execute DELETE with valid token; auto-backup rows</td>
+            <td>Token + record</td>
+            <td>30/min</td>
+          </tr>
+          <tr>
+            <td><code>POST /api/db/:id/rows</code></td>
+            <td>POST</td>
+            <td>INSERT new row</td>
+            <td>Session + record</td>
+            <td>30/min</td>
+          </tr>
+          <tr>
+            <td><code>GET /api/health</code></td>
+            <td>GET</td>
+            <td>Health check (returns 200 OK)</td>
+            <td>—</td>
+            <td>—</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="section">
+      <h2>4. Environment Variables</h2>
+      <h3>Authentication & Network</h3>
+      <ul class="feature-list">
+        <li><code>AUTH_SECRET</code> — NextAuth session encryption (base64, ≥32 bytes)</li>
+        <li><code>AUTH_URL</code> — <code>https://dbmanager.allin1site.com</code> (must match user-facing host)</li>
+        <li><code>AUTH_GOOGLE_ID</code>, <code>AUTH_GOOGLE_SECRET</code> — OAuth credentials</li>
+        <li><code>ALLOWED_EMAILS</code>, <code>ALLOWED_EMAIL_DOMAINS</code>, <code>AUTH_ALLOW_ANY</code> — allowlist (fail-closed by default)</li>
+      </ul>
+
+      <h3>Database & Encryption</h3>
+      <ul class="feature-list">
+        <li><code>VAULT_MASTER_SECRET</code> — Master encryption key for saved profiles (required for feature; PBKDF2 derived)</li>
+        <li><code>VAULT_MASTER_SECRET_OLD</code> — Previous master (decrypt-only during rotation)</li>
+        <li><code>SERVER_KEYPAIR_PATH</code> — Ephemeral or persistent RSA keypair location</li>
+        <li><code>SAVED_CONNECTIONS_PATH</code> — Encrypted connection profiles (default: /data/saved-connections.json)</li>
+        <li><code>DB_SSL_STRICT</code> — <span style="text-decoration:line-through;color:red">MySQL/PG TLS cert validation (false = self-signed OK)</span> <span style="color:#2196F3;font-weight:bold">PG/MSSQL cert validation; MySQL now defaults opportunistic TLS</span></li>
+        <li><span style="color:#2196F3;font-weight:bold"><code>DB_SSL_DISABLED</code> — Set true only for MySQL servers that cannot do TLS (default: false = TLS on)</span></li>
+        <li><code>MSSQL_TRUST_SERVER_CERT</code> — MSSQL self-signed certs</li>
+      </ul>
+
+      <h3>Session & Connection Lifecycle</h3>
+      <ul class="feature-list">
+        <li><code>SESSION_MAXAGE_SEC</code> — Session expiry (default: 86400 = 24h)</li>
+        <li><code>DB_MAX_CONCURRENT_CONNECTS</code> — Global /api/connect cap (default: 10)</li>
+        <li><code>DB_MAX_PER_USER_CONNECTS</code> — Per-user cap (default: 2)</li>
+        <li><code>CONNECTION_TTL_MS</code> — In-memory record lifetime (default: 300000 = 5min) <span style="color:#2196F3;font-weight:bold">— validated with Number.isFinite; non-numeric values (e.g. "30m") now fall back to default instead of producing NaN TTL</span></li>
+        <li><code>CONNECTION_MAX_RECORDS</code> — Max concurrent connections (default: 1000; LRU evict)</li>
+      </ul>
+
+      <h3>Connection Pooling (Wave 3 #15)</h3>
+      <ul class="feature-list">
+        <li><code>DB_POOL_ENABLED</code> — <span class="new-feature">Enable per-connection-id reuse (default: false = fresh connect per request)</span></li>
+        <li><code>DB_POOL_IDLE_MS</code> — Idle timeout before eviction (default: 30000 = 30s)</li>
+      </ul>
+
+      <h3>Redis Shared State (Wave 3 #1)</h3>
+      <ul class="feature-list">
+        <li><span class="new-feature"><code>REDIS_URL</code> — Connection string (e.g., <code>redis://redis:6379</code>); unset = in-memory fallback</span></li>
+        <li><span class="new-feature"><code>REDIS_PREFIX</code> — Namespace for shared Redis instance (default: <code>dbm:</code>)</span></li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>5. Security & Authorization</h2>
+      <ul class="feature-list">
+        <li><strong>Session-Based:</strong> NextAuth JWT stored in secure httpOnly cookie</li>
+        <li><strong>Per-Connection Encryption:</strong> Credentials encrypted in serverVault (HKDF + AES-256-GCM); key rotation supported</li>
+        <li><strong>Rate Limiting:</strong> <code>GET /api/crypto/public-key</code> (30/min), row preview/mutate (30/min); Redis ZSET with pexpire auto-cleanup</li>
+        <li><strong>Confirmation Tokens:</strong> Single-use, 2-min TTL, hash-bound to exact operation (prevents token-reuse attacks)</li>
+        <li><strong>Access Controls:</strong>
+          <ul style="margin-top: 0.5rem;">
+            <li>✅ <span style="text-decoration:line-through;color:red">Loopback check (127.0.0.1, ::1 always blocked)</span> <span style="color:#2196F3;font-weight:bold">Loopback check — blocks compressed AND expanded IPv6 forms (e.g. 0:0:0:0:0:0:0:1)</span></li>
+            <li>✅ Private host allowlist (10.0.0.0/8, 172.16/12, 192.168/16, fc00::/7) — gated by ALLOW_PRIVATE_HOSTS</li>
+            <li>✅ <span style="text-decoration:line-through;color:red">Origin/Referer hardening — /api/connect validates request host matches AUTH_URL</span> <span style="color:#2196F3;font-weight:bold">CSRF guard fail-closed: when AUTH_URL unset, all cross-origin requests are rejected (not silently allowed)</span></li>
+            <li>✅ Optional Cloudflare hardening — REQUIRE_CLOUDFLARE=true enforces CF-Connecting-IP header</li>
+          </ul>
+        </li>
+        <li><span style="color:#2196F3;font-weight:bold"><strong>SQL Validator hardening:</strong> INTO OUTFILE, INTO DUMPFILE, LOAD DATA, LOAD_FILE now blocked to prevent file-system exfiltration via /api/db/[id]/query</span></li>
+        <li><span style="color:#2196F3;font-weight:bold"><strong>LIKE metachar safety:</strong> %, _ characters in search values are escaped before LIKE interpolation; ESCAPE clause added cross-driver</span></li>
+        <li><span style="color:#2196F3;font-weight:bold"><strong>Count cache invalidation:</strong> Row count cache (Redis) cleared after INSERT/UPDATE/DELETE to prevent stale pagination totals</span></li>
+        <li><span class="new-feature"><strong>SSH Hardening:</strong> fail2ban sshd jail (prod-106) — 1h ban after 5 failed logins in 10m; operator IP whitelisted</span></li>
+        <li><strong>Secrets Handling:</strong> No secrets in logs, no credentials in URL params, environment-injected only</li>
+      </ul>
+    </div>
+
+    <div class="section">
+      <h2>6. Deployment & Operations</h2>
+
+      <h3>Build & Test Gate</h3>
+      <ul class="feature-list">
+        <li><strong>Vitest Framework:</strong> 129 unit tests covering rate-limit, token lifecycle, connection records</li>
+        <li><strong>Build Gate:</strong> <code>npm run build</code> (Next.js static generation + API route validation)</li>
+        <li><strong>Lint Gate:</strong> ESLint + TS strict mode; all async functions verified</li>
+      </ul>
+
+      <h3>Docker Compose</h3>
+      <ul class="feature-list">
+        <li><strong>App Service (dbmanager-app):</strong>
+          <ul>
+            <li>Image: Node.js runtime</li>
+            <li>RAM limit: 512M / reservation: 128M</li>
+            <li>CPU limit: 1.0 cores</li>
+            <li>Health check: GET <code>http://127.0.0.1:3000/api/health</code> every 30s (3 retries, 10s timeout)</li>
+          </ul>
+        </li>
+        <li><span class="new-feature"><strong>Redis Service (dbmanager-redis, Wave 3):</strong>
+          <ul>
+            <li>Image: redis:7-alpine</li>
+            <li>RAM limit: 192M</li>
+            <li>Persistence: AOF (appendonly=yes, volatile-ttl eviction)</li>
+            <li>Health check: redis-cli ping every 10s</li>
+            <li>Depends-on: App waits for redis service_healthy</li>
+          </ul>
+        </span></li>
+        <li><strong>Volumes:</strong> <code>dbmanager_data</code> (saved-connections.json, keypair, backups)</li>
+      </ul>
+
+      <h3>Deployment Flow</h3>
+      <ul class="feature-list">
+        <li>No local Node/Docker; build on server via <code>deploy.ps1</code> + Dockerfile test gate</li>
+        <li>git pull → docker build (no cache) → container restart → health check → Cloudflare purge (if configured)</li>
+        <li><strong>Safety:</strong> NEVER start nginx, NEVER bind 80/443 locally, verify 13 other services unaffected</li>
+      </ul>
+    </div>
+
+    <div class="note">
+      <strong>Last Deployment Note:</strong><br/>
+      All Wave 1-3 improvements completed & tested (2026-05-30/31). 129 vitest tests pass. Redis AOF persistence verified. fail2ban SSH jail active on prod-106. App is production-ready with no known issues. Next phase: scale testing & optional monitoring integrations.
+    </div>
+  </div>
+</body>
+</html>
