@@ -24,3 +24,17 @@ deploy/.env.production.local
 .DS_Store
 .vscode/
 .idea/
+
+# Harness Portal ingest key - secret, never commit (C5)
+.harness/portal-sync.key
+
+# One-time backup written when a legacy guide block is migrated
+*.pre-migration.bak
+
+# Harness runtime state - local per-machine, khong phai source.
+# Ledger van tamper-evident nho hash-chain + day len Portal (portal-sync.json);
+# commit vao git se churn moi tool call va conflict lien tuc.
+.harness/ledger/chain.jsonl
+.harness/tmp/
+.harness/telemetry/*.jsonl
+.harness/telemetry/*.bak

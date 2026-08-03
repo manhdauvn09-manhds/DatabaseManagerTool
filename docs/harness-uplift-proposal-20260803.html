@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Đề xuất nâng Harness Level + Agent tự động Review/Fix/Test — DatabaseManager</title>
+<style>
+:root{--bg:#0f1420;--card:#1a2233;--card2:#141b2b;--tx:#e8ecf4;--mut:#9aa7bd;--acc:#4fc3f7;--ok:#4caf7d;--warn:#e6b455;--bad:#e57373;--line:#2a3450}
+@media (prefers-color-scheme: light){:root{--bg:#f5f7fb;--card:#fff;--card2:#eef2f8;--tx:#1c2333;--mut:#5a6780;--acc:#0277bd;--line:#d7dfec}}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--tx);line-height:1.6;padding:24px;max-width:1100px;margin:0 auto}
+h1{font-size:1.5rem;margin:8px 0 4px;color:var(--acc)}
+h2{font-size:1.15rem;margin:32px 0 12px;padding-bottom:6px;border-bottom:2px solid var(--acc)}
+h3{font-size:1rem;margin:20px 0 8px;color:var(--acc)}
+.sub{color:var(--mut);font-size:.9rem;margin-bottom:20px}
+table{width:100%;border-collapse:collapse;margin:12px 0;font-size:.88rem;background:var(--card);border-radius:8px;overflow:hidden}
+th{background:var(--card2);text-align:left;padding:10px 12px;color:var(--acc);white-space:nowrap}
+td{padding:9px 12px;border-top:1px solid var(--line);vertical-align:top}
+.tag{display:inline-block;padding:1px 10px;border-radius:12px;font-size:.75rem;font-weight:600;white-space:nowrap}
+.t-bad{background:rgba(229,115,115,.15);color:var(--bad)}
+.t-warn{background:rgba(230,180,85,.15);color:var(--warn)}
+.t-ok{background:rgba(76,175,125,.15);color:var(--ok)}
+.t-info{background:rgba(79,195,247,.15);color:var(--acc)}
+code{background:var(--card2);padding:1px 6px;border-radius:4px;font-size:.84em;font-family:Consolas,monospace}
+pre{background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto;font-size:.82rem;margin:10px 0;font-family:Consolas,monospace;line-height:1.5}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px 18px;margin:12px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+@media(max-width:800px){.grid{grid-template-columns:1fr}}
+.kpi{display:flex;gap:12px;flex-wrap:wrap;margin:14px 0}
+.kpi>div{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 18px;text-align:center;flex:1;min-width:110px}
+.kpi b{display:block;font-size:1.4rem}
+ul,ol{margin:6px 0 6px 22px}
+li{margin:4px 0}
+.flow{background:var(--card2);border:1px solid var(--line);border-radius:8px;padding:12px;overflow-x:auto}
+.note{border-left:4px solid var(--warn);background:var(--card);padding:10px 14px;border-radius:0 8px 8px 0;margin:12px 0;font-size:.9rem}
+</style>
+</head>
+<body>
+
+<h1>Đề xuất nâng Harness Level (H2·H3·H5·H7) + Hệ Agent tự động Review / Fix / Test</h1>
+<div class="sub">Dự án: DatabaseManager (SecureConnect) · Ngày: 2026-08-03 · Căn cứ: <code>.harness/control/casan-policies.yaml(.new)</code>, <code>docs/casan_harness_assessment.md</code>, ledger bundle 2026-07-21</div>
+
+<div class="kpi">
+  <div><b class="t-bad" style="background:none">H2 Tool</b><span class="tag t-bad">Thấp</span></div>
+  <div><b class="t-bad" style="background:none">H3 Eval</b><span class="tag t-bad">Thấp</span></div>
+  <div><b class="t-bad" style="background:none">H5 Gov</b><span class="tag t-bad">Thấp</span></div>
+  <div><b class="t-bad" style="background:none">H7 Orch</b><span class="tag t-bad">Thấp</span></div>
+</div>
+
+<h2>1. Nguyên nhân gốc — tại sao 4 Harness bị chấm thấp</h2>
+<div class="card">
+<p><b>Phát hiện xuyên suốt (root cause chung):</b> theo nguyên tắc C10 (<i>honest enforcement</i>), các mục policy khai <code>enforced_at: gateway</code> (H2, H5) và <code>enforced_at: workflow_engine</code> (H7) chỉ là <b>tuyên bố</b> — gateway PDP và workflow engine <b>chưa live</b>, nên scorer chấm là "declared-not-enforced" → điểm thấp dù policy đã viết đầy đủ.</p>
+<p style="margin-top:8px"><b>Riêng H3:</b> scorer chỉ đếm <code>regression_suites_required</code> = 3 suite của chính harness (policy-ci, red-team, golden). <b>236 test thật của SecureConnect hoàn toàn vô hình với H3.</b> Chính comment trong <code>casan-policies.yaml.new</code> đã thừa nhận: <i>"their actual test count (3400+ tests) was invisible to H3 until they added a fourth entry"</i> → đây là lỗi thiết kế common của ToolKit.</p>
+</div>
+
+<table>
+<tr><th>Harness</th><th>Triệu chứng</th><th>Nguyên nhân</th><th>Lỗi thuộc về</th></tr>
+<tr><td><b>H2 Tool</b></td><td>Idempotency key + rate limit khai báo nhưng không kiểm chứng được</td><td><code>enforced_at: gateway</code> — không có enforcement local fallback; không có audit per-call ở phía repo</td><td><span class="tag t-warn">Cả hai</span></td></tr>
+<tr><td><b>H3 Evaluation</b></td><td>Dự án có 23 suites / 236 tests + e2e + CI nhưng H3 chấm như "zero tests"</td><td>Scorer chỉ nhìn <code>regression_suites_required</code>; suite dự án chưa được đăng ký</td><td><span class="tag t-warn">Cả hai</span> (ToolKit: lỗi scorer · Dự án: chưa đăng ký suite)</td></tr>
+<tr><td><b>H5 Governance</b></td><td><s>Ledger không tồn tại</s> → <b>đính chính:</b> ledger hoạt động tốt (đã verify INTACT). Gap thật: <code>approval-gate.ps1</code> có ship nhưng <b>không được nối vào hook nào</b></td><td>PreToolUse chỉ gọi runtime-guard (deny cứng), không có bước hỏi người cho action rủi ro cao → không trả lời được câu audit "ai duyệt"</td><td><span class="tag t-warn">Cả hai</span></td></tr>
+<tr><td><b>H7 Orchestration</b></td><td>Model fallback / retry / rollback khai báo nhưng không có engine nào thực thi</td><td><code>enforced_at: workflow_engine</code> — bundle không ship engine; dự án cũng không có DAG pipeline cụ thể</td><td><span class="tag t-warn">Cả hai</span></td></tr>
+</table>
+
+<h2>2. Việc DỰ ÁN cần làm (project-side)</h2>
+
+<h3>H3 — Evaluation (tác động lớn nhất, làm trước)</h3>
+<div class="card">
+<ol>
+<li><b>Đăng ký test suite thật của SecureConnect</b> vào <code>casan-policies.yaml</code>:</li>
+</ol>
+<pre>evaluation:
+  regression_suites_required:
+    - "policy-ci"
+    - "red-team"
+    - "golden"
+    - "secureconnect-unit"          # ← THÊM
+  suite_commands:
+    policy-ci: "python .harness/scripts/lib/harness_policy_check.py ."
+    red-team:  "python .harness/scripts/lib/harness_redteam.py ."
+    golden:    "python .harness/scripts/lib/harness_golden.py ."
+    secureconnect-unit: "npm test --silent --prefix SecureConnect"   # ← THÊM</pre>
+<ol start="2">
+<li><b>Bổ sung golden dataset domain-level</b> vào <code>.harness/eval/golden/golden-cases.jsonl</code>: các case SSRF guard, sqlValidator deny-list, CSRF origin check, mutate cap — hiện golden chỉ cover deny-policy của harness, chưa cover nghiệp vụ app.</li>
+<li><b>Kết nối judge-rubric</b>: dùng <code>.harness/eval/judge/judge-rubric.md</code> làm tiêu chí cho agent review (mục 4) để feedback loop từ test fail quay lại spec.</li>
+</ol>
+<p><span class="tag t-ok">Kỳ vọng</span> H3 tăng mạnh ngay: từ "zero tests" → suite thật 236 tests được tính + gate release.</p>
+</div>
+
+<h3>H2 — Tool</h3>
+<div class="card">
+<ol>
+<li><s>Bật audit per-call local</s> — <b>đã có sẵn.</b> <code>harness-post-tool-use.ps1</code> đã append mỗi tool call (input/output hash, agent, session) vào ledger. Không cần làm gì.</li>
+<li><b>Idempotency key thực tế</b>: script <code>push-and-deploy.ps1</code> sinh key = <code>sha256(commit + app_id)</code>, ghi vào KV trước khi deploy; deploy lần 2 cùng key → skip. Đáp ứng đúng "câu hỏi chốt" của H2: <i>tool chạy 2 lần có safe không</i>.</li>
+<li><b>Rate limit local</b>: hook đếm call/phút theo <code>rate_limits</code> đã khai, vượt ngưỡng → warn + ghi incident.</li>
+</ol>
+</div>
+
+<h3>H5 — Governance</h3>
+<div class="card">
+<ol>
+<li><s>Khởi tạo hash-chain ledger</s> — <b>không cần làm.</b> Kiểm chứng ngày 2026-08-03: ledger writer đã ship và hoạt động, tự tạo chain khi append đầu tiên; <code>evidence-ledger.ps1 verify</code> báo <i>LEDGER INTACT</i>. Audit per-call cũng đã được nối sẵn trong PostToolUse.</li>
+<li><b>Approval checkpoint local</b> ✅ <b>ĐÃ LÀM</b>: <code>.harness/scripts/powershell/approval-checkpoint.ps1</code> — đọc <code>governance.approval_required</code> (C2, không hardcode), trả <code>permissionDecision: "ask"</code> cho <code>deploy</code>/<code>rollback_deploy</code>/<code>mysql_query</code> (chỉ WRITE)/<code>provider_key_rotate</code>, ghi entry <code>type: approval</code> vào ledger trước khi hỏi. Nối vào PreToolUse sau runtime-guard.</li>
+<li><b>Risk registry sống</b>: <code>risk-registry.yaml</code> đã có — bổ sung entry cho các action của dự án (bulk mutate, recreate volume ❌, nginx script ❌ theo CLAUDE.md) để policy engine đọc được.</li>
+<li><b>Compliance report tháng</b>: cron sinh báo cáo từ ledger (đếm approval, deny, incident) → <code>docs/compliance-YYYYMM.md</code>.</li>
+</ol>
+</div>
+
+<h3>H7 — Orchestration</h3>
+<div class="card">
+<ol>
+<li><b>Định nghĩa DAG pipeline cụ thể</b> cho luồng đối ứng (chính là hệ agent ở mục 4): Scope → Review → Fix → Test → Gate → Deploy, khai trong file workflow (vd <code>.claude/workflows/change-pipeline.md</code> hoặc Workflow script) để scorer thấy DAG thực.</li>
+<li><b>Retry có giới hạn + BACK-TO-PLAN</b>: fix agent tối đa 3 vòng, quá → dừng, báo người.</li>
+<li><b>Transaction boundary thực</b>: deploy fail → tự gọi <code>rollback_deploy</code> (MCP đã có tool này) — hiện chỉ khai <code>rollback_on_failure: true</code> mà không ai thực thi.</li>
+<li><b>Model fallback</b>: dùng chính ladder đã khai trong policy khi spawn agent (review → opus, fail → haiku).</li>
+</ol>
+</div>
+
+<h2>3. Việc cần REQUEST bên Harness ToolKit (common fixes)</h2>
+<table>
+<tr><th>#</th><th>Request</th><th>Harness</th><th>Lý do</th></tr>
+<tr><td>1</td><td><b>Sửa scorer H3: auto-detect test suite của dự án</b> (đọc <code>package.json scripts.test</code>, <code>pytest.ini</code>, <code>go.mod</code>…) và tính vào điểm thay vì chỉ đếm <code>regression_suites_required</code>. Tối thiểu: installer nhắc/tự thêm suite dự án khi onboard.</td><td>H3</td><td>Đã được ToolKit tự thừa nhận trong comment <code>casan-policies.yaml.new</code> — mọi project onboard đều dính, test thật vô hình → điểm sai lệch nghiêm trọng.</td></tr>
+<tr><td>2</td><td><b>Local-fallback enforcement cho các mục <code>enforced_at: gateway</code></b>: ship hook enforcement (idempotency, rate-limit, approval) chạy được offline; khi gateway live thì nhường quyền. Scorer cấp điểm "partial" cho hook-enforced thay vì 0.</td><td>H2, H5</td><td>Gateway PDP chưa live ở đa số môi trường → mọi project bị chấm thấp mặc định dù policy đúng.</td></tr>
+<tr><td>3</td><td><b>Nối <code>approval-gate.ps1</code> vào PreToolUse trong template settings.json</b> khi install. (Đã rút lại yêu cầu về ledger writer — <i>kiểm chứng thực tế cho thấy ledger writer CÓ ship, tự tạo chain khi append đầu tiên và verify hash-chain đúng</i>.)</td><td>H5</td><td>Script approval có ship nhưng installer không nối vào hook nào → mọi project đều thiếu bước phê duyệt dù ToolKit đã viết sẵn code.</td></tr>
+<tr><td>4</td><td><b>Ship workflow engine (hoặc adapter)</b> thực thi <code>orchestration:</code> — model_fallback, retry, rollback — hoặc đổi scorer: chấm H7 dựa trên workflow thực tế tồn tại trong repo (<code>.claude/workflows/</code>, CI pipeline) thay vì đòi engine riêng.</td><td>H7</td><td><code>enforced_at: workflow_engine</code> nhưng bundle không ship engine — không project nào tự đạt được.</td></tr>
+<tr><td>5</td><td><b>Ship rubric docs cùng bundle</b> (<code>casan_harness_assessment.md</code> + assessment HTML vào <code>bundle.yaml provides.docs</code>).</td><td>All</td><td>Đã fix trong <code>.yaml.new</code> — cần merge chính thức để project mới hiểu mình bị chấm theo tiêu chí nào.</td></tr>
+<tr><td>6</td><td><b>Compliance report generator</b> đọc ledger → báo cáo tháng tự động.</td><td>H5</td><td>Policy khai <code>compliance_report: monthly</code> nhưng không có tool nào sinh — mục checklist này không project nào tick được.</td></tr>
+</table>
+
+<div class="note">⚠️ Ưu tiên gửi request <b>#1</b> và <b>#2</b> trước — đây là 2 nguyên nhân kéo điểm mạnh nhất và ảnh hưởng mọi project dùng ToolKit.</div>
+
+<h2>4. Hệ Agent tự động Review → Fix → Test (impact-based, không test all)</h2>
+
+<h3>4.1 Kiến trúc pipeline</h3>
+<div class="flow">
+<pre style="border:none;background:none;margin:0">
+ git diff ──► [A1 Scope Agent] ──► impacted-map (files + modules + test liên quan)
+                    │
+                    ▼
+             [A2 Review Agent] ◄──── judge-rubric.md (H3)
+              │ APPROVED?│
+              │          └─ REJECTED ──► [A3 Fix Agent] ── max 3 vòng ──► quay lại A2
+              ▼                              (quá 3 vòng → dừng, báo người)
+             [A4 Test Agent]
+              ├─ UT:  jest --findRelatedTests &lt;changed files&gt;   ← CHỈ vùng ảnh hưởng
+              ├─ IT:  chạy test của route/module trong impacted-map
+              └─ Full suite: CHỈ khi (a) đổi file core dùng chung ≥N nơi, (b) trước deploy
+                    │
+                    ▼
+             [A5 Gate] ─ pass ─► approval (H5) ─► deploy ─ fail ─► rollback_deploy (H7)
+                    └─ ghi toàn bộ vào ledger chain.jsonl (H2/H5)
+</pre>
+</div>
+
+<h3>4.2 Chi tiết từng agent</h3>
+<table>
+<tr><th>Agent</th><th>Nhiệm vụ</th><th>Cách xác định "vùng ảnh hưởng"</th></tr>
+<tr><td><b>A1 Scope</b><br><span class="tag t-info">Explore/haiku</span></td><td>Từ <code>git diff --name-only</code> dựng impacted-map</td><td>① <code>jest --findRelatedTests</code> (dependency graph có sẵn của Jest) ② import graph bằng <code>madge</code> cho reverse-deps ③ map route API → test IT tương ứng (bảng cố định trong file config)</td></tr>
+<tr><td><b>A2 Review</b><br><span class="tag t-info">opus, effort high</span></td><td>LLM-as-judge theo <code>judge-rubric.md</code>: correctness, security (OWASP), quy ước CLAUDE.md. Verdict APPROVED / CHANGES_REQUIRED / REJECTED + score</td><td>Chỉ đọc files trong impacted-map + reverse-deps cấp 1 — không quét cả repo</td></tr>
+<tr><td><b>A3 Fix</b><br><span class="tag t-info">sonnet</span></td><td>Nhận findings CONFIRMED từ A2, sửa từng finding, không mở rộng scope</td><td>Chỉ sửa file bị nêu trong finding; mỗi vòng fix xong trả lại A2 re-review đúng phần sửa</td></tr>
+<tr><td><b>A4 Test</b><br><span class="tag t-info">haiku, effort low</span></td><td>Chạy test theo tầng, dừng sớm khi fail</td><td>UT vùng ảnh hưởng → IT module → full suite chỉ khi chạm file "core" (danh sách: <code>store.ts, dbConnector.ts, route-helper.ts, ssrfGuard.ts, serverVault.ts</code>…) hoặc trước deploy</td></tr>
+<tr><td><b>A5 Gate</b><br><span class="tag t-info">script, không cần LLM</span></td><td>Tổng hợp verdict + test result → xin approval người (AskUserQuestion) → deploy → smoke check → fail thì rollback. Append tất cả vào ledger</td><td>—</td></tr>
+</table>
+
+<h3>4.3 Quy tắc "chỉ test vùng ảnh hưởng"</h3>
+<div class="card">
+<ul>
+<li><b>Tầng 1 (luôn chạy, ~giây):</b> <code>npx jest --findRelatedTests $(git diff --name-only HEAD -- 'SecureConnect/src/**/*.ts')</code> — Jest tự lần dependency graph, chỉ chạy test import (trực tiếp/gián tiếp) file đã đổi.</li>
+<li><b>Tầng 2 (khi đổi API route):</b> chạy test của module tương ứng (map <code>src/app/api/db/[id]/rows/</code> → <code>mutate.test.ts, store.test.ts</code>…).</li>
+<li><b>Tầng 3 (full 236 tests):</b> chỉ khi (a) file core-shared thay đổi, (b) đổi <code>package.json</code>/config build, (c) bước Gate trước deploy — vì Dockerfile đã có test gate, full suite chạy 1 lần duy nhất trong build.</li>
+<li><b>Chống lọt lưới:</b> nightly cron chạy full suite 1 lần/ngày — nếu fail mà các lần impact-test đều pass → ghi incident <code>test_regression_after_pass</code> (đúng hallucination flag H6 đã khai) và mở rộng danh sách core files.</li>
+</ul>
+</div>
+
+<h3>4.4 Cách triển khai (đề xuất thứ tự)</h3>
+<table>
+<tr><th>Bước</th><th>Việc</th><th>Effort</th><th>Nâng Harness</th></tr>
+<tr><td>1</td><td>Đăng ký suite SecureConnect vào H3 policy + thêm golden domain cases</td><td>0.5 ngày</td><td><span class="tag t-ok">H3 ↑↑</span></td></tr>
+<tr><td>2</td><td>Tạo skill <code>/change-pipeline</code> (Workflow script A1→A5) + agent definitions trong <code>.claude/agents/</code></td><td>1–2 ngày</td><td><span class="tag t-ok">H3, H7 ↑</span></td></tr>
+<tr><td>3</td><td>Hook audit per-call + khởi tạo ledger chain.jsonl + approval checkpoint</td><td>1 ngày</td><td><span class="tag t-ok">H2, H5 ↑</span></td></tr>
+<tr><td>4</td><td>Idempotency key trong push-and-deploy.ps1 + auto-rollback khi smoke fail</td><td>0.5 ngày</td><td><span class="tag t-ok">H2, H7 ↑</span></td></tr>
+<tr><td>5</td><td>Nightly full-suite cron + compliance report tháng</td><td>0.5 ngày</td><td><span class="tag t-ok">H5, H6 ↑</span></td></tr>
+<tr><td>6</td><td>Gửi 6 request cho Harness ToolKit (mục 3)</td><td>—</td><td><span class="tag t-info">Common</span></td></tr>
+</table>
+
+<div class="note">💡 Sau bước 1–4, cả 4 Harness thấp đều có enforcement thực tế local — không còn phụ thuộc gateway PDP live hay không. Khi ToolKit fix scorer (#1, #2), điểm sẽ phản ánh đúng.</div>
+
+</body>
+</html>

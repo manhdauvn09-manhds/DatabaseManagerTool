@@ -1,0 +1,84 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://harness.internal/schemas/risk-registry.schema.json",
+  "title": "Risk Registry Schema",
+  "description": "SSOT for risk classification, scoring rules, and dependency gate policies (H5).",
+  "type": "object",
+  "required": ["schema_version", "risk_tiers", "risk_scoring"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "risk_tiers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["level", "threshold", "requires_approval", "description"],
+        "properties": {
+          "level": { "type": "string", "enum": ["none", "low", "medium", "high", "critical"] },
+          "threshold": { "type": "integer", "minimum": 0 },
+          "requires_approval": { "type": "boolean" },
+          "approval_roles": { "type": "array", "items": { "type": "string" } },
+          "description": { "type": "string" }
+        }
+      }
+    },
+    "risk_scoring": {
+      "type": "object",
+      "required": ["base_scores"],
+      "properties": {
+        "base_scores": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["action_type", "base_score"],
+            "properties": {
+              "action_type": { "type": "string" },
+              "base_score": { "type": "integer", "minimum": 0, "maximum": 100 }
+            }
+          }
+        },
+        "modifiers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["condition", "score_delta"],
+            "properties": {
+              "condition": { "type": "string" },
+              "score_delta": { "type": "integer" }
+            }
+          }
+        }
+      }
+    },
+    "dependency_gate": {
+      "type": "object",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "approval_required_for": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["category", "risk_level", "reason"],
+            "properties": {
+              "category": { "type": "string" },
+              "risk_level": { "type": "string" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "allow_without_approval": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["category", "risk_level", "reason"],
+            "properties": {
+              "category": { "type": "string" },
+              "risk_level": { "type": "string" },
+              "reason": { "type": "string" }
+            }
+          }
+        },
+        "allowed_registries": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

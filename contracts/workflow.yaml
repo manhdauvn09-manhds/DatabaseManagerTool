@@ -1,0 +1,161 @@
+# Workflow Contract — H7 Orchestration
+# The DAG defines the ONLY valid path to side-effects (C6, D14).
+#
+# v1.6.0 brackets the original three stages with two gates. The three were a
+# straight line from a request to shipped code, which meant nothing ever asked
+# whether the request itself was sound (a misread request produced a clean,
+# well-reviewed implementation of the wrong thing) and nothing stood between a
+# passing review and a release tool. `intake` closes the first gap, `qa-gate` the
+# second. Every consuming project on the 3-stage DAG stays valid -- the installer
+# migrates on request (-UpgradeDAG), never silently.
+schema_version: "1.0.0"
+
+workflow:
+  id: "wf-intake-implement-qa"
+  name: "Standard 6-Stage Pipeline"
+  description: "Intake → Analysis → Implementation → Test → Verification → QA-Gate — the AI-SDLC cycle with a gate at each end"
+  version: "1.6.0"
+
+# Stages define the DAG nodes
+stages:
+  - id: "intake"
+    name: "Intake"
+    agent: "gatekeeper"
+    model_profile: "planning-light"
+    description: "Pre-code triage: ground the request's intent, plane, risk class and approval needs before any code is written"
+    inputs:
+      raw_request: "pipeline-context.yaml#pipeline.name"
+    outputs:
+      intake_doc: "artifacts/intake/{pipeline_id}-request-intake.md"
+    gates: []
+    retry_limit: 1
+    timeout_minutes: 5
+
+  - id: "analysis"
+    name: "Analysis"
+    agent: "analyst"
+    model_profile: "planning"
+    description: "Read spec, analyze requirements, produce structured analysis"
+    depends_on: ["intake"]
+    inputs:
+      spec: "pipeline-context.yaml#project.domain_refs.srs"
+      intake_doc: "artifacts/intake/{pipeline_id}-request-intake.md"
+    outputs:
+      analysis_doc: "artifacts/analysis/{pipeline_id}-analysis.md"
+    gates: []
+    retry_limit: 2
+    timeout_minutes: 10
+
+  - id: "implementation"
+    name: "Implementation"
+    agent: "developer"
+    model_profile: "coding"
+    description: "Implement code changes per analysis document"
+    depends_on: ["analysis"]
+    inputs:
+      analysis_doc: "artifacts/analysis/{pipeline_id}-analysis.md"
+    outputs:
+      code_diff: "artifacts/implementation/{pipeline_id}-diff.md"
+    gates:
+      - type: "approval"
+        condition: "analysis_complete"
+        description: "Analysis must be complete before implementation"
+    retry_limit: 3
+    timeout_minutes: 30
+
+  # Split out from verification on purpose: the reviewer was both running the
+  # suites and judging them, so "tests pass" rested on the same agent that wanted
+  # them to. A separate stage produces a report the next stage has to cite.
+  - id: "test"
+    name: "Test"
+    agent: "tester"
+    model_profile: "coding"
+    description: "Write and run the test suites; produce a machine-readable report"
+    depends_on: ["implementation"]
+    inputs:
+      analysis_doc: "artifacts/analysis/{pipeline_id}-analysis.md"
+      code_diff: "artifacts/implementation/{pipeline_id}-diff.md"
+    outputs:
+      test_report: "tests/reports/{pipeline_id}-report.junit.xml"
+    gates:
+      - type: "quality_gate"
+        condition: "implementation_complete"
+        description: "Implementation must be complete before tests are meaningful"
+    retry_limit: 2
+    timeout_minutes: 20
+
+  - id: "verification"
+    name: "Verification"
+    agent: "reviewer"
+    model_profile: "review"
+    description: "Verify implementation meets requirements"
+    depends_on: ["test"]
+    inputs:
+      analysis_doc: "artifacts/analysis/{pipeline_id}-analysis.md"
+      implementation_diff: "artifacts/implementation/{pipeline_id}-diff.md"
+      test_report: "tests/reports/{pipeline_id}-report.junit.xml"
+    outputs:
+      verdict: "artifacts/verification/{pipeline_id}-verdict.md"
+    gates:
+      - type: "quality_gate"
+        condition: "implementation_complete"
+        description: "Implementation must be complete before verification"
+    retry_limit: 2
+    timeout_minutes: 10
+
+  # The last thing before a release tool may run. harness-post-tool-use reads this
+  # stage's verdict out of pipeline-context.yaml and denies git_commit/deploy/etc
+  # on anything other than APPROVED. Deliberately a SECOND review rather than a
+  # rubber stamp on the first: adversarial, and required to cite executed tests.
+  - id: "qa-gate"
+    name: "QA-Gate"
+    agent: "qa-reviewer"
+    model_profile: "review"
+    description: "Adversarial final gate; verdict must cite executed tests and security findings"
+    depends_on: ["verification"]
+    inputs:
+      analysis_doc: "artifacts/analysis/{pipeline_id}-analysis.md"
+      implementation_diff: "artifacts/implementation/{pipeline_id}-diff.md"
+      test_report: "tests/reports/{pipeline_id}-report.junit.xml"
+      verdict: "artifacts/verification/{pipeline_id}-verdict.md"
+    outputs:
+      qa_verdict: "artifacts/qa-gate/{pipeline_id}-verdict.md"
+    gates:
+      - type: "approval"
+        condition: "verification_complete"
+        description: "Verification must be complete before the QA gate can judge it"
+    retry_limit: 1
+    timeout_minutes: 15
+
+# Edge definitions (DAG topology)
+edges:
+  - from: "intake"
+    to: "analysis"
+    type: "data_flow"
+  - from: "analysis"
+    to: "implementation"
+    type: "data_flow"
+  - from: "implementation"
+    to: "test"
+    type: "data_flow"
+  - from: "test"
+    to: "verification"
+    type: "data_flow"
+  - from: "verification"
+    to: "qa-gate"
+    type: "data_flow"
+
+# What each gate outcome does to the pipeline. Written here rather than in a
+# script so the routing is inspectable config (C2) instead of control flow buried
+# in a hook.
+gate_rules:
+  intake_verdict_not_ready: "pause"
+  test_fail: "loop_to_implementation"
+  verification_changes_required: "loop_to_analysis"
+  qa_gate_rejected: "halt_for_human"
+
+# Retry policy
+retry_policy:
+  max_cycles: 3
+  backoff_seconds: 30
+  on_failure: "back_to_plan"

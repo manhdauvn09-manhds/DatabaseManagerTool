@@ -1,0 +1,553 @@
+{
+  "$schema": "https://harness.internal/schemas/tool-registry.schema.json",
+  "schema_version": "1.0.0",
+  "description": "SSOT for ALL tools — built-in Claude Code tools + codeprovider-mcp tools. Generated from contracts/tool-registry.yaml.",
+  "generated_at": "2026-07-09T00:00:00Z",
+  "tools": {
+    "Read": {
+      "surface": "builtin",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Read file contents"
+    },
+    "Glob": {
+      "surface": "builtin",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Fast file pattern matching"
+    },
+    "Grep": {
+      "surface": "builtin",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Content search"
+    },
+    "WebSearch": {
+      "surface": "builtin",
+      "side_effect": false,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Web search"
+    },
+    "WebFetch": {
+      "surface": "builtin",
+      "side_effect": false,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Fetch web content"
+    },
+    "Write": {
+      "surface": "builtin",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "idempotency_key_pattern": "write:{path}:{content_hash}",
+      "description": "Write file contents"
+    },
+    "Edit": {
+      "surface": "builtin",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "idempotency_key_pattern": "edit:{file_path}:{old_string_hash}",
+      "description": "Edit file with string replacement"
+    },
+    "Bash": {
+      "surface": "builtin",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "ask",
+      "idempotency_key_pattern": "bash:{command_hash}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Execute bash command"
+    },
+    "PowerShell": {
+      "surface": "builtin",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "ask",
+      "idempotency_key_pattern": "pwsh:{command_hash}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Execute PowerShell command"
+    },
+    "Agent": {
+      "surface": "builtin",
+      "side_effect": false,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Spawn subagent"
+    },
+    "Workflow": {
+      "surface": "builtin",
+      "side_effect": false,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Execute workflow script"
+    },
+    "harness-switch-account": {
+      "surface": "builtin",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "idempotency_key_pattern": "switch-account:{account}",
+      "description": "Switch active-account pointer for per-machine H6 attribution (local file write, no network)"
+    },
+    "codeprovider-mcp.apply_patch": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "ask",
+      "idempotency_key_pattern": "patch:{file}:{patch_hash}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Apply patch to file"
+    },
+    "codeprovider-mcp.edit_file": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "idempotency_key_pattern": "edit:{file}:{content_hash}",
+      "description": "Edit file content"
+    },
+    "codeprovider-mcp.write_file": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "idempotency_key_pattern": "filegen:{path}",
+      "enforcing_script": "tool-idempotency.ps1",
+      "description": "Write file"
+    },
+    "codeprovider-mcp.read_file": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Read file"
+    },
+    "codeprovider-mcp.read_files": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Read multiple files"
+    },
+    "codeprovider-mcp.find_files": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Find files by pattern"
+    },
+    "codeprovider-mcp.search_code": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Search codebase"
+    },
+    "codeprovider-mcp.code_outline": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Get code outline"
+    },
+    "codeprovider-mcp.run_command": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "high",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "deny",
+      "unless_in_workflow": true,
+      "idempotency_key_pattern": "cmd:{command_hash}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Run arbitrary command"
+    },
+    "codeprovider-mcp.exec_in_container": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "high",
+      "allowed_roles": ["admin"],
+      "default_action": "deny",
+      "unless_in_workflow": true,
+      "idempotency_key_pattern": "container:{container_id}:{command_hash}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Execute command in container"
+    },
+    "codeprovider-mcp.test_run": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "idempotency_key_pattern": "test:{suite}:{config_hash}",
+      "description": "Run test suite"
+    },
+    "codeprovider-mcp.lint_run": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Run linter"
+    },
+    "codeprovider-mcp.quick_fix": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "ask",
+      "description": "Quick fix code issues"
+    },
+    "codeprovider-mcp.deploy": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "critical",
+      "allowed_roles": ["admin"],
+      "default_action": "deny",
+      "unless_in_workflow": true,
+      "idempotency_key_pattern": "deploy:{target}:{version}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Deploy to environment"
+    },
+    "codeprovider-mcp.deploy_safe": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "high",
+      "allowed_roles": ["admin"],
+      "default_action": "deny",
+      "unless_in_workflow": true,
+      "idempotency_key_pattern": "deploy_safe:{target}:{version}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Safe deploy with pre-checks"
+    },
+    "codeprovider-mcp.rollback_deploy": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "high",
+      "allowed_roles": ["admin"],
+      "default_action": "deny",
+      "unless_in_workflow": true,
+      "idempotency_key_pattern": "rollback:{deploy_id}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Rollback a deployment"
+    },
+    "codeprovider-mcp.git_branch": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Git branch operations"
+    },
+    "codeprovider-mcp.git_commit": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "ask",
+      "idempotency_key_pattern": "commit:{repo}:{message_hash}",
+      "description": "Git commit"
+    },
+    "codeprovider-mcp.git_diff": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Git diff"
+    },
+    "codeprovider-mcp.git_log": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Git log"
+    },
+    "codeprovider-mcp.git_status": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Git status"
+    },
+    "codeprovider-mcp.git_push": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "ask",
+      "idempotency_key_pattern": "push:{branch}:{commit_hash}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Git push"
+    },
+    "codeprovider-mcp.mysql_query": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "critical",
+      "allowed_roles": ["admin"],
+      "default_action": "deny",
+      "unless_in_workflow": true,
+      "idempotency_key_pattern": "mysql:{query_hash}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Execute MySQL query"
+    },
+    "codeprovider-mcp.db_snapshot": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "high",
+      "allowed_roles": ["admin"],
+      "default_action": "ask",
+      "idempotency_key_pattern": "snapshot:{db}:{timestamp}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Create database snapshot"
+    },
+    "codeprovider-mcp.backup_create": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["admin"],
+      "default_action": "ask",
+      "idempotency_key_pattern": "backup:{target}:{timestamp}",
+      "description": "Create backup"
+    },
+    "codeprovider-mcp.backup_restore": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "high",
+      "allowed_roles": ["admin"],
+      "default_action": "deny",
+      "unless_in_workflow": true,
+      "idempotency_key_pattern": "restore:{backup_id}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Restore from backup"
+    },
+    "codeprovider-mcp.http_fetch": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "deny",
+      "unless_in_workflow": true,
+      "idempotency_key_pattern": "http:{url_hash}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "HTTP fetch to external host"
+    },
+    "codeprovider-mcp.docker_status": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Docker status"
+    },
+    "codeprovider-mcp.container_stats": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Container stats"
+    },
+    "codeprovider-mcp.server_health": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Server health check"
+    },
+    "codeprovider-mcp.task_create": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Create async task"
+    },
+    "codeprovider-mcp.task_get": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Get task status"
+    },
+    "codeprovider-mcp.task_list": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "List tasks"
+    },
+    "codeprovider-mcp.task_kill": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["admin"],
+      "default_action": "ask",
+      "description": "Kill running task"
+    },
+    "codeprovider-mcp.worktree_create": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Create git worktree"
+    },
+    "codeprovider-mcp.worktree_remove": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Remove git worktree"
+    },
+    "codeprovider-mcp.note_post": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Post note (A2A protocol)"
+    },
+    "codeprovider-mcp.note_consume": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Consume note (A2A protocol)"
+    },
+    "codeprovider-mcp.note_list": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "List notes"
+    },
+    "codeprovider-mcp.kv_set": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Set KV store value"
+    },
+    "codeprovider-mcp.kv_get": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "reviewer", "admin"],
+      "default_action": "allow",
+      "description": "Get KV store value"
+    },
+    "codeprovider-mcp.app_lock": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "idempotency_key_pattern": "lock:{resource}",
+      "description": "Acquire mutual exclusion lock"
+    },
+    "codeprovider-mcp.app_unlock": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Release mutual exclusion lock"
+    },
+    "codeprovider-mcp.webhook_trigger": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "high",
+      "allowed_roles": ["admin"],
+      "default_action": "deny",
+      "unless_in_workflow": true,
+      "idempotency_key_pattern": "webhook:{url_hash}:{payload_hash}",
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Trigger webhook"
+    },
+    "codeprovider-mcp.cron_manage": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "medium",
+      "allowed_roles": ["admin"],
+      "default_action": "ask",
+      "description": "Manage cron jobs"
+    },
+    "codeprovider-mcp.smoke_check": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Run smoke check"
+    },
+    "codeprovider-mcp.log_scan": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "low",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Scan logs"
+    },
+    "codeprovider-mcp.disk_usage": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Check disk usage"
+    },
+    "codeprovider-mcp.cert_status": {
+      "surface": "mcp",
+      "side_effect": false,
+      "risk_level": "none",
+      "allowed_roles": ["developer", "admin"],
+      "default_action": "allow",
+      "description": "Check certificate status"
+    },
+    "codeprovider-mcp.nginx_vhost": {
+      "surface": "mcp",
+      "side_effect": true,
+      "risk_level": "high",
+      "allowed_roles": ["admin"],
+      "default_action": "deny",
+      "unless_in_workflow": true,
+      "enforcing_script": "harness-runtime-guard.ps1",
+      "description": "Manage nginx vhost"
+    }
+  }
+}

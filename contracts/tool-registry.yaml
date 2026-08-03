@@ -1,0 +1,190 @@
+# Tool Registry Contract — SSOT for ALL tools (built-in + MCP)
+# Every side-effect tool MUST have an entry (C3, D7)
+schema_version: "1.0.0"
+
+tools:
+  # --- Virtual markers (no executor behind them) ---
+  # The qa-gate stage must record a verdict, but every tool capable of writing one
+  # is a side-effect tool the reviewer is deliberately blocked from holding. Rather
+  # than widen that grant -- which would let the agent judging the code also change
+  # it -- authorize a marker with nothing behind it. Constrained by schema to
+  # side_effect false / risk_level none, so it can never become a way to smuggle a
+  # real action past the guard.
+  - name: "__workflow_gate__"
+    surface: "virtual"
+    side_effect: false
+    risk_level: "none"
+    allowed_roles: ["qa-reviewer", "reviewer", "boss"]
+    default_action: "allow"
+    description: "Marker letting a gate stage record its verdict without holding a side-effect tool"
+
+  # --- Read tools (fail-open) ---
+  - name: "Read"
+    surface: "builtin"
+    side_effect: false
+    risk_level: "none"
+    allowed_roles: ["developer", "reviewer", "admin"]
+    description: "Read file contents"
+
+  - name: "Glob"
+    surface: "builtin"
+    side_effect: false
+    risk_level: "none"
+    allowed_roles: ["developer", "reviewer", "admin"]
+    description: "Fast file pattern matching"
+
+  - name: "Grep"
+    surface: "builtin"
+    side_effect: false
+    risk_level: "none"
+    allowed_roles: ["developer", "reviewer", "admin"]
+    description: "Content search"
+
+  - name: "WebSearch"
+    surface: "builtin"
+    side_effect: false
+    risk_level: "low"
+    allowed_roles: ["developer", "admin"]
+    description: "Web search"
+
+  - name: "WebFetch"
+    surface: "builtin"
+    side_effect: false
+    risk_level: "low"
+    allowed_roles: ["developer", "admin"]
+    description: "Fetch web content"
+
+  # --- Write tools (side-effect, deny-by-default for high-risk) ---
+  - name: "Write"
+    surface: "builtin"
+    side_effect: true
+    risk_level: "low"
+    allowed_roles: ["developer", "admin"]
+    default_action: "allow"
+    idempotency_key_pattern: "write:{path}:{hash}"
+    description: "Write file contents"
+
+  - name: "Edit"
+    surface: "builtin"
+    side_effect: true
+    risk_level: "low"
+    allowed_roles: ["developer", "admin"]
+    default_action: "allow"
+    idempotency_key_pattern: "edit:{file_path}:{old_string_hash}"
+    description: "Edit file with string replacement"
+
+  - name: "Bash"
+    surface: "builtin"
+    side_effect: true
+    risk_level: "medium"
+    allowed_roles: ["developer", "admin"]
+    default_action: "ask"
+    idempotency_key_pattern: "bash:{command_hash}"
+    description: "Execute bash command"
+
+  - name: "PowerShell"
+    surface: "builtin"
+    side_effect: true
+    risk_level: "medium"
+    allowed_roles: ["developer", "admin"]
+    default_action: "ask"
+    idempotency_key_pattern: "pwsh:{command_hash}"
+    description: "Execute PowerShell command"
+
+  # --- MCP tools from codeprovider-mcp (high-risk, deny-by-default) ---
+  - name: "codeprovider-mcp.deploy"
+    surface: "mcp"
+    side_effect: true
+    risk_level: "high"
+    allowed_roles: ["admin"]
+    default_action: "deny"
+    unless_in_workflow: true
+    idempotency_key_pattern: "deploy:{target}:{version}"
+    description: "Deploy to environment"
+    enforcing_script: "harness-runtime-guard.ps1"
+
+  - name: "codeprovider-mcp.rollback_deploy"
+    surface: "mcp"
+    side_effect: true
+    risk_level: "high"
+    allowed_roles: ["admin"]
+    default_action: "deny"
+    unless_in_workflow: true
+    idempotency_key_pattern: "rollback:{deploy_id}"
+    description: "Rollback a deployment"
+
+  - name: "codeprovider-mcp.mysql_query"
+    surface: "mcp"
+    side_effect: true
+    risk_level: "critical"
+    allowed_roles: ["admin"]
+    default_action: "deny"
+    unless_in_workflow: true
+    idempotency_key_pattern: "mysql:{query_hash}"
+    description: "Execute MySQL query"
+
+  - name: "codeprovider-mcp.run_command"
+    surface: "mcp"
+    side_effect: true
+    risk_level: "high"
+    allowed_roles: ["developer", "admin"]
+    default_action: "deny"
+    unless_in_workflow: true
+    idempotency_key_pattern: "cmd:{command_hash}"
+    description: "Run arbitrary command"
+
+  - name: "codeprovider-mcp.http_fetch"
+    surface: "mcp"
+    side_effect: true
+    risk_level: "medium"
+    allowed_roles: ["developer", "admin"]
+    default_action: "deny"
+    unless_in_workflow: true
+    idempotency_key_pattern: "http:{url_hash}"
+    description: "HTTP fetch to external host"
+
+  - name: "codeprovider-mcp.exec_in_container"
+    surface: "mcp"
+    side_effect: true
+    risk_level: "high"
+    allowed_roles: ["admin"]
+    default_action: "deny"
+    unless_in_workflow: true
+    description: "Execute command in container"
+
+  - name: "codeprovider-mcp.deploy_safe"
+    surface: "mcp"
+    side_effect: true
+    risk_level: "high"
+    allowed_roles: ["admin"]
+    default_action: "deny"
+    unless_in_workflow: true
+    idempotency_key_pattern: "deploy_safe:{target}:{version}"
+    description: "Safe deploy with pre-checks"
+
+  - name: "codeprovider-mcp.db_snapshot"
+    surface: "mcp"
+    side_effect: true
+    risk_level: "high"
+    allowed_roles: ["admin"]
+    default_action: "ask"
+    idempotency_key_pattern: "snapshot:{db}:{timestamp}"
+    description: "Create database snapshot"
+
+  - name: "codeprovider-mcp.git_commit"
+    surface: "mcp"
+    side_effect: true
+    risk_level: "medium"
+    allowed_roles: ["developer", "admin"]
+    default_action: "ask"
+    idempotency_key_pattern: "commit:{repo}:{message_hash}"
+    description: "Git commit"
+
+  - name: "codeprovider-mcp.git_push"
+    surface: "mcp"
+    side_effect: true
+    risk_level: "medium"
+    allowed_roles: ["developer", "admin"]
+    default_action: "ask"
+    idempotency_key_pattern: "push:{branch}:{commit_hash}"
+    description: "Git push"

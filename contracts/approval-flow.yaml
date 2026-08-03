@@ -1,0 +1,73 @@
+# Approval Flow Contract — H5 Governance
+# Defines who can approve what, under which conditions.
+schema_version: "1.0.0"
+
+flows:
+  - id: "standard-deploy"
+    name: "Standard Deploy Approval"
+    risk_level: "high"
+    description: "Approval required for any production deployment"
+    required_approvers: 1
+    approver_roles: ["admin"]
+    stages:
+      - name: "pre-deploy-review"
+        description: "Review deployment plan and rollback strategy"
+        required_checks:
+          - "backup_exists"
+          - "rollback_plan_defined"
+          - "smoke_test_passed"
+      - name: "deploy-execution"
+        description: "Execute deployment after pre-deploy approval"
+      - name: "post-deploy-verify"
+        description: "Verify deployment succeeded"
+        required_checks:
+          - "health_check_passed"
+          - "smoke_test_passed"
+    timeout_minutes: 60
+
+  - id: "config-change"
+    name: "Configuration Change Approval"
+    risk_level: "medium"
+    description: "Approval required for harness configuration changes"
+    required_approvers: 1
+    approver_roles: ["reviewer", "admin"]
+    stages:
+      - name: "review"
+        description: "Review proposed config change"
+      - name: "apply"
+        description: "Apply approved config change"
+    timeout_minutes: 30
+
+  - id: "dependency-add"
+    name: "Dependency Addition Approval"
+    risk_level: "medium"
+    description: "Approval required for adding new runtime dependencies"
+    required_approvers: 1
+    approver_roles: ["reviewer"]
+    stages:
+      - name: "review"
+        description: "Review dependency for security and licensing"
+        required_checks:
+          - "registry_allowed"
+          - "license_approved"
+          - "no_known_vulnerabilities"
+      - name: "add"
+        description: "Add approved dependency"
+    timeout_minutes: 30
+
+  - id: "emergency"
+    name: "Emergency Override"
+    risk_level: "critical"
+    description: "Emergency bypass for critical fixes (requires post-action audit)"
+    required_approvers: 2
+    approver_roles: ["admin"]
+    stages:
+      - name: "emergency-approval"
+        description: "Two-administrator approval for emergency action"
+      - name: "post-action-audit"
+        description: "Mandatory audit within 24 hours of emergency action"
+        required_checks:
+          - "incident_report_filed"
+          - "evidence_bundle_created"
+          - "postmortem_scheduled"
+    timeout_minutes: 15

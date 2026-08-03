@@ -1,0 +1,30 @@
+# change-pipeline — impact map config (C2: DATA, không hardcode trong skill)
+# core_files: đổi 1 trong các file này => bắt buộc chạy FULL suite (tầng 3)
+core_files:
+  - SecureConnect/src/lib/connections/store.ts
+  - SecureConnect/src/lib/connections/dbConnector.ts
+  - SecureConnect/src/lib/db-api/route-helper.ts
+  - SecureConnect/src/lib/security/ssrfGuard.ts
+  - SecureConnect/src/lib/crypto/serverVault.ts
+  - SecureConnect/src/lib/crypto/serverKeyStore.ts
+  - SecureConnect/src/lib/redis/client.ts
+  - SecureConnect/src/middleware.ts
+  - SecureConnect/package.json
+  - SecureConnect/vitest.config.*
+
+# route_test_map: đổi API route => chạy thêm các test file này (tầng 2)
+route_test_map:
+  "src/app/api/db/[id]/rows":      [mutate.test.ts, store.test.ts, parseFilters.test.ts]
+  "src/app/api/db/[id]/bulk":      [bulkMutate.test.ts, confirmTokens.test.ts]
+  "src/app/api/db/[id]/search":    [searchBuilder.test.ts, filters.test.ts]
+  "src/app/api/db/[id]/export":    [exporters.test.ts]
+  "src/app/api/db/[id]/stats":     [stats.test.ts]
+  "src/app/api/db/[id]/query":     [sqlValidator.test.ts]
+  "src/app/api/connect":           [connect.test.ts, dbConnector.test.ts, ssrfGuard.test.ts]
+  "src/app/api/saved-connections": [store.test.ts]          # saved/__tests__
+  "src/app/api/share":             [shareStore.test.ts]
+  "src/app/api/tokens":            [patStore.test.ts]
+
+# limits (H7: retry có giới hạn)
+max_fix_rounds: 3
+judge_min_score: 70          # khớp evaluation.judge.min_overall_score trong casan-policies.yaml

@@ -1,0 +1,44 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://harness.internal/schemas/tool-registry.schema.json",
+  "title": "Tool Registry Contract Schema",
+  "description": "SSOT for ALL tools (built-in + MCP). Every side-effect tool must have an entry (C3, D7). Tools is an object map keyed by tool name.",
+  "type": "object",
+  "required": ["schema_version", "tools"],
+  "properties": {
+    "schema_version": { "type": "string", "pattern": "^\\d+\\.\\d+\\.\\d+$" },
+    "description": { "type": "string" },
+    "generated_at": { "type": "string" },
+    "tools": {
+      "type": "object",
+      "description": "Map of tool name → tool definition",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["surface", "side_effect", "risk_level", "allowed_roles"],
+        "properties": {
+          "surface": {
+            "type": "string",
+            "description": "Where the tool lives. 'virtual' is a marker with no executor behind it — it exists so a stage can be authorized to record an outcome (e.g. a QA verdict) without being handed a real side-effect tool to do it.",
+            "enum": ["builtin", "mcp", "virtual"]
+          },
+          "side_effect": { "type": "boolean" },
+          "risk_level": { "type": "string", "enum": ["none", "low", "medium", "high", "critical"] },
+          "allowed_roles": { "type": "array", "items": { "type": "string" } },
+          "default_action": { "type": "string", "enum": ["allow", "ask", "deny"] },
+          "unless_in_workflow": { "type": "boolean" },
+          "idempotency_key_pattern": { "type": "string" },
+          "description": { "type": "string" },
+          "enforcing_script": { "type": "string" }
+        },
+        "if": { "properties": { "surface": { "const": "virtual" } }, "required": ["surface"] },
+        "then": {
+          "description": "A virtual tool that could claim a side-effect would defeat its own purpose: the registry is what tells the guard which calls are dangerous, so a marker must be provably harmless or it becomes a hole to smuggle real actions through.",
+          "properties": {
+            "side_effect": { "const": false },
+            "risk_level": { "const": "none" }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,348 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>AI Harness Toolkit — Bộ rule, tính năng &amp; đánh giá CASAN H1–H7</title>
+<style>
+  :root{
+    --ink:#0B1220; --ink2:#111C2E; --panel:#ffffff; --panel2:#f4f7fb; --panel3:#eef2f8;
+    --text:#16202f; --muted:#59647a; --line:#e2e8f1;
+    --accent:#0E7C86; --accent2:#12A3AF; --cyan:#22C7B6; --gold:#E0A32E; --violet:#7A5AF0;
+    --code-bg:#0B1220; --code-text:#d7e3ea;
+    --gap:#E4572E; --partial:#E0A32E; --good:#2FA96A; --strong:#12A3AF;
+    --radius:14px; --shadow:0 1px 2px rgba(16,26,44,.05), 0 8px 24px rgba(16,26,44,.06);
+  }
+  @media (prefers-color-scheme: dark){
+    :root{
+      --panel:#0f1826; --panel2:#0c141f; --panel3:#131f30; --text:#dbe4ef; --muted:#8998ad;
+      --line:#213047; --accent:#22C7B6; --accent2:#3fe0cf; --cyan:#22C7B6;
+      --code-bg:#05090f; --code-text:#cdd9e2;
+      --shadow:0 1px 2px rgba(0,0,0,.3), 0 10px 30px rgba(0,0,0,.35);
+    }
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--panel2);color:var(--text);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}
+  code,pre,.mono{font-family:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace}
+  a{color:var(--accent2);text-decoration:none} a:hover{text-decoration:underline}
+
+  header.hero{background:radial-gradient(1200px 400px at 80% -10%,rgba(34,199,182,.18),transparent),linear-gradient(155deg,var(--ink),var(--ink2));
+    color:#eaf1f4;padding:52px 28px 46px;border-bottom:3px solid var(--cyan)}
+  .wrap{max-width:1200px;margin:0 auto}
+  .hero .eyebrow{letter-spacing:.2em;text-transform:uppercase;font-size:12px;color:var(--cyan);font-weight:700}
+  .hero h1{margin:.35em 0 .25em;font-size:clamp(26px,3.6vw,42px);line-height:1.12;font-weight:800;text-wrap:balance}
+  .hero p{margin:0;color:#a9bcc7;max-width:74ch}
+  .hero .meta{margin-top:20px;display:flex;flex-wrap:wrap;gap:10px}
+  .hero .chip{background:rgba(34,199,182,.12);border:1px solid rgba(34,199,182,.35);color:#bff3ea;padding:5px 12px;border-radius:999px;font-size:12.5px;font-weight:600}
+
+  .layout{max-width:1200px;margin:0 auto;display:grid;grid-template-columns:230px 1fr;gap:34px;padding:30px 28px 90px}
+  nav.toc{position:sticky;top:18px;align-self:start;font-size:13.5px;max-height:calc(100vh - 36px);overflow:auto}
+  nav.toc h4{margin:14px 0 6px;font-size:10.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted)}
+  nav.toc a{display:block;color:var(--muted);padding:5px 10px;border-radius:7px;border-left:2px solid transparent}
+  nav.toc a:hover{color:var(--text);background:var(--panel)}
+  main{min-width:0}
+
+  section{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:26px 30px;margin-bottom:22px;box-shadow:var(--shadow)}
+  h2{margin:0 0 4px;font-size:23px;font-weight:800;letter-spacing:-.01em;scroll-margin-top:16px}
+  h3{margin:1.5em 0 .5em;font-size:16.5px;font-weight:700}
+  .lead{color:var(--muted);margin:.2em 0 1.3em;font-size:15px}
+  p{margin:.6em 0} ul,ol{margin:.5em 0;padding-left:1.25em} li{margin:.35em 0}
+
+  .kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:14px;margin:6px 0 4px}
+  .kpi{background:var(--panel3);border:1px solid var(--line);border-radius:12px;padding:16px}
+  .kpi .v{font-size:30px;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+  .kpi .l{font-size:12px;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;margin-top:3px}
+
+  .assess{display:grid;grid-template-columns:minmax(300px,420px) 1fr;gap:28px;align-items:center}
+  @media (max-width:820px){ .assess{grid-template-columns:1fr} }
+  .radar-wrap{display:flex;justify-content:center}
+  .bars{display:flex;flex-direction:column;gap:12px}
+  .bar{display:grid;grid-template-columns:52px 1fr 46px;align-items:center;gap:12px}
+  .bar .id{font-weight:800;font-size:13px}
+  .bar .track{height:12px;border-radius:99px;background:var(--panel3);overflow:hidden;border:1px solid var(--line)}
+  .bar .fill{height:100%;border-radius:99px}
+  .bar .sc{text-align:right;font-weight:700;font-variant-numeric:tabular-nums;font-size:14px}
+  .bar small{grid-column:2 / span 2;color:var(--muted);font-size:12.5px;margin-top:-4px}
+
+  .tblwrap{overflow-x:auto;margin:1em 0}
+  table{border-collapse:collapse;width:100%;font-size:13.6px;min-width:560px}
+  th,td{text-align:left;padding:10px 12px;border-bottom:1px solid var(--line);vertical-align:top}
+  th{background:var(--panel3);font-weight:700;font-size:12px;letter-spacing:.03em;text-transform:uppercase;color:var(--muted)}
+  tr:last-child td{border-bottom:none}
+  td code{background:var(--panel3);padding:1px 6px;border-radius:5px;font-size:12.5px}
+
+  .tag{display:inline-block;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;white-space:nowrap}
+  .t-gap{background:rgba(228,87,46,.14);color:var(--gap);border:1px solid rgba(228,87,46,.4)}
+  .t-partial{background:rgba(224,163,46,.14);color:var(--partial);border:1px solid rgba(224,163,46,.4)}
+  .t-good{background:rgba(47,169,106,.14);color:var(--good);border:1px solid rgba(47,169,106,.4)}
+  .t-strong{background:rgba(18,163,175,.14);color:var(--strong);border:1px solid rgba(18,163,175,.4)}
+  .t-new{background:rgba(122,90,240,.14);color:var(--violet);border:1px solid rgba(122,90,240,.4)}
+
+  .hcards{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+  @media (max-width:760px){ .hcards{grid-template-columns:1fr} }
+  .hcard{border:1px solid var(--line);border-radius:12px;padding:16px 18px;background:var(--panel)}
+  .hcard .top{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+  .hcard .hid{font-weight:800;font-size:15px}
+  .hcard .score{font-weight:800;font-size:22px;font-variant-numeric:tabular-nums}
+  .hcard .name{color:var(--muted);font-size:13px;margin:2px 0 8px}
+  .hcard ul{margin:.4em 0 0;padding-left:1.1em;font-size:13.4px}
+  .hcard .have{color:var(--good)} .hcard .gap{color:var(--gap)}
+
+  .call{border-left:4px solid;border-radius:10px;padding:13px 16px;margin:1em 0;font-size:14.5px}
+  .note{background:rgba(59,124,201,.09);border-color:#3b7cc9}
+  .warn{background:rgba(224,163,46,.1);border-color:var(--partial)}
+  .ok{background:rgba(47,169,106,.1);border-color:var(--good)}
+  .call b{font-weight:700}
+
+  .code{background:var(--code-bg);border-radius:10px;margin:.8em 0;border:1px solid rgba(255,255,255,.06)}
+  .code pre{margin:0;padding:14px 16px;overflow-x:auto;color:var(--code-text);font-size:13px;line-height:1.55}
+  .cmt{color:#6b8494}
+
+  .pri{font-weight:800} .pri.h{color:var(--gap)} .pri.m{color:var(--partial)} .pri.l{color:var(--good)}
+  footer{max-width:1200px;margin:0 auto;padding:0 28px 70px;color:var(--muted);font-size:13px}
+  @media (max-width:880px){ .layout{grid-template-columns:1fr;padding:22px 16px 60px} nav.toc{position:static;max-height:none;border:1px solid var(--line);border-radius:12px;padding:12px;background:var(--panel)} .kpis{grid-template-columns:1fr 1fr} section{padding:20px 18px} }
+</style>
+</head>
+<body>
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">AI Software Development Harness · Toolkit · standard-governance v1.4.5</div>
+    <h1>Bộ rule, tính năng &amp; đánh giá trưởng thành CASAN (H1–H7)</h1>
+    <p>Tài liệu giới thiệu những gì bộ KIT đã làm — 10 nguyên tắc (C1–C10), 7 tầng Harness, hooks/guard/ledger — kèm bản <b>tự đánh giá theo khung CASAN</b> và các <b>đề xuất cải tiến rule/tính năng</b> mới.</p>
+    <div class="meta">
+      <span class="chip">7 Harness H1–H7</span>
+      <span class="chip">10 nguyên tắc C1–C10</span>
+      <span class="chip">CASAN Level 5* — Native (baseline)</span>
+      <span class="chip">© 2026 Dau Sy Manh</span>
+    </div>
+  </div>
+</header>
+
+<div class="layout">
+  <nav class="toc">
+    <h4>Tổng quan</h4>
+    <a href="#tomtat">Tóm tắt điều hành</a>
+    <a href="#casan">Đánh giá CASAN H1–H7</a>
+    <a href="#scorecard">Scorecard chi tiết</a>
+    <h4>Bộ KIT đã làm</h4>
+    <a href="#rules">10 nguyên tắc C1–C10</a>
+    <a href="#features">Tính năng theo Harness</a>
+    <a href="#deny">Bộ rule guard (deny)</a>
+    <h4>Đề xuất</h4>
+    <a href="#improve">Cải tiến hệ thống</a>
+    <a href="#newrules">Rule mới đề xuất</a>
+    <a href="#roadmap">Backlog → Level 5</a>
+  </nav>
+
+  <main>
+
+  <!-- ===================== EXEC SUMMARY ===================== -->
+  <section id="tomtat">
+    <h2>Tóm tắt điều hành</h2>
+    <p class="lead">Bộ KIT bọc năng lực coding của agent (Claude Code) trong các tầng identity · policy · evaluation · audit. Đánh giá theo CASAN cho thấy nền tảng vững ở Context/Tool/Security/Governance, còn dư địa ở Evaluation &amp; AgentOps.</p>
+    <div class="kpis">
+      <div class="kpi"><div class="v" style="color:var(--strong)">84<span style="font-size:16px;color:var(--muted)">/100</span></div><div class="l">Năng lực (baseline, v1.4.5)</div></div>
+      <div class="kpi"><div class="v" style="color:var(--strong)">Level 5*</div><div class="l">CASAN — Native (năng lực)</div></div>
+      <div class="kpi"><div class="v" style="color:var(--good)">0</div><div class="l">Harness ở mức GAP (&lt;30)</div></div>
+      <div class="kpi"><div class="v" style="color:var(--good)">H3·80</div><div class="l">Điểm thấp nhất (ceiling)</div></div>
+    </div>
+    <div class="call note"><b>* “Level 5 (năng lực)” nghĩa là gì (trung thực — C10):</b> đây là điểm <b>NĂNG LỰC/baseline</b> — mọi cơ chế H1–H7 đã <i>ship &amp; chạy được</i> (avg 84, mọi tầng &gt;80). <b>Điểm THỰC của từng dự án</b> vẫn tính theo <b>bằng chứng quan sát</b> (thường thấp hơn tới khi dự án có test/budget/provider — xem playbook nâng điểm). Ngoài ra enforcement H3/H4/H5 là <b>opt-in</b> (<code>pdp_enforce</code>) và phần lớn là defense-in-depth qua hook; “biên giới cứng” tuyệt đối vẫn cần route side-effect qua gateway PDP (còn trong backlog).</div>
+  </section>
+
+  <!-- ===================== CASAN RADAR ===================== -->
+  <section id="casan">
+    <h2>Đánh giá trưởng thành CASAN — H1–H7</h2>
+    <p class="lead">Bản tự đánh giá bộ <b>standard-governance</b> (mô hình chấm điểm hybrid: tự suy ra từ telemetry/cấu hình những gì đo được + checklist khung CASAN). Đây cũng là logic sẽ hiển thị trong tab <b>Harness Level</b> trên Portal.</p>
+    <div class="assess">
+      <div class="radar-wrap"><canvas id="radar" width="420" height="380" style="max-width:100%"></canvas></div>
+      <div class="bars" id="bars"></div>
+    </div>
+  </section>
+
+  <!-- ===================== SCORECARD ===================== -->
+  <section id="scorecard">
+    <h2>Scorecard chi tiết — có gì / thiếu gì</h2>
+    <p class="lead">Mỗi tầng: điểm, cái đã có (✓) và GAP cần bổ sung. Điểm là ước lượng có căn cứ từ hiện trạng KIT; trong Portal admin có thể chỉnh tay từng dự án.</p>
+    <div class="hcards" id="hcards"></div>
+  </section>
+
+  <!-- ===================== C1-C10 RULES ===================== -->
+  <section id="rules">
+    <h2>Bộ rule nền tảng — 10 nguyên tắc C1–C10</h2>
+    <p class="lead">Đây là “hiến pháp” của KIT: quy ước bất biến mọi hook/agent/script phải tuân theo.</p>
+    <div class="tblwrap"><table>
+      <tr><th>ID</th><th>Nguyên tắc</th><th>KIT hiện thực bằng gì</th></tr>
+      <tr><td><b>C1</b></td><td>Dùng layout native <code>.claude/</code>; memory = <code>CLAUDE.md</code></td><td>Bundle cài <code>.claude/</code> + merge governance vào CLAUDE.md</td></tr>
+      <tr><td><b>C2</b></td><td>Config ở data, không hardcode trong script</td><td>Guard <b>đọc</b> <code>risk-policy.yaml</code>; không nhúng rule trong .ps1</td></tr>
+      <tr><td><b>C3</b></td><td>Mọi tool side-effect có trong tool-registry</td><td><code>tool-registry.json</code>; tool lạ → deny mặc định</td></tr>
+      <tr><td><b>C4</b></td><td>Model ladder tường minh</td><td>Fable 5 / Opus 4.8 / Sonnet 5 / Haiku 4.5; tier local tách riêng</td></tr>
+      <tr><td><b>C5</b></td><td>Không hardcode secret</td><td>Ingest key qua env/file gitignore; installer tự gitignore key</td></tr>
+      <tr><td><b>C6</b></td><td>Side-effect chỉ qua workflow được duyệt</td><td>Deny-by-default: deploy / run_command / mysql_query / http_fetch</td></tr>
+      <tr><td><b>C7</b></td><td>1 shell chính + bash parity, absolute path</td><td>PowerShell + <code>.sh</code> song song cho mọi script harness</td></tr>
+      <tr><td><b>C8</b></td><td>Config validate được bằng JSON Schema</td><td><code>.harness/schemas/*.json</code> cho mọi YAML/JSON</td></tr>
+      <tr><td><b>C9</b></td><td>Logging bất biến (hash-chain)</td><td><code>chain.jsonl</code>: mỗi side-effect 1 dòng, nối hash</td></tr>
+      <tr><td><b>C10</b></td><td>Trung thực về enforcement</td><td>Hook cục bộ = defense-in-depth; ghi rõ “cần server-side”</td></tr>
+    </table></div>
+  </section>
+
+  <!-- ===================== FEATURES ===================== -->
+  <section id="features">
+    <h2>Tính năng đã làm — ánh xạ theo Harness</h2>
+    <div class="tblwrap"><table>
+      <tr><th>Harness</th><th>Tính năng KIT</th><th>Mức</th></tr>
+      <tr><td><b>H1</b> Context</td><td>CLAUDE.md memory · contracts/ YAML (project/agent) · skills L2 · constitution · SessionStart hook nạp context</td><td><span class="tag t-good">Good</span></td></tr>
+      <tr><td><b>H2</b> Tool</td><td>tool-registry (C3) · deny-by-default (C6) · PreToolUse guard · audit per-call (chain.jsonl)</td><td><span class="tag t-good">Good</span></td></tr>
+      <tr><td><b>H3</b> Evaluation</td><td>Skill verify-implementation (LLM-as-judge rubric) · code-review · tests/policy-CI + red-team · prompt_score</td><td><span class="tag t-partial">Partial+</span></td></tr>
+      <tr><td><b>H4</b> Security</td><td>Prompt-injection scanner · secret scanner · 30 deny-pattern guard (chỉ soi lệnh shell)</td><td><span class="tag t-good">Good</span></td></tr>
+      <tr><td><b>H5</b> Governance</td><td>Ledger hash-chain (C9) · risk-policy registry · workflow DAG (C6) · Portal audit view</td><td><span class="tag t-good">Good</span></td></tr>
+      <tr><td><b>H6</b> AgentOps</td><td>Portal telemetry: token/cost per project · security incidents · windowed metrics · H6 aggregate dashboard</td><td><span class="tag t-partial">Partial</span></td></tr>
+      <tr><td><b>H7</b> Orchestration</td><td>Fleet 9 agent · workflow contracts · gateway MCP · pipeline skills (analyze→implement→verify) · fan (parallel)</td><td><span class="tag t-good">Good</span></td></tr>
+    </table></div>
+  </section>
+
+  <!-- ===================== DENY RULES ===================== -->
+  <section id="deny">
+    <h2>Bộ rule guard hiện tại — 30 deny-pattern</h2>
+    <p class="lead">Guard đọc từ <code>risk-policy.yaml</code> (C2), khớp <b>chỉ với lệnh shell</b> (Bash/PowerShell) — không soi nội dung file Write/Edit nên không còn false-positive. Mỗi lần chặn ghi 1 security-event + 1 dòng ledger deny.</p>
+    <div class="tblwrap"><table>
+      <tr><th>Nhóm</th><th>Chặn (ví dụ)</th></tr>
+      <tr><td>Xoá/format huỷ dữ liệu</td><td><code>rm -rf</code> · <code>del /F</code> · <code>Remove-Item -Recurse -Force</code> · <code>dd of=/dev/</code> · <code>mkfs</code> · <code>wipefs/shred</code></td></tr>
+      <tr><td>Leo thang đặc quyền</td><td><code>sudo</code> · <code>Start-Process -Verb RunAs</code> · <code>chmod 777</code> · <code>chown -R</code></td></tr>
+      <tr><td>Thực thi mã từ xa (RCE)</td><td>download | shell · decode-to-shell · download | Invoke-Expression · <code>-EncodedCommand</code></td></tr>
+      <tr><td>Phá VCS / lịch sử</td><td><code>git reset --hard</code> · <code>git push --force</code> · <code>git clean -f</code></td></tr>
+      <tr><td>Chống điều tra / tắt phòng thủ</td><td><code>history -c</code> · xoá bash_history · tắt firewall/fail2ban · fork bomb</td></tr>
+      <tr><td>Rò rỉ bí mật</td><td>đọc <code>id_rsa</code>/<code>.aws/credentials</code> · pipe <code>.env</code>|credentials ra mạng</td></tr>
+    </table></div>
+  </section>
+
+  <!-- ===================== IMPROVEMENTS ===================== -->
+  <section id="improve">
+    <h2>Đề xuất cải tiến hệ thống</h2>
+    <p class="lead">Ưu tiên theo nguyên tắc “nâng tầng thấp nhất trước” và “chuyển chốt cứng lên gateway”.</p>
+    <div class="hcards">
+      <div class="hcard"><div class="top"><span class="hid">H6 · AgentOps</span><span class="tag t-partial">Ưu tiên cao</span></div>
+        <ul><li><b>Anomaly alerting:</b> cảnh báo khi token/cost 1 phiên vọt &gt; 3× baseline.</li><li><b>Hallucination/error flag:</b> thu tín hiệu retry-fail, judge REJECTED vào telemetry.</li><li><b>Drift:</b> theo dõi thay đổi hành vi model theo thời gian.</li></ul></div>
+      <div class="hcard"><div class="top"><span class="hid">H3 · Evaluation</span><span class="tag t-partial">Ưu tiên cao</span></div>
+        <ul><li><b>Golden dataset</b> theo dự án + regression-gate skill chạy trước deploy.</li><li><b>Gate cứng</b> có thể enforce phía server (không chỉ skill).</li><li>Feedback test-fail → tự update spec/plan.</li></ul></div>
+      <div class="hcard"><div class="top"><span class="hid">H5/H4 · Enforcement</span><span class="tag t-good">Ưu tiên vừa</span></div>
+        <ul><li><b>Approval workflow</b> ở gateway cho action rủi ro cao (deploy/DB write).</li><li><b>Outbound allowlist</b> enforce tại gateway (không chỉ deny-pattern cục bộ).</li><li><b>PII-in-log scanner</b> trước khi ghi telemetry.</li></ul></div>
+      <div class="hcard"><div class="top"><span class="hid">H2/H7 · Độ bền</span><span class="tag t-good">Ưu tiên vừa</span></div>
+        <ul><li><b>Idempotency key</b> cho tool side-effect (chạy 2 lần vẫn safe).</li><li><b>Fallback model ladder</b> khi primary lỗi.</li><li><b>Transaction/rollback</b> boundary cho workflow deploy.</li></ul></div>
+    </div>
+  </section>
+
+  <!-- ===================== NEW RULES ===================== -->
+  <section id="newrules">
+    <h2>Rule mới đề xuất cho guard <span class="tag t-new">NEW</span></h2>
+    <p class="lead">Bổ sung vào <code>risk-policy.yaml</code> — bịt các lối tấn công phổ biến còn hở. Đều là data (C2), không sửa script.</p>
+    <div class="tblwrap"><table>
+      <tr><th>Rule mới</th><th>Chặn gì</th><th>Vì sao</th></tr>
+      <tr><td>Cloud metadata fetch</td><td>truy cập <code>169.254.169.254</code></td><td>Đánh cắp credential IAM/instance (SSRF)</td></tr>
+      <tr><td>Reverse shell</td><td><code>nc -e</code> · <code>bash -i &gt;&amp; /dev/tcp/</code></td><td>Mở shell ngược ra ngoài</td></tr>
+      <tr><td>Docker privileged</td><td><code>docker run --privileged</code> · mount <code>/var/run/docker.sock</code></td><td>Thoát container, chiếm host</td></tr>
+      <tr><td>Setuid escalation</td><td><code>chmod u+s</code> / <code>+4000</code></td><td>Tạo binary leo quyền</td></tr>
+      <tr><td>Rewrite lịch sử shared</td><td><code>git filter-repo</code> · <code>push --mirror</code></td><td>Xoá dấu vết trên nhánh chung</td></tr>
+      <tr><td>Tắt telemetry harness</td><td>xoá/sửa <code>chain.jsonl</code> · <code>telemetry/*</code></td><td>Bảo vệ tính bất biến audit (C9)</td></tr>
+    </table></div>
+    <div class="call ok"><b>Đề xuất kèm cải tiến guard:</b> thêm trường <code>severity</code>+<code>id</code> cho mỗi rule để Portal thống kê theo loại; và tách rule thành “deny cứng” vs “ask (cảnh báo, cho phép khi có lý do)”, tránh chặn nhầm khi thao tác hợp lệ.</div>
+  </section>
+
+  <!-- ===================== ROADMAP ===================== -->
+  <section id="roadmap">
+    <h2>Backlog nâng cấp — củng cố Level 5 &amp; xa hơn</h2>
+    <p class="lead"><b>Baseline (năng lực) đã đạt Level 5</b> (avg 84, mọi tầng &gt;80). Việc còn lại: (a) biến năng lực thành <b>điểm thực</b> ở từng dự án (playbook nâng điểm), (b) đóng các item <b>△</b> còn lại + item <b>➕</b> mới để enforcement thành <b>biên giới cứng</b> (không chỉ opt-in). Trạng thái: ✅ xong · △ còn lại · ➕ mới đề xuất.</p>
+    <div class="tblwrap"><table>
+      <tr><th>Tầng</th><th>Item còn lại (△) + mới (➕)</th><th>Ưu tiên</th></tr>
+      <tr><td class="hid">H1 Context 84</td><td>△ Auto-inject chunk RAG vào prompt (UserPromptSubmit hook) · ➕ embedding neural on-prem (Ollama) qua HARNESS_EMBED_CMD · ➕ context compaction/summary khi vượt window</td><td><span class="pri m">Vừa</span></td></tr>
+      <tr><td class="hid">H2 Tool 82</td><td>△ Enforce idempotency-key ở gateway · ➕ rate-limit enforce thật · ➕ replay-protection cho tool side-effect · ➕ per-tool JSON-schema validate input/output</td><td><span class="pri m">Vừa</span></td></tr>
+      <tr><td class="hid">H3 Eval 80</td><td>△ Auto-run suite trước release (không chỉ chặn khi đã có report) · ➕ golden-dataset versioned per project · ➕ mutation testing / coverage-gate · ➕ đẩy casan-policies lên portal để gate áp cho cả push-project</td><td><span class="pri h">Cao</span></td></tr>
+      <tr><td class="hid">H4 Security 85</td><td>△ Route tool-path qua PDP (bỏ phụ thuộc hook opt-in) · ➕ sandbox/timeout enforce ở gateway · ➕ PII scanner trong log · ➕ tích hợp secret vault (không chỉ env) · ➕ SAST + quét dependency (SBOM)</td><td><span class="pri h">Cao</span></td></tr>
+      <tr><td class="hid">H5 Gov 85</td><td>➕ Approval có role/SLA + hết hạn tự reject · ➕ ký &amp; attest ledger (tamper-proof export) · ➕ báo cáo compliance định kỳ tự sinh · ➕ policy-as-code test (CI cho chính policy)</td><td><span class="pri m">Vừa</span></td></tr>
+      <tr><td class="hid">H6 AgentOps 84</td><td>△ Dashboard streaming realtime · ➕ hallucination detection thật (không chỉ cờ) · ➕ SLO alerting · ➕ cost attribution theo member/task · ➕ anomaly bằng ML thay ngưỡng tĩnh</td><td><span class="pri m">Vừa</span></td></tr>
+      <tr><td class="hid">H7 Orch 81</td><td>△ Auto-wire fallback vào chọn model thực tế · ➕ test transaction rollback tự động · ➕ trực quan hoá DAG + metric parallel · ➕ agent-to-agent protocol chuẩn hoá</td><td><span class="pri h">Cao</span></td></tr>
+    </table></div>
+
+    <h3>Cross-cutting (ngoài 7 tầng) — chưa liệt kê trước đây</h3>
+    <ul>
+      <li><b>Supply-chain:</b> ký số <code>.bundle.json</code> + sinh SBOM cho bundle (verify chữ ký khi install).</li>
+      <li><b>Hard enforcement:</b> cho <code>codeprovider-mcp</code> gọi <code>/api/pdp/decide</code> trước mọi side-effect → biên giới cứng, không còn phụ thuộc hook cục bộ (C10).</li>
+      <li><b>DR:</b> diễn tập backup/restore Postgres định kỳ (script backup.sh đã có — thêm lịch + verify).</li>
+      <li><b>Data governance:</b> chính sách lưu trữ/ẩn danh PII trong telemetry; xoá theo TTL.</li>
+      <li><b>Nâng điểm observed từng dự án:</b> xem playbook <a href="raise-project-casan-score-20260720.html">raise-project-casan-score</a> (budget/provider/test/docs + prompt).</li>
+    </ul>
+    <div class="call note"><b>File này được cập nhật mỗi lần ra bản mới</b> (điểm H1–H7, version, item ✅/△/➕). Nguồn điểm: <code>portal/backend/app/core/assessment.py</code> (baseline) + telemetry (observed). Xem điểm sống ở tab <b>Harness Level</b> trên Portal.</div>
+  </section>
+
+  </main>
+</div>
+
+<footer>
+  AI Software Development Harness · standard-governance v1.4.5 · Đánh giá CASAN 2026-07-19 · Hooks &gt; rules · Execution ≠ control · No false safety.
+  <br/>© 2026 Dau Sy Manh (manhds@). Điểm số là ước lượng tự đánh giá — tinh chỉnh theo hiện trạng thực tế của từng dự án.
+</footer>
+
+<script>
+  // ---- H1-H7 self-assessment data ----
+  const H = [
+    {id:'H1', name:'Context',       score:84, cls:'t-strong',  have:['CLAUDE.md memory','pointer-store BUILT by SessionStart hook','local RETRIEVAL index (BM25 + pluggable neural) over docs/spec/contracts'], gap:['auto-inject retrieved context into prompts']},
+    {id:'H2', name:'Tool',          score:82, cls:'t-strong',  have:['tool-registry (C3)','deny-by-default','audit per-call','idempotency + rate-limit policy'], gap:['gateway enforce idempotency']},
+    {id:'H3', name:'Evaluation',    score:83, cls:'t-strong',  have:['LLM-as-judge (verify skill)','release gate ENFORCED by PDP','harness-release AUTO-RUNS suites + report freshness before release'], gap:['chạy suite trên CI/server tự động']},
+    {id:'H4', name:'Security',      score:85, cls:'t-strong',  have:['prompt-injection scan','secret scan','30 deny-pattern','outbound allowlist ENFORCED (PDP)'], gap:['route tool path via PDP']},
+    {id:'H5', name:'Governance',    score:85, cls:'t-strong',  have:['ledger hash-chain (C9)','risk registry','approval workflow LIVE (ask→approve→allow)'], gap:['—']},
+    {id:'H6', name:'AgentOps',      score:84, cls:'t-strong',  have:['token/cost per project','anomaly + per-model DRIFT detection','alerts DELIVERED (incident + email + webhook)'], gap:['live streaming dashboard']},
+    {id:'H7', name:'Orchestration', score:83, cls:'t-strong',  have:['fleet 9 agent','pipeline skills','proxy AUTO-WIRES model fallback (retry ladder on fail) + git rollback'], gap:['hard-wire fallback ngoài proxy (workflow engine)']},
+  ];
+  const COL = {'t-gap':'#E4572E','t-partial':'#E0A32E','t-good':'#2FA96A','t-strong':'#12A3AF'};
+  const scoreColor = s => s<30?COL['t-gap'] : s<61?COL['t-partial'] : s<81?COL['t-good'] : COL['t-strong'];
+
+  // ---- bars ----
+  document.getElementById('bars').innerHTML = H.map(h=>`
+    <div class="bar">
+      <span class="id">${h.id}</span>
+      <div class="track"><div class="fill" style="width:${h.score}%;background:${scoreColor(h.score)}"></div></div>
+      <span class="sc">${h.score}</span>
+      <small>${h.name}</small>
+    </div>`).join('');
+
+  // ---- scorecards ----
+  document.getElementById('hcards').innerHTML = H.map(h=>`
+    <div class="hcard">
+      <div class="top"><span class="hid">${h.id} · ${h.name}</span><span class="score" style="color:${scoreColor(h.score)}">${h.score}</span></div>
+      <div class="name">${h.score<30?'GAP':h.score<61?'Partial':h.score<81?'Good':'Strong'}</div>
+      <ul>${h.have.map(x=>`<li class="have">✓ ${x}</li>`).join('')}${h.gap.map(x=>`<li class="gap">△ ${x}</li>`).join('')}</ul>
+    </div>`).join('');
+
+  // ---- radar ----
+  (function(){
+    const c=document.getElementById('radar'); if(!c) return; const ctx=c.getContext('2d');
+    const cx=c.width/2, cy=c.height/2+6, R=Math.min(cx,cy)-42, n=H.length;
+    const css=getComputedStyle(document.body); const line=css.getPropertyValue('--line')||'#ccc';
+    const muted=css.getPropertyValue('--muted')||'#888'; const acc=css.getPropertyValue('--accent2')||'#12A3AF';
+    const ang=i=>(-Math.PI/2)+(i*2*Math.PI/n);
+    // grid rings
+    ctx.strokeStyle=line; ctx.fillStyle=muted; ctx.lineWidth=1; ctx.font='11px sans-serif';
+    [0.25,0.5,0.75,1].forEach(g=>{ctx.beginPath();for(let i=0;i<=n;i++){const a=ang(i%n);const x=cx+Math.cos(a)*R*g,y=cy+Math.sin(a)*R*g;i?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();});
+    // spokes + labels
+    for(let i=0;i<n;i++){const a=ang(i);const x=cx+Math.cos(a)*R,y=cy+Math.sin(a)*R;
+      ctx.strokeStyle=line;ctx.beginPath();ctx.moveTo(cx,cy);ctx.lineTo(x,y);ctx.stroke();
+      const lx=cx+Math.cos(a)*(R+20),ly=cy+Math.sin(a)*(R+20);
+      ctx.fillStyle=muted;ctx.textAlign='center';ctx.textBaseline='middle';ctx.fillText(H[i].id,lx,ly);}
+    // data polygon
+    ctx.beginPath();
+    for(let i=0;i<=n;i++){const j=i%n;const a=ang(j);const r=R*(H[j].score/100);const x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r;i?ctx.lineTo(x,y):ctx.moveTo(x,y);}
+    ctx.closePath();
+    const grad=ctx.createRadialGradient(cx,cy,10,cx,cy,R); grad.addColorStop(0,'rgba(34,199,182,.35)');grad.addColorStop(1,'rgba(34,199,182,.12)');
+    ctx.fillStyle=grad; ctx.fill(); ctx.strokeStyle=acc; ctx.lineWidth=2; ctx.stroke();
+    // points
+    for(let i=0;i<n;i++){const a=ang(i);const r=R*(H[i].score/100);const x=cx+Math.cos(a)*r,y=cy+Math.sin(a)*r;
+      ctx.fillStyle=scoreColor(H[i].score);ctx.beginPath();ctx.arc(x,y,3.5,0,7);ctx.fill();}
+    // center avg
+    const avg=Math.round(H.reduce((s,h)=>s+h.score,0)/n);
+    ctx.fillStyle=acc;ctx.textAlign='center';ctx.font='700 26px sans-serif';ctx.fillText(avg,cx,cy-4);
+    ctx.fillStyle=muted;ctx.font='11px sans-serif';ctx.fillText('avg /100',cx,cy+16);
+  })();
+</script>
+</body>
+</html>

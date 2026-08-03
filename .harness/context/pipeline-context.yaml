@@ -1,0 +1,7 @@
+# pipeline-context pointer store (H1) -- auto-built by harness-context-build.
+# Sub-agents read this to discover inputs WITHOUT re-scanning the repo.
+generated_at: "2026-07-22T09:16:00Z"
+srs_path: "docs/SRS.md"
+spec_path: "docs/spec.md"
+tech_stack: ["unknown"]
+artifact_paths: ["docs", "contracts", ".harness"]

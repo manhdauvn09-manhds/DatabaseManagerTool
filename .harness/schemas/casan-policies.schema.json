@@ -1,0 +1,223 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "casan-policies.schema.json",
+  "title": "CASAN uplift policy pack",
+  "type": "object",
+  "required": [
+    "schema_version"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schema_version": {
+      "type": "string"
+    },
+    "context": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enforced_at": {
+          "type": "string"
+        },
+        "governs": {
+          "type": "string",
+          "enum": [
+            "assistant_workflow",
+            "product_runtime"
+          ],
+          "description": "Which PLANE this layer governs. assistant_workflow = the AI/CI workflow that BUILDS this repo (agents, their models, their tools). product_runtime = the shipped product's own behaviour. The two are separate: an assistant-plane model id sent to the product's provider fails every call and surfaces as a bad key, not a bad model. policy-ci asserts the separation."
+        },
+        "pointer_store": {
+          "type": "string"
+        },
+        "staleness_ttl_minutes": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "required_keys": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "clean_on_stale": {
+          "type": "boolean"
+        }
+      }
+    },
+    "tool": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enforced_at": {
+          "type": "string"
+        },
+        "governs": {
+          "type": "string",
+          "enum": [
+            "assistant_workflow",
+            "product_runtime"
+          ],
+          "description": "Which PLANE this layer governs. assistant_workflow = the AI/CI workflow that BUILDS this repo (agents, their models, their tools). product_runtime = the shipped product's own behaviour. The two are separate: an assistant-plane model id sent to the product's provider fails every call and surfaces as a bad key, not a bad model. policy-ci asserts the separation."
+        },
+        "idempotency_required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "rate_limits": {
+          "type": "object"
+        }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enforced_at": {
+          "type": "string"
+        },
+        "governs": {
+          "type": "string",
+          "enum": [
+            "assistant_workflow",
+            "product_runtime"
+          ],
+          "description": "Which PLANE this layer governs. assistant_workflow = the AI/CI workflow that BUILDS this repo (agents, their models, their tools). product_runtime = the shipped product's own behaviour. The two are separate: an assistant-plane model id sent to the product's provider fails every call and surfaces as a bad key, not a bad model. policy-ci asserts the separation."
+        },
+        "golden_dataset_path": {
+          "type": "string"
+        },
+        "regression_suites_required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "judge": {
+          "type": "object"
+        }
+      }
+    },
+    "security": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enforced_at": {
+          "type": "string"
+        },
+        "governs": {
+          "type": "string",
+          "enum": [
+            "assistant_workflow",
+            "product_runtime"
+          ],
+          "description": "Which PLANE this layer governs. assistant_workflow = the AI/CI workflow that BUILDS this repo (agents, their models, their tools). product_runtime = the shipped product's own behaviour. The two are separate: an assistant-plane model id sent to the product's provider fails every call and surfaces as a bad key, not a bad model. policy-ci asserts the separation."
+        },
+        "outbound_allowlist": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "block_cloud_metadata": {
+          "type": "boolean"
+        },
+        "redact_pii_in_logs": {
+          "type": "boolean"
+        }
+      }
+    },
+    "governance": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enforced_at": {
+          "type": "string"
+        },
+        "governs": {
+          "type": "string",
+          "enum": [
+            "assistant_workflow",
+            "product_runtime"
+          ],
+          "description": "Which PLANE this layer governs. assistant_workflow = the AI/CI workflow that BUILDS this repo (agents, their models, their tools). product_runtime = the shipped product's own behaviour. The two are separate: an assistant-plane model id sent to the product's provider fails every call and surfaces as a bad key, not a bad model. policy-ci asserts the separation."
+        },
+        "approval_required": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "immutable_ledger": {
+          "type": "string"
+        },
+        "compliance_report": {
+          "type": "string"
+        }
+      }
+    },
+    "agentops": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enforced_at": {
+          "type": "string"
+        },
+        "governs": {
+          "type": "string",
+          "enum": [
+            "assistant_workflow",
+            "product_runtime"
+          ],
+          "description": "Which PLANE this layer governs. assistant_workflow = the AI/CI workflow that BUILDS this repo (agents, their models, their tools). product_runtime = the shipped product's own behaviour. The two are separate: an assistant-plane model id sent to the product's provider fails every call and surfaces as a bad key, not a bad model. policy-ci asserts the separation."
+        },
+        "cost_anomaly": {
+          "type": "object"
+        },
+        "hallucination_flags": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "drift_window_days": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "alert_routing": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "orchestration": {
+      "type": "object",
+      "additionalProperties": true,
+      "properties": {
+        "enforced_at": {
+          "type": "string"
+        },
+        "governs": {
+          "type": "string",
+          "enum": [
+            "assistant_workflow",
+            "product_runtime"
+          ],
+          "description": "Which PLANE this layer governs. assistant_workflow = the AI/CI workflow that BUILDS this repo (agents, their models, their tools). product_runtime = the shipped product's own behaviour. The two are separate: an assistant-plane model id sent to the product's provider fails every call and surfaces as a bad key, not a bad model. policy-ci asserts the separation."
+        },
+        "model_fallback": {
+          "type": "object"
+        },
+        "retry": {
+          "type": "object"
+        },
+        "transaction": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

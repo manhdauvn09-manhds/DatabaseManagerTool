@@ -1,0 +1,42 @@
+# Project Contract — SSOT for project-level policy
+schema_version: "1.0.0"
+project_version: "1.0.0"
+
+project:
+  name: "harness-toolkit"
+  description: "AI Software Development Harness Toolkit — enterprise agent governance"
+  tech_stack:
+    languages: ["powershell", "python", "yaml", "json"]
+    frameworks: []
+    databases: []
+    infrastructure: ["claude-code"]
+  domain_refs:
+    srs: "docs/harness-spec.md"
+    architecture: "docs/harness-spec.md#4"
+    api_spec: ""
+    test_plan: ""
+    deployment_guide: ""
+
+# Identity & RBAC (H1/H5)
+identity:
+  provider: "local"
+  default_role: "developer"
+  roles:
+    - name: "developer"
+      description: "Can read/write code, run local tools"
+      allowed_tools: ["Read", "Write", "Edit", "Glob", "Grep", "Bash", "PowerShell"]
+    - name: "reviewer"
+      description: "Can review code and approve/reject"
+      allowed_tools: ["Read", "Glob", "Grep"]
+    - name: "admin"
+      description: "Can manage harness configuration"
+      allowed_tools: ["*"]
+
+# Risk policy reference
+risk_policy_ref: ".harness/control/risk-policy.yaml"
+
+# Budget (H6)
+budget:
+  max_tokens_per_session: 500000
+  max_cost_per_session_usd: 10.0
+  alert_at_percent: 80
