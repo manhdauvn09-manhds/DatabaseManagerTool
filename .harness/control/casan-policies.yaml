@@ -77,6 +77,7 @@ tool:
     - "http_fetch"
     - "run_command"
     - "exec_in_container"
+  idempotency_ttl_seconds: 3600             # trong TTL nay, goi trung key -> hoi lai (idempotency-checkpoint.ps1)
   rate_limits:                              # calls per window (advisory to gateway)
     http_fetch: { per_minute: 30 }
     run_command: { per_minute: 20 }
@@ -166,3 +167,12 @@ orchestration:
   transaction:
     rollback_on_failure: true               # deploy workflow rolls back on mid-pipeline fail
     boundary: "workflow"
+    # Post-deploy verification (deploy-verify.ps1, PostToolUse). Deploy xong ma
+    # smoke check fail => hook block va yeu cau rollback ngay. C10 (honest): hook
+    # PHAT HIEN va CHAN, viec goi rollback_deploy van do agent/nguoi thuc hien —
+    # hook khong goi duoc MCP tool.
+    smoke_url: "https://DBManager.allin1site.com/api/health"
+    smoke_expect: "ok"                      # chuoi phai co trong response body
+    smoke_timeout_seconds: 20
+    smoke_retries: 3                        # container can vai giay de len
+    smoke_retry_delay_seconds: 5

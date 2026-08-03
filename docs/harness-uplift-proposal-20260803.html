@@ -90,8 +90,9 @@ li{margin:4px 0}
 <div class="card">
 <ol>
 <li><s>Bật audit per-call local</s> — <b>đã có sẵn.</b> <code>harness-post-tool-use.ps1</code> đã append mỗi tool call (input/output hash, agent, session) vào ledger. Không cần làm gì.</li>
-<li><b>Idempotency key thực tế</b>: script <code>push-and-deploy.ps1</code> sinh key = <code>sha256(commit + app_id)</code>, ghi vào KV trước khi deploy; deploy lần 2 cùng key → skip. Đáp ứng đúng "câu hỏi chốt" của H2: <i>tool chạy 2 lần có safe không</i>.</li>
-<li><b>Rate limit local</b>: hook đếm call/phút theo <code>rate_limits</code> đã khai, vượt ngưỡng → warn + ghi incident.</li>
+<li><b>Idempotency key</b> ✅ <b>ĐÃ LÀM</b> (không đặt trong <code>push-and-deploy.ps1</code> như dự kiến ban đầu — script đó chỉ push, deploy đi qua MCP tool nên phải làm ở tầng hook): <code>idempotency-checkpoint.ps1</code> (PreToolUse) + <code>idempotency-record.ps1</code> (PostToolUse) + <code>lib-idempotency.ps1</code>. Key = <code>sha256(tool + input)</code>, TTL 1h. <b>Chỉ ghi lần chạy THÀNH CÔNG</b> nên retry sau lỗi không bị chặn oan.</li>
+<li><b>Rate limit local</b> ✅ <b>ĐÃ LÀM</b>: cùng hook trên, đếm cửa sổ trượt theo <code>tool.rate_limits</code> (deploy 6/giờ, http_fetch 30/phút…), vượt ngưỡng → ask + ghi ledger.</li>
+<li class="t-warn" style="background:none"><b>Giới hạn trung thực (C10):</b> hook chỉ trả được <code>ask</code> — nó <b>không</b> trả được kết quả cache thay cho tool. Đây là "phát hiện + chặn để người quyết định", chưa phải idempotency tuyệt đối như gateway PDP làm được.</li>
 </ol>
 </div>
 
@@ -110,7 +111,9 @@ li{margin:4px 0}
 <ol>
 <li><b>Định nghĩa DAG pipeline cụ thể</b> cho luồng đối ứng (chính là hệ agent ở mục 4): Scope → Review → Fix → Test → Gate → Deploy, khai trong file workflow (vd <code>.claude/workflows/change-pipeline.md</code> hoặc Workflow script) để scorer thấy DAG thực.</li>
 <li><b>Retry có giới hạn + BACK-TO-PLAN</b>: fix agent tối đa 3 vòng, quá → dừng, báo người.</li>
-<li><b>Transaction boundary thực</b>: deploy fail → tự gọi <code>rollback_deploy</code> (MCP đã có tool này) — hiện chỉ khai <code>rollback_on_failure: true</code> mà không ai thực thi.</li>
+<li><b>Transaction boundary thực</b> ✅ <b>ĐÃ LÀM</b>: <code>deploy-verify.ps1</code> (PostToolUse) — deploy xong tự smoke check <code>/api/health</code> (3 lần thử, cách 5s), fail → trả <code>decision: "block"</code> kèm hướng dẫn rollback bắt buộc + ghi incident <code>risk_level: critical</code> vào ledger. Config (URL, chuỗi mong đợi, retry) nằm trong <code>orchestration.transaction.*</code> — C2, không hardcode.</li>
+<li class="t-warn" style="background:none"><b>Giới hạn trung thực (C10):</b> hook <b>phát hiện và chặn</b>, nhưng không tự gọi được <code>rollback_deploy</code> (hook không có quyền gọi MCP tool). Việc rollback vẫn do agent/người thực hiện sau khi đọc cảnh báo. Đây <b>chưa phải</b> auto-rollback đầy đủ.</li>
+<li><s>Model fallback</s> — chưa làm, cần workflow engine (xem request ToolKit #4).</li>
 <li><b>Model fallback</b>: dùng chính ladder đã khai trong policy khi spawn agent (review → opus, fail → haiku).</li>
 </ol>
 </div>
@@ -174,10 +177,10 @@ li{margin:4px 0}
 <h3>4.4 Cách triển khai (đề xuất thứ tự)</h3>
 <table>
 <tr><th>Bước</th><th>Việc</th><th>Effort</th><th>Nâng Harness</th></tr>
-<tr><td>1</td><td>Đăng ký suite SecureConnect vào H3 policy + thêm golden domain cases</td><td>0.5 ngày</td><td><span class="tag t-ok">H3 ↑↑</span></td></tr>
-<tr><td>2</td><td>Tạo skill <code>/change-pipeline</code> (Workflow script A1→A5) + agent definitions trong <code>.claude/agents/</code></td><td>1–2 ngày</td><td><span class="tag t-ok">H3, H7 ↑</span></td></tr>
-<tr><td>3</td><td>Hook audit per-call + khởi tạo ledger chain.jsonl + approval checkpoint</td><td>1 ngày</td><td><span class="tag t-ok">H2, H5 ↑</span></td></tr>
-<tr><td>4</td><td>Idempotency key trong push-and-deploy.ps1 + auto-rollback khi smoke fail</td><td>0.5 ngày</td><td><span class="tag t-ok">H2, H7 ↑</span></td></tr>
+<tr><td>1</td><td>✅ <b>XONG</b> — đăng ký suite SecureConnect (236 tests) vào H3 policy + 8 golden domain case + 3 deny pattern</td><td>0.5 ngày</td><td><span class="tag t-ok">H3 ↑↑</span></td></tr>
+<tr><td>2</td><td>✅ <b>XONG</b> — skill <code>/change-pipeline</code> (A1→A5) + <code>pipeline-config.yaml</code> + 2 agent impact-scoper/impact-tester</td><td>1–2 ngày</td><td><span class="tag t-ok">H3, H7 ↑</span></td></tr>
+<tr><td>3</td><td>✅ <b>XONG</b> — approval checkpoint (audit + ledger đã có sẵn, không cần làm)</td><td>1 ngày</td><td><span class="tag t-ok">H2, H5 ↑</span></td></tr>
+<tr><td>4</td><td>✅ <b>XONG</b> — idempotency + rate limit hook, post-deploy smoke verify chặn khi fail</td><td>0.5 ngày</td><td><span class="tag t-ok">H2, H7 ↑</span></td></tr>
 <tr><td>5</td><td>Nightly full-suite cron + compliance report tháng</td><td>0.5 ngày</td><td><span class="tag t-ok">H5, H6 ↑</span></td></tr>
 <tr><td>6</td><td>Gửi 6 request cho Harness ToolKit (mục 3)</td><td>—</td><td><span class="tag t-info">Common</span></td></tr>
 </table>
