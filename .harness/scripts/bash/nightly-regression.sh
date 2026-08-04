@@ -65,6 +65,16 @@ if [ -z "$SUITES" ]; then
   exit 2
 fi
 
+# --- Chuan hoa binary python --------------------------------------------
+# suite_commands trong policy viet "python ..." (chay duoc tren Windows). Nhieu
+# distro Linux chi co python3, khong co alias python -> lenh se bao
+# "python: command not found". Doi ten binary o TANG RUNNER thay vi sua policy,
+# de policy van la mot SSOT duy nhat cho ca hai nen tang (C2).
+PY_SWAP=0
+if ! command -v python >/dev/null 2>&1 && command -v python3 >/dev/null 2>&1; then
+  PY_SWAP=1
+fi
+
 info "=== Nightly regression - $(date '+%Y-%m-%d %H:%M') ==="
 info "Repo: $REPO_DIR"
 info "So suite: $(printf '%s\n' "$SUITES" | wc -l)"
@@ -80,9 +90,15 @@ declare -a LINES=()
 while IFS=$'\t' read -r name cmd; do
   [ -z "$name" ] && continue
   TOTAL=$((TOTAL + 1))
-  info "[$name] $cmd"
+  run_cmd="$cmd"
+  if [ "$PY_SWAP" -eq 1 ]; then
+    # Chi doi token binary o dau lenh va ngay sau &&/||/;/| — khong dung vao
+    # duong dan hay tham so co chua chu "python".
+    run_cmd="$(printf '%s' "$cmd" | sed -E 's/(^|[;&|] *)python( )/\1python3\2/g')"
+  fi
+  info "[$name] $run_cmd"
   start=$(date +%s)
-  out="$(eval "$cmd" 2>&1)"
+  out="$(eval "$run_cmd" 2>&1)"
   code=$?
   dur=$(( $(date +%s) - start ))
 
