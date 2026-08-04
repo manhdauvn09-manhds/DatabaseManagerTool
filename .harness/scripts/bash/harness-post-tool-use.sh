@@ -53,5 +53,79 @@ PY
 )
     [ -n "$ENTRY" ] && bash "$LEDGER" append --entry-json "$ENTRY" >/dev/null 2>&1 || true
   fi
+
+  # --- H3/H5: qa-gate verdict gates the release-affecting tools (C2/C10) ------
+  # POSIX parity of harness-post-tool-use.ps1. Runs LAST, after telemetry and the
+  # ledger entry: a denied call still happened, and omitting it from the evidence
+  # trail would hide exactly the events an auditor came for.
+  #
+  # Enable flag and tool list come from casan-policies.yaml, never from here.
+  # Default off -- a project on the legacy 3-stage DAG has no qa-gate stage and
+  # so no verdict, and blocking every commit there would be a breaking change
+  # shipped as a bugfix. Once enabled, a missing verdict fails CLOSED.
+  GATE_OUT="$(HOOK_TOOL="$(printf '%s' "$INPUT" | "$PY" -c 'import sys,json; d=json.load(sys.stdin); print(d.get("tool_name") or d.get("tool") or "")' 2>/dev/null || true)" \
+    HARNESS_ROOT="$HARNESS_ROOT" "$PY" - <<'PY' 2>/dev/null || true
+import os, re, sys
+root = os.environ["HARNESS_ROOT"]
+tool = os.environ.get("HOOK_TOOL", "")
+policy = os.path.join(root, ".harness", "control", "casan-policies.yaml")
+ctx = os.path.join(root, ".harness", "context", "pipeline-context.yaml")
+
+enabled, blocking, in_gate = False, [], False
+try:
+    with open(policy, encoding="utf-8-sig") as f:
+        for line in f:
+            if re.match(r"^\s{2}qa_gate:\s*$", line):
+                in_gate = True
+                continue
+            if in_gate:
+                if line.strip() and not re.match(r"^\s{4}", line):
+                    in_gate = False
+                    continue
+                m = re.match(r"^\s{4}enabled:\s*(\S+)", line)
+                if m:
+                    enabled = m.group(1).strip().lower() in ("true", "yes", "1")
+                m = re.match(r'^\s{6}-\s*"?([A-Za-z0-9_.\-]+)"?', line)
+                if m:
+                    blocking.append(m.group(1))
+except OSError:
+    raise SystemExit(0)          # no policy file -> nothing was ever enabled
+
+if not (enabled and tool and tool in blocking):
+    raise SystemExit(0)
+
+verdict, vpath = "", "artifacts/qa-gate/<pipeline_id>-verdict.md"
+try:
+    with open(ctx, encoding="utf-8-sig") as f:
+        for line in f:
+            m = re.match(r'^\s*qa_gate_verdict:\s*"?([A-Za-z_]+)"?', line)
+            if m and not verdict:
+                verdict = m.group(1)
+            m = re.match(r'^\s*qa_gate_verdict_path:\s*"?([^"\r\n]+)"?', line)
+            if m:
+                vpath = m.group(1).strip()
+except OSError:
+    pass                          # absent context with the gate ON = fail closed
+
+if verdict != "APPROVED":
+    if not verdict:
+        print("qa-gate block: verdict missing -- fail-closed. The gate is enabled in "
+              "casan-policies.yaml but pipeline-context.yaml carries no qa_gate_verdict. "
+              "Run the qa-gate stage, or set governance.qa_gate.enabled: false.")
+    else:
+        print("qa-gate block: verdict=%s (needs APPROVED) for tool '%s'. Resolve at %s."
+              % (verdict, tool, vpath))
+    print("This is a LOCAL hook -- defense-in-depth, not a boundary. Release actions "
+          "need server-side enforcement at the gateway (C10).")
+    raise SystemExit(9)           # 9 = "deny" signal to the shell below
+PY
+)"
+  # SystemExit(9) from the block above leaves its message in GATE_OUT; a non-empty
+  # GATE_OUT is therefore the deny signal. Checking the text rather than $? keeps
+  # this working under `set -e` with the `|| true` guard above.
+  if [ -n "$GATE_OUT" ]; then
+    printf '%s\n' "$GATE_OUT" >&2
+    exit 2
+  fi
 fi
 exit 0

@@ -1,0 +1,65 @@
+# Bundle ownership rules — WHO owns which installed file (C2: the rule is data,
+# not a branch inside install.ps1).
+#
+# Why this file exists: all four consuming-project teams independently reported
+# the same thing — they hand-fix something under .harness/ or contracts/, then a
+# bundle re-install destroys the edit. The installer already had a `preserve`
+# list, but it only answered "never touch this file at all". It could not answer
+# the two cases that actually bit people:
+#
+#   1. A file the BUNDLE owns that the project edited anyway. Overwriting is
+#      correct in principle, but doing it silently is how work disappears.
+#   2. A file the bundle owns whose CONTENT the project extended -- contracts/
+#      agent.yaml with an extra agent, contracts/workflow.yaml with an extra
+#      stage. Overwriting the file is correct for the shipped entries and
+#      destructive for the project's own.
+#
+# Plane: these rules govern the assistant-plane install process, not the
+# product's runtime.
+governs: assistant_workflow
+schema_version: "1.0.0"
+
+# Paths the project owns outright. Never written once they exist, not even with
+# -Force; the shipped copy lands beside them as <file>.new so new keys can be
+# adopted deliberately. Seeded from bundle.yaml's own `preserve` list so default
+# behaviour is unchanged -- this file adds cases, it removes none.
+project_owned:
+  - "contracts/project.yaml"
+  - ".harness/control/casan-policies.yaml"
+  - ".harness/control/risk-policy.yaml"
+  - ".harness/eval/golden/golden-cases.jsonl"
+  # Agent Pack layer-2 config (C2): the bundle ships the agents/skills, the
+  # project supplies how to run ITS tests and its impact map. Both are tuned
+  # per-repo, so a re-install must never overwrite them.
+  - ".harness/control/agent-config.yaml"
+  - "contracts/impact-map.yaml"
+
+# Glob conventions for project-owned paths. A project can create any of these
+# without coordinating with the bundle, and an install will not touch them.
+# `*.local.*` is the override convention: casan-policies.local.yaml sits beside
+# casan-policies.yaml and is yours.
+project_owned_globs:
+  - "*.local.*"
+  - ".claude/settings.local.json"
+  - ".harness/project/*"
+  - "project-*"
+  - ".harness/eval/golden/*-product.jsonl"
+
+# Files whose CONTENT is a keyed list the project may extend. Before overwriting
+# one, the installer compares the item keys on disk against the shipped copy. If
+# the project has entries the bundle does not ship, the file is NOT overwritten:
+# it is reported as a conflict, kept as-is, and the shipped copy is written as
+# <file>.new naming the entries at risk.
+#
+# Deliberately a CONFLICT rather than an automatic merge. Auto-merging YAML for a
+# governance contract means guessing -- at which position, under which parent,
+# with whose indentation -- and a wrong guess in agent.yaml or workflow.yaml is a
+# broken pipeline that validates. Telling the human exactly which entries to
+# carry over is slower and correct (C10: no confident wrong answer).
+#
+# Format: "<list key>:<item key>" — the YAML list to scan, and the field that
+# identifies an item within it.
+keyed_lists:
+  "contracts/agent.yaml": "agents:name"
+  "contracts/workflow.yaml": "stages:id"
+  "contracts/tool-registry.yaml": "tools:name"

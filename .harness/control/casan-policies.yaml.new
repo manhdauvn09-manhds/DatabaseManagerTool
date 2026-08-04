@@ -161,6 +161,30 @@ governance:
     - "provider_key_rotate"
   immutable_ledger: ".harness/ledger/chain.jsonl"   # hash-chain, tamper-evident (C9)
   compliance_report: "monthly"
+  # H3/H5 -- the qa-gate stage's verdict gates the release-affecting tools. The
+  # 6-stage DAG writes `pipeline.qa_gate_verdict` into pipeline-context.yaml;
+  # when this is enabled, harness-post-tool-use denies the tools below on any
+  # value other than APPROVED.
+  #
+  # DEFAULT OFF on purpose (C2 -- the decision is data, not script). A project
+  # still on the legacy 3-stage DAG has no qa-gate stage and therefore no
+  # verdict at all, so shipping this on-by-default would block every commit in
+  # every such project -- a breaking change delivered as a bugfix. Turn it on
+  # once your workflow.yaml actually has the qa-gate stage.
+  #
+  # HONEST SCOPE (C10): this is a LOCAL hook, defense-in-depth, not a boundary.
+  # It raises the cost of shipping unverified work; it does not make it
+  # impossible. The real boundary for release actions is the server-side gateway
+  # PDP. Once enabled, a missing or unreadable verdict fails CLOSED and says so.
+  qa_gate:
+    enabled: false
+    blocking_tools:
+      - "run_command"
+      - "git_commit"
+      - "git_push"
+      - "deploy"
+      - "rollback_deploy"
+      - "mysql_query"
   # Where the ONE common governance text (CLAUDE.harness.md) gets projected, so
   # every assistant working in this repo reads the same C1-C10 rules. The
   # installer writes a delimited managed block into each - your own content in

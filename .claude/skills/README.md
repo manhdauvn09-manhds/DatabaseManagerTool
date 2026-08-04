@@ -21,8 +21,10 @@ skills around the edges.
 | **analysis** | `analyze-requirements` | analyst, architect | analysis-doc |
 | **implementation** | `implement-change` | developer | code-diff |
 | implement (repair) | `fix-and-verify` | developer, tester | fix-verification-report |
+| **test** | `run-affected-tests` | targeted-tester, tester | test-report |
 | security | `be-fe-security-audit` | reviewer, researcher | security-audit-report |
 | **verification** | `verify-implementation` | reviewer, tester | verdict |
+| verification (loop) | `impact-review` | impact-analyzer, code-reviewer, fix-agent, targeted-tester, reviewer, qa-reviewer | verdict |
 | **qa-gate** | `qa-gate` | qa-reviewer | qa-verdict |
 | governance (H5) | `evidence-bundle` | reviewer, writer | evidence-bundle |
 | release | `deploy-to-test` | devops | deployment-report |
@@ -32,7 +34,8 @@ skills around the edges.
 formal, agent-scoped skill (previously only the surrounding lifecycle phases
 did). `implement` is the legacy stage alias for `implementation`.
 
-The v1.6.0 DAG's sixth stage, `test`, is the one node with **no dedicated skill**:
-the `tester` agent runs the suites directly and `fix-and-verify` covers the repair
-loop. Noted rather than papered over — a stage-to-skill table that quietly implies
-full coverage is how a gap survives review.
+The DAG's `test` stage got its dedicated skill in v1.6.0: `run-affected-tests`
+(previously the one node with none — the `tester` agent ran suites ad hoc).
+`impact-review` is the Agent Pack's orchestration skill — the review→fix→test
+loop scoped to a change's blast radius — which all nine 2026-08-03 consuming
+projects independently designed before it was standardized here.

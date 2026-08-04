@@ -30,6 +30,25 @@ try {
     # Sampling is best-effort; never fail session end on it.
 }
 
+# C9 — seal the session: append one ledger entry recording that the session ended
+# and the chain head it ended at. Written BEFORE push so the seal ships in the
+# same telemetry run. A chain that only grows on tool calls has no per-session
+# boundary; the seal gives an auditor one. Best-effort (parity with the .sh).
+try {
+    $LedgerScript = Join-Path $PSScriptRoot "evidence-ledger.ps1"
+    $ChainFile = "$HarnessRoot\.harness\ledger\chain.jsonl"
+    if ((Test-Path $LedgerScript) -and (Test-Path $ChainFile)) {
+        $headHash = ""
+        try { $headHash = ((Get-Content $ChainFile -Tail 1 -Encoding utf8 | ConvertFrom-Json | Select-Object -Last 1).entry_hash) } catch { }
+        $seal = @{
+            actor = @{ agent = "harness"; user = "$env:HARNESS_USER"; session_id = "$SessionId"; role = "system" }
+            action = @{ type = "pipeline_event"; tool = "session-end"; description = "session sealed; chain head $($headHash.Substring(0,[Math]::Min(16,$headHash.Length)))" }
+            decision = @{ result = "allow"; reason = "session end"; risk_level = "none" }
+        } | ConvertTo-Json -Compress -Depth 4
+        & $LedgerScript append -EntryJson $seal *>$null
+    }
+} catch { }
+
 # Push telemetry to the Control Portal if this checkout is configured for it
 # (.harness/portal-sync.json) — the sync path for machines the backend can't
 # read (e.g. Windows checkouts). Best-effort, never fails the hook.

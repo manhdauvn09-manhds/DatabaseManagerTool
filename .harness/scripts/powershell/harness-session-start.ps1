@@ -12,7 +12,46 @@
 #>
 
 $HarnessRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))
+
+# Worktree-aware root resolution. When Claude Code runs a session inside a git
+# worktree, that worktree has its own working directory but shares the main
+# repo's .git -- and usually does NOT carry its own .harness/. A hook that
+# resolves purely by $PSScriptRoot..\..\.. then points at a directory with no
+# .harness, so every ledger/telemetry write lands nowhere and is lost SILENTLY.
+# One consuming project reported exactly this: two weeks of zero H2/H5 evidence
+# with no error. If .harness is missing where we think it is, ask git where the
+# common dir lives and use its parent -- the main checkout, where .harness is.
+if (-not (Test-Path "$HarnessRoot\.harness")) {
+    try {
+        $commonDir = (& git -C $HarnessRoot rev-parse --git-common-dir 2>$null)
+        if ($commonDir) {
+            if (-not [System.IO.Path]::IsPathRooted($commonDir)) { $commonDir = Join-Path $HarnessRoot $commonDir }
+            $mainRepo = Split-Path -Parent $commonDir
+            if ($mainRepo -and (Test-Path "$mainRepo\.harness")) {
+                Write-Output "[harness] worktree detected -- ledger/telemetry -> main checkout $mainRepo"
+                $HarnessRoot = $mainRepo
+            }
+        }
+    } catch { }
+}
+
 $SessionId = [guid]::NewGuid().ToString()
+
+# Record a hook failure to a durable log instead of swallowing it. The hooks are
+# best-effort by design -- a ledger or telemetry write must never break a
+# session -- but "best-effort" had meant "swallow forever", so a project whose
+# evidence pipeline was dead had no way to know except watching its Portal score
+# fall. One line here, read back by `harness doctor`, turns a silent 0 into a
+# diagnosable one. Writing the error log itself is wrapped so it can never throw.
+function Write-HookError([string]$Hook, [string]$Message) {
+    try {
+        $log = "$HarnessRoot\.harness\telemetry\hook-errors.log"
+        $dir = Split-Path -Parent $log
+        if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+        $line = (@{ timestamp = (Get-Date -Format 'o'); hook = $Hook; error = $Message; session_id = $SessionId } | ConvertTo-Json -Compress)
+        [System.IO.File]::AppendAllText($log, $line + [Environment]::NewLine, (New-Object System.Text.UTF8Encoding($false)))
+    } catch { }
+}
 
 # Verify essential directories exist
 $requiredDirs = @(
@@ -57,6 +96,25 @@ if (Test-Path $RolesFile -and (Test-Path $GatewayIssuer)) {
 $ContextBuild = "$PSScriptRoot\harness-context-build.ps1"
 if (Test-Path $ContextBuild) {
     try { & $ContextBuild -HarnessRoot $HarnessRoot } catch { Write-Warning "[harness] context build skipped: $_" }
+}
+
+# C9 — genesis the immutable ledger if it has never been written. Without this,
+# chain.jsonl is created LAZILY on the first side-effect call, so a project that
+# has made none has no chain at all -- and a chain with no genesis cannot prove
+# it is intact from the start, which is the whole point of a hash chain. Three
+# consuming projects were found with no chain.jsonl despite identical hooks.
+# Best-effort: a ledger failure must never break the developer's session.
+$ChainFile = "$HarnessRoot\.harness\ledger\chain.jsonl"
+if (-not (Test-Path $ChainFile)) {
+    try {
+        $LedgerScript = "$PSScriptRoot\evidence-ledger.ps1"
+        if (Test-Path $LedgerScript) {
+            & $LedgerScript init *>$null
+            if (Test-Path $ChainFile) { Write-Output "[harness] ledger genesis written -> $ChainFile" }
+        }
+    } catch {
+        Write-HookError "session-start" "ledger genesis failed: $($_.Exception.Message)"
+    }
 }
 
 Write-Output "[harness] Session $SessionId started at $env:HARNESS_SESSION_START"

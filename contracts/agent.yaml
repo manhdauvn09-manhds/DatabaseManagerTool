@@ -52,7 +52,7 @@ model_profiles:
       1-7: "claude-haiku-4-5"
       8-10: "claude-sonnet-5"
 
-# Agent fleet definitions — 11 agents across Tier 3 and Tier 2
+# Agent fleet definitions — 15 agents across Tier 3 and Tier 2
 agents:
   - name: "boss"
     description: "Tier 3 orchestrator — plans, delegates, manages pipeline context"
@@ -150,6 +150,46 @@ agents:
     allowed_tools: ["Read", "Glob", "Grep", "Bash", "__workflow_gate__"]
     blocked_tools: ["Write", "Edit", "PowerShell", "run_command", "deploy", "rollback_deploy", "mysql_query"]
     definition: ".claude/agents/qa-reviewer.md"
+
+  # --- v1.6.0 Agent Pack: the review -> fix -> test pipeline (all 9 consuming
+  # projects independently designed this same set). Two-layer (C2): these agent
+  # files ship in the bundle; a project supplies only agent-config.yaml (its test
+  # runner + force-full globs). impact-analyzer keeps them all cheap by scoping
+  # review and test to the change's blast radius.
+  - name: "impact-analyzer"
+    description: "Tier 2 — from a git diff, map the affected modules/routes/tests so review and test run on the blast radius only"
+    model_profile: "planning-light"
+    authority: "specialist"
+    allowed_tools: ["Read", "Glob", "Grep", "Bash"]
+    blocked_tools: ["Write", "Edit", "PowerShell", "run_command", "deploy", "mysql_query", "http_fetch"]
+    definition: ".claude/agents/impact-analyzer.md"
+
+  # Read-only by construction: a reviewer that can edit the code it judges is no
+  # longer reviewing it. Run three in parallel, one lens each.
+  - name: "code-reviewer"
+    description: "Tier 2 — review a diff through one lens (correctness/security/performance), scoped to the impact map"
+    model_profile: "review"
+    authority: "specialist"
+    allowed_tools: ["Read", "Glob", "Grep"]
+    blocked_tools: ["Write", "Edit", "Bash", "PowerShell", "run_command", "deploy", "mysql_query"]
+    definition: ".claude/agents/code-reviewer.md"
+
+  - name: "fix-agent"
+    description: "Tier 2 — apply the smallest fix for each CONFIRMED finding, inside guard zones and the impact map only"
+    model_profile: "coding"
+    authority: "specialist"
+    allowed_tools: ["Read", "Write", "Edit", "Glob", "Grep"]
+    blocked_tools: ["Bash", "PowerShell", "run_command", "deploy", "rollback_deploy", "mysql_query", "http_fetch"]
+    definition: ".claude/agents/fix-agent.md"
+
+  # Bash for one reason only: to run the suites. Same discipline as qa-reviewer.
+  - name: "targeted-tester"
+    description: "Tier 2 — run only the affected tests, escalate to full on hub changes, write an honest report"
+    model_profile: "coding"
+    authority: "specialist"
+    allowed_tools: ["Read", "Glob", "Grep", "Bash"]
+    blocked_tools: ["Write", "Edit", "PowerShell", "run_command", "deploy", "mysql_query", "http_fetch"]
+    definition: ".claude/agents/targeted-tester.md"
 
 # Local tier (OSS on-prem models) — separate ladder, never called Claude (D4)
 local_tier:

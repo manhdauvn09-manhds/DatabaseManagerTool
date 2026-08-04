@@ -31,7 +31,7 @@
       "minItems": 1,
       "items": {
         "type": "string",
-        "enum": ["boss", "architect", "analyst", "researcher", "developer", "tester", "devops", "reviewer", "writer", "gatekeeper", "qa-reviewer"]
+        "enum": ["boss", "architect", "analyst", "researcher", "developer", "tester", "devops", "reviewer", "writer", "gatekeeper", "qa-reviewer", "impact-analyzer", "code-reviewer", "fix-agent", "targeted-tester"]
       }
     },
     "prompt_template": { "type": "string", "minLength": 10 },

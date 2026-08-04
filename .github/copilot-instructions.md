@@ -1,5 +1,5 @@
 <!-- BEGIN harness-governance -->
-<!-- standard-governance v1.5.9 - MANAGED BLOCK. Edits inside are replaced on the next install; put your own project rules OUTSIDE this block. -->
+<!-- standard-governance v1.6.0 - MANAGED BLOCK. Edits inside are replaced on the next install; put your own project rules OUTSIDE this block. -->
 
 <!--
   Harness AI Toolkit — Common Governance Reference
@@ -84,6 +84,32 @@ what is inside it. Run the installer with `-MergeGuides` / `--merge-guides`.
 - **C10 — Honest about enforcement:** local hooks are defense-in-depth; label
   high-risk actions as "needs server-side enforcement" rather than implying the
   local hook is a hard boundary.
+- **C11 — Operator handoff via a runnable script.** When something must run on the
+  operator's own machine or a server — a config change, a service restart, a
+  build, a deploy, any step the assistant should not or cannot do itself — do not
+  hand over a loose list of shell lines to paste. Generate a single ready-to-run
+  **PowerShell `.ps1`** (PowerShell is the operator's primary shell; loose
+  cross-shell snippets have failed on their machine) and tell them exactly how to
+  run it. **Target Windows PowerShell 5.1** — the operator runs `powershell`, NOT
+  `pwsh` (PowerShell 7): give the invocation as `powershell -File <path>`, and
+  write the script in 5.1-compatible syntax (no `??` null-coalescing, no ternary
+  `? :`, no `pwsh`-only cmdlets). A script that needs PowerShell 7 fails on their
+  machine with "pwsh is not recognized". The script must be self-contained and
+  idempotent where possible:
+  - It `cd`s to the correct project directory itself (absolute path) — the
+    operator should never have to know where to stand.
+  - It prints what it is about to do, does it, and verifies the result
+    (health check / status) so a failure is visible, not silent.
+  - **Build and deploy are operator-run by default.** The assistant prepares the
+    `.ps1` and gives the exact invocation; the operator runs it. Do not perform a
+    build or deploy on the operator's behalf unless they have explicitly said to.
+  - Every time you ask the operator to do anything, give the concrete command,
+    including the `cd`, so it can be run without further thought.
+
+  And when you ask the operator to **decide**, never ask abstractly. State each
+  option concretely (what it does, its cost, its risk), then **recommend one and
+  say why** — the operator should be choosing between spelled-out options, not
+  inventing them.
 
 ## Plane separation — what these policies do NOT govern
 

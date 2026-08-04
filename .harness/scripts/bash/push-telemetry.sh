@@ -169,12 +169,81 @@ def read(path):
     except OSError:
         return ""
 
+# --- Incremental send for the append-only logs (POSIX parity of push-telemetry.ps1)
+# These files only grow, and the push used to send each one WHOLE every run. This
+# repo's own chain.jsonl reached 24.8 MB against the endpoint's 10 MB per-field cap
+# and 24hHotnewsAI's reached 3.0 MB -- and the failure did NOT surface as a clean
+# 413. The body was cut off mid-write, so the client reported a network error
+# ("connection aborted" / "write operation timed out"). Nobody reading that would
+# suspect a size limit, which is why telemetry for the two largest projects had
+# been failing silently.
+#
+# Sending only the tail is safe because every one of these ingests dedupes
+# server-side -- chain.jsonl by entry_hash, tool-calls.log by line hash,
+# security-events.jsonl by source_ref. An overlapping or even a full re-send can
+# never double-count, so the cursor is an optimisation and losing it is harmless.
+CURSOR_PATH = os.path.join(root, ".harness", "telemetry", ".push-cursor.json")
+MAX_FIELD_BYTES = 4 * 1024 * 1024   # under the server's 10 MB, room for the envelope
+
+try:
+    _cursors = json.load(open(CURSOR_PATH, encoding="utf-8"))
+    if not isinstance(_cursors, dict):
+        _cursors = {}
+except Exception:
+    _cursors = {}          # unreadable cursor = send from 0; dedupe makes that safe
+_cursors_new = {}
+
+
+def read_incremental(path, key):
+    try:
+        size = os.path.getsize(path)
+    except OSError:
+        return ""
+    start = int(_cursors.get(key) or 0)
+    # A file shorter than the cursor was rotated or truncated, so the cursor points
+    # into a file that no longer exists. Start over rather than read a meaningless
+    # offset.
+    if start > size:
+        start = 0
+    take = size - start
+    truncated = take > MAX_FIELD_BYTES
+    if truncated:
+        take = MAX_FIELD_BYTES
+    if take <= 0:
+        _cursors_new[key] = size
+        return ""
+    with open(path, "rb") as fh:
+        fh.seek(start)
+        raw = fh.read(take)
+    text = raw.decode("utf-8", errors="replace")
+    # Never hand the server a half-written final line: cut back to the last newline
+    # and let the remainder go next run. A truncated JSON line would be dropped by
+    # the reader anyway, and the cursor would have skipped past it -- losing that
+    # entry permanently.
+    nl = text.rfind("\n")
+    if nl < 0:
+        if truncated:
+            print("[push-telemetry] %s: one line exceeds %dMB; skipped"
+                  % (key, MAX_FIELD_BYTES // (1024 * 1024)))
+        _cursors_new[key] = start
+        return ""
+    text = text[:nl + 1]
+    _cursors_new[key] = start + len(text.encode("utf-8"))
+    if start > 0 or truncated:
+        msg = "[push-telemetry] %s: sending %.1fKB from offset %d of %d" % (
+            key, len(text) / 1024.0, start, size)
+        if truncated:
+            msg += " (capped; remainder goes next run)"
+        print(msg)
+    return text
+
+
 body = {
     "agentops": read(os.path.join(root, ".harness", "telemetry", "agentops.log")),
-    "chain_jsonl": read(os.path.join(root, ".harness", "ledger", "chain.jsonl")),
-    "security_events": read(os.path.join(root, ".harness", "telemetry", "security-events.jsonl")),
-    "tool_calls": read(os.path.join(root, ".harness", "telemetry", "tool-calls.log")),
-    "test_reports": read(os.path.join(root, ".harness", "telemetry", "test-reports.jsonl")),
+    "chain_jsonl": read_incremental(os.path.join(root, ".harness", "ledger", "chain.jsonl"), "chain.jsonl"),
+    "security_events": read_incremental(os.path.join(root, ".harness", "telemetry", "security-events.jsonl"), "security-events.jsonl"),
+    "tool_calls": read_incremental(os.path.join(root, ".harness", "telemetry", "tool-calls.log"), "tool-calls.log"),
+    "test_reports": read_incremental(os.path.join(root, ".harness", "telemetry", "test-reports.jsonl"), "test-reports.jsonl"),
     "member_email": str(cfg.get("member_email") or ""),
     "buglist": read(os.path.join(root, "buglist.md")),
 }
@@ -249,6 +318,21 @@ try:
     print("[push-telemetry] OK: actions=%s incidents=%s usage=%s tool_calls=%s" % (
         r.get("action_log_ingested", 0), r.get("security_incidents_ingested", 0),
         r.get("usage_events_ingested", 0), r.get("tool_calls_ingested", 0)))
+    # Advance the cursors ONLY now. Committing them before the request would mean a
+    # failed push permanently skipped those lines -- the ledger would develop a hole
+    # no later run could fill, the opposite of what an append-only audit trail is
+    # for. Re-sending after a failure costs nothing because every ingest dedupes.
+    if _cursors_new:
+        try:
+            merged = dict(_cursors)
+            merged.update(_cursors_new)
+            os.makedirs(os.path.dirname(CURSOR_PATH), exist_ok=True)
+            with open(CURSOR_PATH, "w", encoding="utf-8") as fh:
+                json.dump(merged, fh)
+        except OSError as e:
+            # A cursor we failed to persist just means the next run re-sends. Never
+            # turn a successful push into a failure over it.
+            print("[push-telemetry] could not save push cursor: %s" % e)
 except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
     # Never fail the calling hook; the next push retries everything (dedupe).
     # Print the server's BODY, not just the status line: an HTTPError carries the

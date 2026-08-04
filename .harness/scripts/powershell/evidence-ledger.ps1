@@ -95,7 +95,19 @@ function Get-LastEntry {
     if (Test-Path $ChainFile) {
         $lastLine = Get-Content -Path $ChainFile -Tail 1 -Encoding utf8 -ErrorAction SilentlyContinue
         if ($lastLine) {
-            try { return $lastLine | ConvertFrom-Json } catch { return $null }
+            try {
+                # `Select-Object -Last 1` is load-bearing, not tidiness. If this
+                # ever yields more than one object -- a line holding a JSON ARRAY,
+                # or two concatenated objects from interleaved appends -- then
+                # `$LastEntry.index` becomes an ARRAY via PowerShell member
+                # enumeration, and `+ 1` on an array APPENDS instead of adding.
+                # The next entry then carries index @(2264,2265,1), the one after
+                # @(2264,2265,1,1), and the corruption compounds forever. That is
+                # not hypothetical: it produced 2836 malformed entries out of 5238
+                # in this repo's own chain, and crashed the Portal's ingest with
+                # "unhashable type: 'list'".
+                return ($lastLine | ConvertFrom-Json | Select-Object -Last 1)
+            } catch { return $null }
         }
     }
     return $null
@@ -166,7 +178,23 @@ switch ($Command) {
         }
 
         $LastEntry = Get-LastEntry
-        $NextIndex = if ($LastEntry) { $LastEntry.index + 1 } else { 0 }
+        # Second line of defence, independent of Get-LastEntry: coerce to a scalar
+        # int before adding. A chain that ALREADY contains a malformed index (this
+        # repo's does, for 2836 entries) must not keep propagating it, so an
+        # unparseable index falls back to the chain length -- which is what the
+        # index means anyway. Never `+ 1` on something whose type is unverified.
+        $NextIndex = 0
+        if ($LastEntry) {
+            $rawIdx = $LastEntry.index
+            if ($rawIdx -is [array]) { $rawIdx = $rawIdx | Select-Object -Last 1 }
+            $parsed = 0
+            if ([int]::TryParse("$rawIdx", [ref]$parsed)) {
+                $NextIndex = $parsed + 1
+            } else {
+                $NextIndex = Get-ChainLength
+                Write-Warning "[evidence-ledger] previous entry has a non-numeric index ($($LastEntry.index -join ',')); using chain length $NextIndex instead"
+            }
+        }
         $PrevHash = if ($LastEntry) { $LastEntry.entry_hash } else { "GENESIS" }
 
         # Build canonical entry

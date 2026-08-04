@@ -58,6 +58,75 @@ function Read-IfExists([string]$Path) {
     return ""
 }
 
+# --- Incremental send for the append-only logs ---------------------------------
+# These files only ever grow, and the push used to send each one WHOLE on every
+# run. This repo's own chain.jsonl reached 24.8 MB against the ingest endpoint's
+# 10 MB per-field cap, and 24hHotnewsAI's reached 3.0 MB -- and the failure did
+# NOT surface as a clean 413. The body was cut off mid-write, so the client saw
+# "connection aborted" / "write operation timed out", i.e. a network error. Nobody
+# reading that message would suspect a size limit, which is why telemetry for the
+# two largest projects had been silently failing.
+#
+# Safe to send only the tail because every one of these ingests dedupes
+# server-side -- chain.jsonl by entry_hash, tool-calls.log by line hash,
+# security-events.jsonl by source_ref, test-reports by ref. So an overlapping or
+# even a full re-send can never double-count; the cursor is an optimisation, not
+# a correctness requirement. That is what makes losing the cursor harmless.
+$PushCursorFile = Join-Path $Tel ".push-cursor.json"
+$MaxFieldBytes = 4MB   # well under the server's 10 MB, leaving room for the envelope
+
+$PushCursors = @{}
+if (Test-Path $PushCursorFile) {
+    try {
+        $cj = Get-Content -Path $PushCursorFile -Raw -Encoding utf8 | ConvertFrom-Json
+        foreach ($p in $cj.PSObject.Properties) { $PushCursors[$p.Name] = [int64]$p.Value }
+    } catch { }   # unreadable cursor = send from 0; dedupe makes that safe
+}
+$PushCursorsNew = @{}
+
+function Read-Incremental([string]$Path, [string]$Key) {
+    if (-not (Test-Path $Path)) { return "" }
+    $len = (Get-Item $Path).Length
+    $from = 0L
+    if ($PushCursors.ContainsKey($Key)) { $from = $PushCursors[$Key] }
+    # File shorter than the cursor means it was rotated or truncated, so the
+    # cursor points into a file that no longer exists. Start over rather than
+    # read from a meaningless offset.
+    if ($from -gt $len) { $from = 0L }
+
+    $take = $len - $from
+    $truncated = $false
+    if ($take -gt $MaxFieldBytes) { $take = [int64]$MaxFieldBytes; $truncated = $true }
+    if ($take -le 0) { $PushCursorsNew[$Key] = $len; return "" }
+
+    $buf = New-Object byte[] $take
+    $fs = [System.IO.File]::Open($Path, 'Open', 'Read', 'ReadWrite')
+    try { $fs.Seek($from, 'Begin') | Out-Null; $read = $fs.Read($buf, 0, $take) } finally { $fs.Dispose() }
+    $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $read)
+
+    # Never hand the server a half-written final line: cut back to the last
+    # newline and let the remainder go out on the next push. A truncated JSON line
+    # would be dropped by the reader anyway, and the cursor would have skipped
+    # past it -- losing that entry permanently.
+    $lastNl = $text.LastIndexOf("`n")
+    if ($lastNl -lt 0) {
+        # A single line longer than the whole budget. Sending nothing is the
+        # honest outcome; say so rather than shipping a fragment.
+        if ($truncated) { Write-Warning "[push-telemetry] $Key : one line exceeds $([int]($MaxFieldBytes/1MB))MB; skipped" }
+        $PushCursorsNew[$Key] = $from
+        return ""
+    }
+    $text = $text.Substring(0, $lastNl + 1)
+    $PushCursorsNew[$Key] = $from + [System.Text.Encoding]::UTF8.GetByteCount($text)
+
+    if ($from -gt 0 -or $truncated) {
+        $msg = "[push-telemetry] $Key : sending $([math]::Round($text.Length/1KB,1))KB from offset $from of $len"
+        if ($truncated) { $msg += " (capped; remainder goes next run)" }
+        Write-Output $msg
+    }
+    return $text
+}
+
 # --- Self-healing resample: rebuild agentops.log from THIS project's Claude
 # Code transcripts before pushing, so token usage is captured even if the
 # SessionEnd sampler never fired. Transcript dirs are matched CASE-INSENSITIVELY
@@ -195,10 +264,10 @@ $Ledger = Join-Path $HarnessRoot ".harness\ledger"
 
 $Body = @{
     agentops        = Read-IfExists (Join-Path $Tel "agentops.log")
-    chain_jsonl     = Read-IfExists (Join-Path $Ledger "chain.jsonl")
-    security_events = Read-IfExists (Join-Path $Tel "security-events.jsonl")
-    tool_calls      = Read-IfExists (Join-Path $Tel "tool-calls.log")
-    test_reports    = Read-IfExists (Join-Path $Tel "test-reports.jsonl")
+    chain_jsonl     = Read-Incremental (Join-Path $Ledger "chain.jsonl") "chain.jsonl"
+    security_events = Read-Incremental (Join-Path $Tel "security-events.jsonl") "security-events.jsonl"
+    tool_calls      = Read-Incremental (Join-Path $Tel "tool-calls.log") "tool-calls.log"
+    test_reports    = Read-Incremental (Join-Path $Tel "test-reports.jsonl") "test-reports.jsonl"
     member_email    = "$($Config.member_email)"
     buglist         = Read-IfExists (Join-Path $HarnessRoot "buglist.md")
 }
@@ -294,6 +363,25 @@ try {
         -Body ([System.Text.Encoding]::UTF8.GetBytes($Json)) -TimeoutSec 30
     Write-Output ("[push-telemetry] OK: actions={0} incidents={1} usage={2} tool_calls={3}" -f `
         $Resp.action_log_ingested, $Resp.security_incidents_ingested, $Resp.usage_events_ingested, $Resp.tool_calls_ingested)
+
+    # Advance the cursors ONLY now. Committing them before the request would mean
+    # a failed push permanently skipped those lines -- the ledger would develop a
+    # hole no later run could fill, which is the opposite of what an append-only
+    # audit trail is for. Re-sending after a failure costs nothing because every
+    # ingest dedupes.
+    try {
+        if ($PushCursorsNew.Count -gt 0) {
+            $merged = @{}
+            foreach ($k in $PushCursors.Keys)    { $merged[$k] = $PushCursors[$k] }
+            foreach ($k in $PushCursorsNew.Keys) { $merged[$k] = $PushCursorsNew[$k] }
+            $enc = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($PushCursorFile, ($merged | ConvertTo-Json -Compress), $enc)
+        }
+    } catch {
+        # A cursor we failed to persist just means the next run re-sends. Warn, but
+        # never turn a successful push into a failure over it.
+        Write-Warning "[push-telemetry] could not save push cursor: $($_.Exception.Message)"
+    }
 } catch {
     # Never fail the calling hook on a network error; the next push retries
     # everything anyway (server-side dedupe makes it idempotent).
