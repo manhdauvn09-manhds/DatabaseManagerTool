@@ -1,0 +1,143 @@
+# impact-map.yaml — source glob -> test group. Đọc bởi impact-analyzer (H7).
+# Schema: .harness/schemas/impact-map.schema.json
+#
+# C2: DATA, không hardcode trong agent.
+#
+# Hợp nhất 2026-08-04: port từ route_test_map trong
+# .claude/skills/change-pipeline/pipeline-config.yaml (bản tự viết). Định dạng
+# này chuẩn hơn vì khai được cả `it` (integration case mà coverage không lần ra)
+# và `risk`.
+#
+# LƯU Ý fallback: đặt "ALL" là cố ý. File không khớp group nào thì chạy full
+# suite — dưới-phạm-vi mà im lặng là kiểu hỏng duy nhất khiến selective test trở
+# nên nguy hiểm hơn là không dùng.
+
+version: 1
+
+# Chạy trên MỌI thay đổi. Rẻ, là chốt chặn cuối.
+always_run:
+  - "curl -sf https://DBManager.allin1site.com/api/health"
+
+fallback: "ALL"
+
+groups:
+  rows-crud:
+    sources:
+      - "SecureConnect/src/app/api/db/*/rows/**"
+      - "SecureConnect/src/lib/connections/mutate.ts"
+      - "SecureConnect/src/lib/connections/schemaCache.ts"
+    tests:
+      - "src/lib/connections/__tests__/mutate.test.ts"
+      - "src/lib/connections/__tests__/store.test.ts"
+      - "src/lib/db-api/__tests__/parseFilters.test.ts"
+    it:
+      - "INSERT/UPDATE/DELETE phải gọi invalidateCountCache (P-2 CASAN)"
+      - "affectedRows > cap phải rollback (C-2 TOCTOU)"
+    risk: "high"
+
+  bulk-mutate:
+    sources:
+      - "SecureConnect/src/app/api/db/*/bulk/**"
+      - "SecureConnect/src/lib/connections/bulkMutate.ts"
+      - "SecureConnect/src/lib/security/confirmTokens.ts"
+    tests:
+      - "src/lib/connections/__tests__/bulkMutate.test.ts"
+      - "src/lib/security/__tests__/confirmTokens.test.ts"
+    it:
+      - "Bulk mutate phải yêu cầu confirm token còn hạn"
+    risk: "high"
+
+  search-filter:
+    sources:
+      - "SecureConnect/src/app/api/db/*/search/**"
+      - "SecureConnect/src/lib/connections/searchBuilder.ts"
+      - "SecureConnect/src/lib/db-api/parseFilters.ts"
+    tests:
+      - "src/lib/connections/__tests__/searchBuilder.test.ts"
+      - "src/lib/connections/__tests__/filters.test.ts"
+    it:
+      - "LIKE metachar (%, _) phải được escape + ESCAPE clause (C-3 CASAN)"
+    risk: "medium"
+
+  query-sql:
+    sources:
+      - "SecureConnect/src/app/api/db/*/query/**"
+      - "SecureConnect/src/lib/db-api/sqlValidator.ts"
+      - "SecureConnect/src/lib/ai/sqlAssistant.ts"
+    tests:
+      - "src/lib/db-api/sqlValidator.test.ts"
+    it:
+      - "Phải chặn INTO OUTFILE / DUMPFILE / LOAD DATA / LOAD_FILE (S-3 CASAN)"
+    risk: "high"
+
+  connect-auth:
+    sources:
+      - "SecureConnect/src/app/api/connect/**"
+      - "SecureConnect/src/lib/schemas/connect.ts"
+      - "SecureConnect/src/lib/connections/testConnection.ts"
+    tests:
+      - "src/lib/schemas/__tests__/connect.test.ts"
+      - "src/lib/connections/__tests__/dbConnector.test.ts"
+      - "src/lib/security/__tests__/ssrfGuard.test.ts"
+    it:
+      - "SSRF: host resolve về private/loopback phải bị từ chối, kể cả IPv6 dạng expanded (S-4 CASAN)"
+    risk: "high"
+
+  export:
+    sources:
+      - "SecureConnect/src/app/api/db/*/export/**"
+      - "SecureConnect/src/lib/connections/exporters.ts"
+    tests:
+      - "src/lib/connections/__tests__/exporters.test.ts"
+    risk: "low"
+
+  stats-monitor:
+    sources:
+      - "SecureConnect/src/app/api/db/*/stats/**"
+      - "SecureConnect/src/app/api/db/*/column-stats/**"
+      - "SecureConnect/src/app/api/db/*/monitor/**"
+      - "SecureConnect/src/lib/connections/stats.ts"
+      - "SecureConnect/src/lib/connections/monitoring.ts"
+      - "SecureConnect/src/lib/columnStats.ts"
+    tests:
+      - "src/lib/connections/__tests__/stats.test.ts"
+    risk: "low"
+
+  saved-connections:
+    sources:
+      - "SecureConnect/src/app/api/saved-connections/**"
+      - "SecureConnect/src/lib/saved/**"
+    tests:
+      - "src/lib/saved/__tests__/store.test.ts"
+      - "src/lib/crypto/__tests__/serverVault.test.ts"
+    it:
+      - "Vault per-user theo hashed email — không rò connection giữa các user"
+    risk: "high"
+
+  sharing:
+    sources:
+      - "SecureConnect/src/app/api/share/**"
+      - "SecureConnect/src/lib/sharing/**"
+    tests:
+      - "src/lib/sharing/shareStore.test.ts"
+    risk: "medium"
+
+  tokens-pat:
+    sources:
+      - "SecureConnect/src/app/api/tokens/**"
+      - "SecureConnect/src/lib/tokens/**"
+    tests:
+      - "src/lib/tokens/patStore.test.ts"
+      - "src/lib/security/__tests__/rateLimit.test.ts"
+    risk: "high"
+
+  observability:
+    sources:
+      - "SecureConnect/src/app/api/metrics/**"
+      - "SecureConnect/src/app/api/health/**"
+      - "SecureConnect/src/lib/observability/**"
+      - "SecureConnect/src/lib/security/auditLog.ts"
+    tests:
+      - "src/lib/observability/__tests__/metrics.test.ts"
+      - "src/lib/security/__tests__/auditLog.test.ts"
+    risk: "low"
