@@ -93,8 +93,8 @@
     <h1>🚀 DatabaseManager — Deploy History</h1>
     <div class="meta">
       <div><strong>Project:</strong> DatabaseManager (Next.js + Redis + SQL)</div>
-      <div><strong>Server:</strong> prod-106 ([DEPRECATED: prod-106]) · Container: dbmanager-app · Port: 13000</div>
-      <div><strong>Last Updated:</strong> 2026-06-01 · Status: ✅ Production</div>
+      <div><strong>Server:</strong> mcp-80 (65.108.62.80) · Container: dbmanager-app + dbmanager-redis · Port: 9230 · <a href="https://DBManager.allin1site.com" style="color:#60a5fa">DBManager.allin1site.com</a></div>
+      <div><strong>Last Updated:</strong> 2026-08-04 · Status: ✅ Production</div>
     </div>
 
     <h2 style="font-size: 1.2rem; color: #93c5fd; margin: 1.5rem 0 1rem; border-bottom: 1px solid #2d3748; padding-bottom: 0.5rem;">Recent Deployments</h2>
@@ -110,6 +110,30 @@
         </tr>
       </thead>
       <tbody>
+        <tr>
+          <td class="timestamp">2026-08-04<br/>14:25 UTC+7</td>
+          <td class="hash">fd42db3<br/>→1920073</td>
+          <td class="summary">
+            <strong>CASAN Harness Uplift — bước 1-5 (H2/H3/H5/H7)</strong><br/>
+            <em>⚙️ Thay đổi 100% ở tầng harness/tooling — <strong>0 file ứng dụng</strong>, nên KHÔNG rebuild app container. Prod giữ nguyên bản đang chạy (uptime 2 tuần, healthy).</em><br/>
+            <strong>Diff so với b41be6d:</strong><br/>
+            • <strong>H3</strong>: đăng ký suite thật của app (23 suites/236 tests) vào <code>evaluation.regression_suites_required</code> — trước đó scorer chỉ đếm 3 suite của harness nên 236 test hoàn toàn vô hình<br/>
+            • <strong>H3</strong>: +8 golden case domain (cấm xoá volume <code>dbmanager_*</code>, <code>compose down -v</code>, <code>setup-nginx-site.sh</code>)<br/>
+            • <strong>H5</strong>: 3 mục "KHÔNG" trong CLAUDE.md → deny pattern máy đọc được<br/>
+            • <strong>H5</strong>: <code>approval-checkpoint.ps1</code> — PreToolUse hỏi xác nhận cho deploy/rollback/mysql WRITE, ghi ledger trước khi hỏi<br/>
+            • <strong>H2</strong>: <code>idempotency-checkpoint/record.ps1</code> — key sha256(tool+input), TTL 1h, chỉ ghi lần THÀNH CÔNG nên retry sau lỗi không bị chặn oan; kèm rate limit cửa sổ trượt<br/>
+            • <strong>H7</strong>: <code>deploy-verify.ps1</code> — deploy xong tự smoke check, fail thì block + bắt rollback<br/>
+            • <strong>H7</strong>: skill <code>/change-pipeline</code> (A1 Scope→A5 Gate) + agent impact-scoper/impact-tester — test chỉ vùng ảnh hưởng (10-17s so với full 27s)<br/>
+            • <strong>H5/H6</strong>: <code>nightly-regression</code> (ps1 + bash) + <code>compliance-report.ps1</code>; cron 02:15 trên mcp-80<br/>
+            <strong>3 lỗi thật phát hiện khi chạy trên server:</strong><br/>
+            • 🔴 <strong>11 deny pattern không nổ trên Linux</strong> — <code>[^\n]</code> trong POSIX bracket expression nghĩa là "không phải backslash và không phải chữ n"; chữ <code>n</code> trong <code>.harness/</code> làm pattern đứt. Dính cả <code>dd of=/dev/</code>, <code>chmod 777</code>, reverse shell, ledger tamper. Đã thay bằng <code>.</code><br/>
+            • <code>python</code> vs <code>python3</code>: server không có alias <code>python</code> → sửa ở tầng runner, giữ policy một SSOT<br/>
+            • 20 script <code>.sh</code> thiếu exec bit (commit từ Windows) → <code>--chmod=+x</code><br/>
+            <strong>Sự cố:</strong> bundle tự cập nhật giữa phiên đã ghi đè <code>settings.json</code>, xoá 4 hook (Pre 3→1, Post 3→1) — đã khôi phục; script <code>.ps1</code> sống sót vì để ở file mới
+          </td>
+          <td><span class="deployment-target">Harness</span><br/><small>không đụng app</small></td>
+          <td class="status-success">✅ SUCCESS<br/><small>nightly 4/4 PASS trên mcp-80 (11s)</small></td>
+        </tr>
         <tr>
           <td class="timestamp">2026-07-21<br/>12:10 UTC+7</td>
           <td class="hash">b41be6d</td>

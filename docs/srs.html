@@ -123,8 +123,8 @@
     <h1>📋 DatabaseManager — Software Requirements Specification</h1>
     <div class="meta">
       <div><strong>Project:</strong> DatabaseManager (Next.js web UI + CSV importer + multi-dialect SQL editor)</div>
-      <div><strong>Version:</strong> <span style="text-decoration:line-through;color:red">Post Wave-3</span> <span style="color:#2196F3;font-weight:bold">Post Wave-3 + CASAN Security Uplift</span></div>
-      <div><strong>Last Updated:</strong> <span style="color:#2196F3;font-weight:bold">2026-07-21</span></div>
+      <div><strong>Version:</strong> <span style="text-decoration:line-through;color:red">Post Wave-3 + CASAN Security Uplift</span> <span style="color:#2196F3;font-weight:bold">Post Wave-3 + CASAN Security Uplift + Harness Uplift (H2/H3/H5/H7)</span></div>
+      <div><strong>Last Updated:</strong> <span style="text-decoration:line-through;color:red">2026-07-21</span> <span style="color:#2196F3;font-weight:bold">2026-08-04</span></div>
       <div><strong>Status:</strong> ✅ Production Ready</div>
     </div>
 
@@ -143,8 +143,8 @@
 
       <h3>Hosting</h3>
       <ul class="feature-list">
-        <li>Server: prod-106 ([DEPRECATED: prod-106]) — Hetzner Cloud</li>
-        <li>Container: <code>dbmanager-app</code></li>
+        <li>Server: <span style="text-decoration:line-through;color:red">prod-106 ([DEPRECATED: prod-106])</span> <span style="color:#2196F3;font-weight:bold">mcp-80 (65.108.62.80) — Hetzner Cloud</span></li>
+        <li>Container: <code>dbmanager-app</code> <span style="color:#2196F3;font-weight:bold">+ <code>dbmanager-redis</code></span></li>
         <li>Port: <code>127.0.0.1:9230</code> (behind nginx reverse proxy)</li>
         <li>Public URL: <code>https://dbmanager.allin1site.com</code> (TLS via shared proxy)</li>
       </ul>
@@ -332,7 +332,7 @@
 
       <h3>Build & Test Gate</h3>
       <ul class="feature-list">
-        <li><strong>Vitest Framework:</strong> 129 unit tests covering rate-limit, token lifecycle, connection records</li>
+        <li><strong>Vitest Framework:</strong> <span style="text-decoration:line-through;color:red">129 unit tests covering rate-limit, token lifecycle, connection records</span> <span style="color:#2196F3;font-weight:bold">23 suites / 236 tests — rate-limit, token lifecycle, connection records, SSRF guard, SQL validator, bulk mutate, search builder, exporters, crypto vault</span></li>
         <li><strong>Build Gate:</strong> <code>npm run build</code> (Next.js static generation + API route validation)</li>
         <li><strong>Lint Gate:</strong> ESLint + TS strict mode; all async functions verified</li>
       </ul>
@@ -364,12 +364,66 @@
         <li>No local Node/Docker; build on server via <code>deploy.ps1</code> + Dockerfile test gate</li>
         <li>git pull → docker build (no cache) → container restart → health check → Cloudflare purge (if configured)</li>
         <li><strong>Safety:</strong> NEVER start nginx, NEVER bind 80/443 locally, verify 13 other services unaffected</li>
+        <li><span style="color:#2196F3;font-weight:bold"><strong>Deploy guard (mới):</strong> mọi lệnh <code>deploy</code>/<code>rollback_deploy</code>/<code>mysql_query</code> WRITE đều phải người xác nhận (approval-checkpoint); gọi trùng trong 1h → hỏi lại (idempotency); deploy xong smoke check fail → block + bắt rollback (deploy-verify)</span></li>
       </ul>
+    </div>
+
+    <div class="section">
+      <h2><span style="color:#2196F3;font-weight:bold">7. AI Harness / CASAN Governance (mới — 2026-08-04)</span></h2>
+
+      <div style="color:#2196F3;font-weight:bold">
+      <h3>Evaluation Gate (H3)</h3>
+      <ul class="feature-list">
+        <li><strong>4 suite bắt buộc PASS trước release</strong> — khai trong <code>.harness/control/casan-policies.yaml</code> → <code>evaluation.regression_suites_required</code>:
+          <ul>
+            <li><code>policy-ci</code> (25 check) · <code>red-team</code> (13 case) · <code>golden</code> (20 case) · <code>secureconnect-unit</code> (236 test)</li>
+          </ul>
+        </li>
+        <li><strong>Golden dataset:</strong> <code>.harness/eval/golden/</code> — 12 case chung + 8 case riêng DBManager (cấm xoá volume <code>dbmanager_*</code>, <code>compose down -v</code>, <code>setup-nginx-site.sh</code>)</li>
+        <li><strong>Judge:</strong> <code>min_overall_score: 70</code>, hard stop khi REJECTED, tối đa 5 vòng fix</li>
+      </ul>
+
+      <h3>Test theo vùng ảnh hưởng — skill <code>/change-pipeline</code> (H7)</h3>
+      <ul class="feature-list">
+        <li><strong>DAG:</strong> A1 Scope → A2 Review → A3 Fix (tối đa 3 vòng) → A4 Test → A5 Gate → approval → deploy → rollback nếu smoke fail</li>
+        <li><strong>3 tầng test</strong> — mục tiêu bắt regression với thời gian nhỏ nhất:
+          <ul>
+            <li>Tầng 1 (luôn chạy): <code>vitest related</code> theo dependency graph — 10–17s</li>
+            <li>Tầng 2 (khi đổi API route): test file theo <code>route_test_map</code></li>
+            <li>Tầng 3 (full 236 test, 27s): chỉ khi chạm <code>core_files</code> hoặc trước deploy</li>
+          </ul>
+        </li>
+        <li><strong>Chống lọt lưới:</strong> nightly full-suite 02:15 trên mcp-80; fail mà impact-test pass → incident <code>test_regression_after_pass</code> + yêu cầu bổ sung <code>core_files</code></li>
+      </ul>
+
+      <h3>Tool Governance (H2)</h3>
+      <ul class="feature-list">
+        <li><strong>Idempotency:</strong> key = <code>sha256(tool + input)</code>, TTL 1h; chỉ ghi lần THÀNH CÔNG nên retry sau lỗi không bị chặn oan</li>
+        <li><strong>Rate limit:</strong> cửa sổ trượt theo <code>tool.rate_limits</code> — deploy 6/giờ, http_fetch 30/phút, run_command 20/phút</li>
+      </ul>
+
+      <h3>Audit &amp; Approval (H5)</h3>
+      <ul class="feature-list">
+        <li><strong>Hash-chain ledger:</strong> <code>.harness/ledger/chain.jsonl</code> — mỗi entry có <code>prev_hash</code>, sửa 1 entry là gãy toàn chuỗi. Verify bằng <code>evidence-ledger.ps1 verify</code></li>
+        <li><strong>Approval bắt buộc:</strong> <code>deploy</code>, <code>rollback_deploy</code>, <code>mysql_query</code> (chỉ WRITE), <code>provider_key_rotate</code></li>
+        <li><strong>Compliance report tháng:</strong> <code>compliance-report.ps1</code> → <code>docs/compliance-YYYYMM.md</code>; verify chain TRƯỚC khi báo cáo, gom entry theo <code>input_hash</code> để self-test của toolkit không bị đếm thành sự cố thật</li>
+        <li><strong>Deny pattern:</strong> 33 pattern trong <code>risk-policy.yaml</code>, gồm 3 pattern riêng của DBManager chuyển từ mục "KHÔNG" trong CLAUDE.md</li>
+      </ul>
+
+      <h3>Giới hạn trung thực (C10)</h3>
+      <ul class="feature-list">
+        <li>Hook chỉ trả được <code>ask</code>/<code>block</code> — <strong>không</strong> trả kết quả cache thay tool, nên chưa phải idempotency tuyệt đối</li>
+        <li><code>deploy-verify</code> phát hiện và chặn nhưng <strong>không tự gọi</strong> <code>rollback_deploy</code> (hook không có quyền gọi MCP tool) — rollback vẫn do người/agent thực hiện</li>
+        <li>Enforcement tuyệt đối vẫn cần gateway PDP server-side; các mục khai <code>enforced_at: gateway</code> hiện chỉ có lớp local</li>
+      </ul>
+      </div>
     </div>
 
     <div class="note">
       <strong>Last Deployment Note:</strong><br/>
-      All Wave 1-3 improvements completed & tested (2026-05-30/31). 129 vitest tests pass. Redis AOF persistence verified. fail2ban SSH jail active on prod-106. App is production-ready with no known issues. Next phase: scale testing & optional monitoring integrations.
+      <span style="text-decoration:line-through;color:red">All Wave 1-3 improvements completed &amp; tested (2026-05-30/31). 129 vitest tests pass. Redis AOF persistence verified. fail2ban SSH jail active on prod-106. App is production-ready with no known issues. Next phase: scale testing &amp; optional monitoring integrations.</span><br/>
+      <span style="color:#2196F3;font-weight:bold">2026-08-04 — Harness uplift bước 1-5. <strong>Không rebuild app container</strong>: 0 file ứng dụng thay đổi, prod giữ nguyên bản đang chạy (dbmanager-app up 2 tuần, dbmanager-redis up 5 tuần, cả hai healthy, <code>/api/health</code> HTTP 200). Nightly 4/4 suite PASS trên mcp-80 (11s). 236 test PASS. Ledger INTACT.<br/>
+      Việc còn lại: (1) gửi 7 request cho Harness ToolKit — quan trọng nhất là scorer H3 tự nhận diện suite của dự án, local-fallback enforcement, và bảo vệ <code>settings.json</code> khỏi bị ghi đè khi cài lại; (2) hợp nhất <code>impact-scoper</code> tự viết với <code>impact-analyzer</code> mà bundle mới ship (trùng chức năng).</span>
     </div>
   </div>
 </body>
