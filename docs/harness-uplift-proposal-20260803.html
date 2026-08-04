@@ -102,7 +102,8 @@ li{margin:4px 0}
 <li><s>Khởi tạo hash-chain ledger</s> — <b>không cần làm.</b> Kiểm chứng ngày 2026-08-03: ledger writer đã ship và hoạt động, tự tạo chain khi append đầu tiên; <code>evidence-ledger.ps1 verify</code> báo <i>LEDGER INTACT</i>. Audit per-call cũng đã được nối sẵn trong PostToolUse.</li>
 <li><b>Approval checkpoint local</b> ✅ <b>ĐÃ LÀM</b>: <code>.harness/scripts/powershell/approval-checkpoint.ps1</code> — đọc <code>governance.approval_required</code> (C2, không hardcode), trả <code>permissionDecision: "ask"</code> cho <code>deploy</code>/<code>rollback_deploy</code>/<code>mysql_query</code> (chỉ WRITE)/<code>provider_key_rotate</code>, ghi entry <code>type: approval</code> vào ledger trước khi hỏi. Nối vào PreToolUse sau runtime-guard.</li>
 <li><b>Risk registry sống</b>: <code>risk-registry.yaml</code> đã có — bổ sung entry cho các action của dự án (bulk mutate, recreate volume ❌, nginx script ❌ theo CLAUDE.md) để policy engine đọc được.</li>
-<li><b>Compliance report tháng</b>: cron sinh báo cáo từ ledger (đếm approval, deny, incident) → <code>docs/compliance-YYYYMM.md</code>.</li>
+<li><b>Compliance report tháng</b> ✅ <b>ĐÃ LÀM</b>: <code>compliance-report.ps1</code> — verify hash-chain <b>trước</b> khi báo cáo (chain hỏng thì báo cáo vô nghĩa), rồi tổng hợp ai-làm-gì, approval, deny, incident rủi ro cao, top tool, chi phí token → <code>docs/compliance-YYYYMM.md</code>.</li>
+<li><b>Nightly full-suite</b> ✅ <b>ĐÃ LÀM</b>: <code>nightly-regression.ps1</code> — chạy cả 4 suite (55s thực đo), fail thì ghi incident <code>test_regression_after_pass</code> và chỉ ra cần bổ sung file nào vào <code>core_files</code>.</li>
 </ol>
 </div>
 
@@ -181,7 +182,7 @@ li{margin:4px 0}
 <tr><td>2</td><td>✅ <b>XONG</b> — skill <code>/change-pipeline</code> (A1→A5) + <code>pipeline-config.yaml</code> + 2 agent impact-scoper/impact-tester</td><td>1–2 ngày</td><td><span class="tag t-ok">H3, H7 ↑</span></td></tr>
 <tr><td>3</td><td>✅ <b>XONG</b> — approval checkpoint (audit + ledger đã có sẵn, không cần làm)</td><td>1 ngày</td><td><span class="tag t-ok">H2, H5 ↑</span></td></tr>
 <tr><td>4</td><td>✅ <b>XONG</b> — idempotency + rate limit hook, post-deploy smoke verify chặn khi fail</td><td>0.5 ngày</td><td><span class="tag t-ok">H2, H7 ↑</span></td></tr>
-<tr><td>5</td><td>Nightly full-suite cron + compliance report tháng</td><td>0.5 ngày</td><td><span class="tag t-ok">H5, H6 ↑</span></td></tr>
+<tr><td>5</td><td>✅ <b>XONG</b> — <code>nightly-regression.ps1</code> + <code>compliance-report.ps1</code> (chỉ còn đăng ký scheduled task, xem dưới)</td><td>0.5 ngày</td><td><span class="tag t-ok">H5, H6 ↑</span></td></tr>
 <tr><td>6</td><td>Gửi 6 request cho Harness ToolKit (mục 3)</td><td>—</td><td><span class="tag t-info">Common</span></td></tr>
 </table>
 
