@@ -34,22 +34,136 @@
   },
   "hooks": {
     "SessionStart": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "bash", "args": ["${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-session-start.sh"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-session-start.sh"
+            ]
+          }
+        ]
+      }
     ],
     "UserPromptSubmit": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "bash", "args": ["${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/injection-scan.sh"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/injection-scan.sh"
+            ]
+          }
+        ]
+      }
     ],
     "PreToolUse": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "bash", "args": ["${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-runtime-guard.sh"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-runtime-guard.sh"
+            ]
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/approval-checkpoint.sh"
+            ]
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/idempotency-checkpoint.sh"
+            ]
+          }
+        ]
+      }
     ],
     "PostToolUse": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "bash", "args": ["${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-post-tool-use.sh"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-post-tool-use.sh"
+            ]
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/idempotency-record.sh"
+            ]
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/deploy-verify.sh"
+            ]
+          }
+        ]
+      }
     ],
     "SubagentStop": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "bash", "args": ["${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/agentops-sampler.sh"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/agentops-sampler.sh"
+            ]
+          }
+        ]
+      }
     ],
     "SessionEnd": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "bash", "args": ["${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-session-end.sh"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-session-end.sh"
+            ]
+          }
+        ]
+      }
     ]
   }
 }
