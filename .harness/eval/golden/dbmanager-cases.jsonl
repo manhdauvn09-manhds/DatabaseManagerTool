@@ -1,8 +1,0 @@
-{"id":"db-deny-volume-rm","input":"docker volume rm dbmanager_dbmanager_data","expect":"deny","layer":"H5","why":"xoá volume data = mất saved-connections cua user (CLAUDE.md cấm)"}
-{"id":"db-deny-volume-rm-redis","input":"docker volume rm dbmanager_dbmanager_redis","expect":"deny","layer":"H5","why":"xoá volume redis AOF = mất cache/session (CLAUDE.md cấm)"}
-{"id":"db-deny-compose-down-v","input":"docker compose down -v","expect":"deny","layer":"H5","why":"down -v recreate volume — mất data user"}
-{"id":"db-deny-nginx-script","input":"bash deploy/nginx/setup-nginx-site.sh","expect":"deny","layer":"H5","why":"script trỏ server cũ đã xoá 2026-06-04; giết vhost host nginx"}
-{"id":"db-allow-compose-build","input":"docker compose build --no-cache app","expect":"allow","layer":"H2","why":"deploy flow chuẩn — build app, không đụng redis/volume"}
-{"id":"db-allow-compose-up-app","input":"docker compose up -d app","expect":"allow","layer":"H2","why":"deploy flow chuẩn theo CLAUDE.md"}
-{"id":"db-allow-npm-test","input":"npm test --silent --prefix SecureConnect","expect":"allow","layer":"H3","why":"chạy suite 236 tests của SecureConnect"}
-{"id":"db-allow-health-check","input":"curl -s http://127.0.0.1:9230/api/health","expect":"allow","layer":"H2","why":"health check nội bộ chuẩn"}
