@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   H1 Context Harness -- build/refresh the pipeline-context pointer store.
@@ -39,8 +39,10 @@ if (Test-Path $Policy) {
 # Staleness check -- skip rebuild if fresh.
 if (Test-Path $Store) {
     $ageMin = ((Get-Date) - (Get-Item $Store).LastWriteTime).TotalMinutes
+    # Floor, not Round: bash has no floats and prints integer-divided minutes, so
+    # rounding here made the two shells report different ages for the same file.
     if ($ageMin -lt $TtlMin) {
-        Write-Output "[context] pipeline-context.yaml fresh ($([math]::Round($ageMin))m < ${TtlMin}m) -- kept"
+        Write-Output "[context] pipeline-context.yaml fresh ($([math]::Floor($ageMin))m < ${TtlMin}m) -- kept"
         exit 0
     }
 }
@@ -73,6 +75,30 @@ function Sort-Ordinal([string[]]$items) {
     return $a
 }
 
+# Scan exclusions, read from config (C2). The fallback is the shipped default
+# rather than "exclude nothing": casan-policies.yaml is project-owned in
+# bundle-ownership.yaml, so an upgraded project keeps its old copy and never
+# receives this key -- and with an empty list the scan would start indexing
+# node_modules and .git.
+$ExcludeGlobs = Get-YamlList "exclude_globs"
+if (-not $ExcludeGlobs) {
+    $ExcludeGlobs = @("node_modules", ".git", "dist", "build", ".harness", ".claude/worktrees", "vendor", ".venv")
+}
+
+# An entry matches a path SEGMENT. Wrapping both sides in '/' is what keeps
+# "build" from swallowing "rebuild-notes.md"; -like keeps the '*'/'?' wildcards
+# and the case-insensitivity of the regex this replaced (the bash counterpart
+# matches case-insensitively too, so the two shells agree on either filesystem).
+function Test-Excluded([string]$rel) {
+    $p = '/' + ($rel -replace '\\', '/') + '/'
+    foreach ($e in $ExcludeGlobs) {
+        $g = "$e".Trim().Trim('/')
+        if (-not $g) { continue }
+        if ($p -like "*/$g/*") { return $true }
+    }
+    return $false
+}
+
 # Deterministic pointer discovery: an entry with no wildcard is an exact path
 # taken when present (canonical wins); a wildcard entry globs recursively and the
 # matches are SORTED (ordinal, so it is stable across machines/locales).
@@ -80,9 +106,13 @@ function Find-First([string[]]$candidates) {
     foreach ($c in $candidates) {
         if ($c -match '[*?]') {
             $rel = Get-ChildItem -Path $HarnessRoot -Recurse -File -Filter $c -ErrorAction SilentlyContinue |
-                Where-Object { $_.FullName -notmatch '\\(node_modules|\.git|dist|build|\.harness)\\' } |
-                ForEach-Object { $_.FullName.Substring($HarnessRoot.Length + 1) -replace '\\', '/' }
-            $rel = Sort-Ordinal $rel
+                ForEach-Object { $_.FullName.Substring($HarnessRoot.Length + 1) -replace '\\', '/' } |
+                Where-Object { -not (Test-Excluded $_) }
+            # @() is load-bearing: PowerShell unrolls a 1-element array on return,
+            # so on EXACTLY ONE surviving match $rel became the string itself and
+            # $rel[0] returned its first CHARACTER -- srs_path: "d". Silent and
+            # wrong, and tighter exclusions make one match the normal case.
+            $rel = @(Sort-Ordinal $rel)
             if ($rel.Count -gt 0) { return $rel[0] }
         } elseif (Test-Path (Join-Path $HarnessRoot $c)) {
             return ($c -replace '\\', '/')
@@ -100,14 +130,51 @@ $srs = Find-First $srsCand
 $spec = Find-First $specCand
 
 # Tech stack detection from manifest files present at root/near-root.
+# Look one level down as well as at the root.
+#
+# Root-only detection gives every MONOREPO the poison value ["unknown"], because
+# its manifests live in subdirectories -- this repo's own are at
+# portal/backend/requirements.txt and portal/admin-web/package.json. That value
+# fails H1-4 permanently and silently, and because this file is rebuilt on every
+# SessionStart, filling it in by hand does not survive the next session. The
+# toolkit shipped that state to itself while telling eleven projects to fix
+# theirs.
+#
+# Bounded to depth 2 deliberately: deep enough for the standard
+# apps/<name>/ or <service>/ layout, shallow enough that it never walks
+# node_modules or a vendored tree.
+$MarkerStack = [ordered]@{
+    "package.json"     = "node"
+    "requirements.txt" = "python"
+    "pyproject.toml"   = "python"
+    "go.mod"           = "go"
+    "pom.xml"          = "java"
+    "Cargo.toml"       = "rust"
+    "composer.json"    = "php"
+}
+$SkipDirs = @("node_modules", ".git", ".venv", "venv", "vendor", "dist", "build", "__pycache__", ".harness")
+
+$searchDirs = @($HarnessRoot)
+Get-ChildItem -Path $HarnessRoot -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+    if ($SkipDirs -notcontains $_.Name -and -not $_.Name.StartsWith(".")) { $searchDirs += $_.FullName }
+}
+
 $stack = @()
-if (Test-Path "$HarnessRoot\package.json") { $stack += "node" }
-if (Test-Path "$HarnessRoot\requirements.txt") { $stack += "python" }
-if (Test-Path "$HarnessRoot\pyproject.toml") { $stack += "python" }
-if (Test-Path "$HarnessRoot\go.mod") { $stack += "go" }
-if (Test-Path "$HarnessRoot\pom.xml") { $stack += "java" }
-if (Test-Path "$HarnessRoot\Cargo.toml") { $stack += "rust" }
-if (Test-Path "$HarnessRoot\composer.json") { $stack += "php" }
+foreach ($d in $searchDirs) {
+    foreach ($marker in $MarkerStack.Keys) {
+        if (Test-Path (Join-Path $d $marker)) { $stack += $MarkerStack[$marker] }
+    }
+    # One more level for the apps/<name>/ and packages/<name>/ shape, which puts
+    # every manifest two directories down and is common enough that stopping at
+    # one would leave the same silent failure in place for those repos.
+    Get-ChildItem -Path $d -Directory -ErrorAction SilentlyContinue | ForEach-Object {
+        if ($SkipDirs -notcontains $_.Name -and -not $_.Name.StartsWith(".")) {
+            foreach ($marker in $MarkerStack.Keys) {
+                if (Test-Path (Join-Path $_.FullName $marker)) { $stack += $MarkerStack[$marker] }
+            }
+        }
+    }
+}
 if (-not $stack) { $stack = @("unknown") }
 $stack = $stack | Select-Object -Unique
 

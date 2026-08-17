@@ -24,7 +24,7 @@ if [ -z "$KEY" ]; then
 fi
 
 HARNESS_PUSH_KEY="$KEY" HARNESS_PUSH_ROOT="$HARNESS_ROOT" HARNESS_PUSH_CONFIG="$CONFIG" python3 - <<'PY' || true
-import json, os, re, sys, glob, urllib.request, urllib.error
+import json, os, re, sys, time, glob, urllib.request, urllib.error
 from datetime import datetime, timezone
 
 root = os.environ["HARNESS_PUSH_ROOT"]
@@ -33,6 +33,13 @@ url = cfg.get("portal_url", "").rstrip("/")
 pid = cfg.get("project_id", "")
 if not url or not pid:
     print("[push-telemetry] portal-sync.json missing portal_url/project_id", file=sys.stderr)
+    sys.exit(0)
+# The installer scaffolds this placeholder; left unfilled it fails as a DNS
+# error, which reads as a network problem and sends whoever is looking at the
+# wrong thing entirely. Say what is actually wrong (PS parity: push-telemetry.ps1).
+if "YOUR-PORTAL-DOMAIN" in url:
+    print("[push-telemetry] portal_url is still the installer placeholder (%s) -- "
+          "fill in .harness/portal-sync.json" % url, file=sys.stderr)
     sys.exit(0)
 
 # Self-healing resample: rebuild agentops.log from this project's Claude Code
@@ -172,7 +179,7 @@ def read(path):
 # --- Incremental send for the append-only logs (POSIX parity of push-telemetry.ps1)
 # These files only grow, and the push used to send each one WHOLE every run. This
 # repo's own chain.jsonl reached 24.8 MB against the endpoint's 10 MB per-field cap
-# and 24hHotnewsAI's reached 3.0 MB -- and the failure did NOT surface as a clean
+# and another project's reached 3.0 MB -- and the failure did NOT surface as a clean
 # 413. The body was cut off mid-write, so the client reported a network error
 # ("connection aborted" / "write operation timed out"). Nobody reading that would
 # suspect a size limit, which is why telemetry for the two largest projects had
@@ -192,6 +199,46 @@ try:
 except Exception:
     _cursors = {}          # unreadable cursor = send from 0; dedupe makes that safe
 _cursors_new = {}
+
+# S-3 — content-hash skip for the two payload parts that are SNAPSHOTS rather
+# than append-only logs. chain.jsonl and friends grow, so a byte cursor works;
+# the CASAN snapshot and the evidence bundles are re-sent WHOLE every push --
+# ~2 MB of identical JSON every five minutes on a busy repo. That is the shape
+# of cost that gets a sync switched off, and a sync nobody runs is the failure
+# the evidence pipeline exists to prevent.
+#
+# Skipping on an unchanged hash alone would be a one-way door: if the Portal
+# ever lost the snapshot, this client would never send it again. So the skip
+# EXPIRES -- unchanged content is re-sent in full once a week, which makes the
+# optimisation self-healing instead of something a human has to remember.
+CONTENT_PATH = os.path.join(root, ".harness", "telemetry", ".push-content.json")
+FULL_RESEND_AFTER_S = 7 * 86400
+try:
+    _content = json.load(open(CONTENT_PATH, encoding="utf-8"))
+    if not isinstance(_content, dict):
+        _content = {}
+except Exception:
+    _content = {}          # unreadable state = send everything; correctness never depends on it
+_content_new = {}
+
+
+def content_unchanged(key, payload):
+    """True when this exact content was already accepted recently enough that
+    re-sending would buy nothing. Records the new hash either way."""
+    import hashlib
+    h = hashlib.sha256(payload.encode("utf-8", "replace")).hexdigest()
+    now = int(time.time())
+    _content_new[key] = {"hash": h, "sent_at": now}
+    prev = _content.get(key) or {}
+    if prev.get("hash") != h:
+        return False
+    if now - int(prev.get("sent_at") or 0) >= FULL_RESEND_AFTER_S:
+        return False
+    # Keep the ORIGINAL sent_at so the weekly resend is measured from the last
+    # actual send. Refreshing it on every skip would push the deadline forward
+    # forever and quietly remove the self-healing property.
+    _content_new[key] = {"hash": h, "sent_at": int(prev.get("sent_at") or now)}
+    return True
 
 
 def read_incremental(path, key):
@@ -244,9 +291,49 @@ body = {
     "security_events": read_incremental(os.path.join(root, ".harness", "telemetry", "security-events.jsonl"), "security-events.jsonl"),
     "tool_calls": read_incremental(os.path.join(root, ".harness", "telemetry", "tool-calls.log"), "tool-calls.log"),
     "test_reports": read_incremental(os.path.join(root, ".harness", "telemetry", "test-reports.jsonl"), "test-reports.jsonl"),
+    # P-7: Agent Pack runs, incremental like the other append-only logs.
+    "pipeline_runs": read_incremental(os.path.join(root, ".harness", "telemetry", "pipeline-runs.jsonl"), "pipeline-runs.jsonl"),
+    # S-6: the SHAPE of the whole chain, not its contents. chain_jsonl above is
+    # incremental, so the server only sees a delta and cannot tell whether the
+    # file behind it was rebuilt. Filled in below (best-effort, never blocking).
+    "ledger_anchor": "",
     "member_email": str(cfg.get("member_email") or ""),
     "buglist": read(os.path.join(root, "buglist.md")),
 }
+
+# S-1: the evidence-pipeline self-check, computed here and sent with the push.
+# Without this the Portal knows a project's SCORE but not whether its pipeline is
+# alive -- the state that only ever existed in a developer's terminal, which is
+# how three projects ran for weeks with a dead pipeline whose only symptom was a
+# score that would not move. Best-effort: doctor failing must never block the
+# telemetry push it rides along with.
+# S-6 ledger anchor — computed over the FULL chain here, because the chain in
+# the payload is incremental and a delta cannot show that the file behind it was
+# rebuilt. Best-effort: an anchor we cannot compute is a visible gap, which is
+# the correct outcome; a fabricated one would defeat the mechanism.
+try:
+    import importlib.util as _ilu2
+    _ap = os.path.join(root, ".harness", "scripts", "lib", "harness_ledger_anchor.py")
+    if os.path.isfile(_ap):
+        _spec = _ilu2.spec_from_file_location("harness_ledger_anchor", _ap)
+        _mod = _ilu2.module_from_spec(_spec); _spec.loader.exec_module(_mod)
+        _a = _mod.anchor(root)
+        if _a:
+            body["ledger_anchor"] = json.dumps(_a, separators=(",", ":"))
+except Exception:
+    pass
+
+body["doctor"] = ""
+try:
+    import importlib.util as _ilu
+    _dp = os.path.join(root, ".harness", "scripts", "lib", "harness_doctor.py")
+    if os.path.isfile(_dp):
+        _spec = _ilu.spec_from_file_location("harness_doctor", _dp)
+        _mod = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_mod)
+        body["doctor"] = json.dumps(_mod.as_json(root), ensure_ascii=False)
+except Exception as _e:
+    print("[push-telemetry] doctor snapshot skipped: %s" % _e)
 # H3 — evidence bundles -> prompt_scores
 import glob as _glob
 bundles = {}
@@ -257,6 +344,13 @@ if os.path.isdir(bdir):
             bundles[os.path.basename(bf)] = open(bf, encoding="utf-8-sig").read()
         except OSError:
             pass
+# S-3: the bundle set rarely changes between pushes. Hashed as sorted
+# name+content so a rename and an edit both register as a change.
+if bundles:
+    _bkey = "\n--\n".join("%s\n%s" % (k, bundles[k]) for k in sorted(bundles))
+    if content_unchanged("bundles", _bkey):
+        print("[push-telemetry] bundles unchanged since last send -- skipped (%d file(s))" % len(bundles))
+        bundles = {}
 body["bundles"] = bundles
 # H1 — source<->doc traceability scan (this repo), via the bundle-installed lib
 body["source_doc_map"] = ""
@@ -293,6 +387,17 @@ if os.path.isfile(snaplib):
         print("[push-telemetry] CASAN snapshot: %d files, %d manifest entries, %d skipped (%d withheld)" % (
             len(body["casan_files"]), len(body["casan_manifest"]),
             len(body["casan_skipped"]), withheld))
+        # S-3: hash the WHOLE snapshot -- files, manifest AND skipped list.
+        # Hashing only the files would let a change in the withheld set go
+        # unsent, and withheld-vs-absent is the distinction that stops a
+        # deliberate omission from scoring as a failure.
+        _skey = json.dumps({"f": body["casan_files"], "m": body["casan_manifest"],
+                            "s": body["casan_skipped"]}, sort_keys=True)
+        if content_unchanged("casan_snapshot", _skey):
+            print("[push-telemetry] CASAN snapshot unchanged since last send -- skipped")
+            body["casan_files"] = {}
+            body["casan_manifest"] = []
+            body["casan_skipped"] = []
     except Exception:
         pass
 
@@ -333,6 +438,18 @@ try:
             # A cursor we failed to persist just means the next run re-sends. Never
             # turn a successful push into a failure over it.
             print("[push-telemetry] could not save push cursor: %s" % e)
+    # S-3: same rule as the cursors -- persisted only AFTER the server accepted
+    # the push. Recording a hash for content the server never received would
+    # skip it on every later run until the weekly deadline, losing a snapshot
+    # for a week over one failed request.
+    if _content_new:
+        try:
+            cmerged = dict(_content)
+            cmerged.update(_content_new)
+            with open(CONTENT_PATH, "w", encoding="utf-8") as fh:
+                json.dump(cmerged, fh)
+        except OSError as e:
+            print("[push-telemetry] could not save content state: %s" % e)
 except (urllib.error.URLError, OSError, json.JSONDecodeError) as e:
     # Never fail the calling hook; the next push retries everything (dedupe).
     # Print the server's BODY, not just the status line: an HTTPError carries the

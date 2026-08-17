@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   Push local .harness telemetry to the Control Portal (push-ingest API).
@@ -38,6 +38,15 @@ if (-not $Config.portal_url -or -not $Config.project_id) {
     Write-Warning "[push-telemetry] portal-sync.json missing portal_url/project_id"
     exit 0
 }
+# The installer scaffolds this placeholder; left unfilled it fails as a DNS
+# error, which reads as a network problem and sends whoever is looking at the
+# wrong thing entirely. Say what is actually wrong (moved here from
+# harness-sync.local.ps1 so every caller of this script gets the clear message,
+# not just the fleet-wide loop).
+if ("$($Config.portal_url)" -like "*YOUR-PORTAL-DOMAIN*") {
+    Write-Warning ("[push-telemetry] portal_url is still the installer placeholder ({0}) -- fill in .harness/portal-sync.json" -f $Config.portal_url)
+    exit 0
+}
 
 # Ingest key: env wins, then git-ignored key file (C5: never in the repo).
 $IngestKey = $env:HARNESS_PORTAL_INGEST_KEY
@@ -58,10 +67,27 @@ function Read-IfExists([string]$Path) {
     return ""
 }
 
+# Resolved HERE, not next to the $Body that consumes them: $PushCursorFile below
+# is built from $Tel, and when the assignment sat further down the file $Tel was
+# still $null at that point. Join-Path then threw on a null Path and the script
+# died before doing anything -- with $ErrorActionPreference = "Stop" and a hook
+# that swallows output, every project on 1.6.0 lost telemetry in total silence.
+$Tel    = Join-Path $HarnessRoot ".harness\telemetry"
+$Ledger = Join-Path $HarnessRoot ".harness\ledger"
+
+# A repo the bundle just installed into, with zero Claude Code sessions run in
+# it yet, genuinely has no .harness\telemetry\ -- nothing has ever written to
+# it. WriteAllText on the cursor files below then throws DirectoryNotFoundException,
+# every single run, forever (it never gets created on its own). The bash twin
+# already does this (os.makedirs(tel, exist_ok=True)); this was a real C7 gap,
+# found by running the driver against 6 freshly-installed repos and reading
+# what it actually printed, not by inspecting the code.
+New-Item -ItemType Directory -Force -Path $Tel | Out-Null
+
 # --- Incremental send for the append-only logs ---------------------------------
 # These files only ever grow, and the push used to send each one WHOLE on every
 # run. This repo's own chain.jsonl reached 24.8 MB against the ingest endpoint's
-# 10 MB per-field cap, and 24hHotnewsAI's reached 3.0 MB -- and the failure did
+# 10 MB per-field cap, and another project's reached 3.0 MB -- and the failure did
 # NOT surface as a clean 413. The body was cut off mid-write, so the client saw
 # "connection aborted" / "write operation timed out", i.e. a network error. Nobody
 # reading that message would suspect a size limit, which is why telemetry for the
@@ -83,6 +109,49 @@ if (Test-Path $PushCursorFile) {
     } catch { }   # unreadable cursor = send from 0; dedupe makes that safe
 }
 $PushCursorsNew = @{}
+
+# S-3 — content-hash skip for the two payload parts that are SNAPSHOTS, not
+# append-only logs. chain.jsonl and friends grow, so a byte cursor works; the
+# CASAN snapshot and the evidence bundles are re-sent whole every push, which on
+# this repo is ~2 MB of identical JSON every five minutes. That is the shape of
+# cost that gets a sync switched off, and a sync nobody runs is the failure the
+# whole evidence pipeline exists to avoid.
+#
+# Skipping on an unchanged hash alone would be a one-way door: if the Portal
+# ever lost the snapshot, the client would never send it again. So the skip
+# EXPIRES -- an unchanged snapshot is re-sent in full once a week, which makes
+# the optimisation self-healing rather than something someone has to remember.
+$ContentStateFile = Join-Path $Tel ".push-content.json"
+$ContentState = @{}
+if (Test-Path $ContentStateFile) {
+    try {
+        $csj = Get-Content -Path $ContentStateFile -Raw -Encoding utf8 | ConvertFrom-Json
+        foreach ($p in $csj.PSObject.Properties) { $ContentState[$p.Name] = $p.Value }
+    } catch { }   # unreadable state = send everything; correctness never depends on it
+}
+$ContentStateNew = @{}
+$FullResendAfterDays = 7
+
+function Test-ContentUnchanged([string]$Key, [string]$Payload) {
+    <#  True when this exact content was already accepted recently enough that
+        re-sending it would buy nothing. Records the new hash either way. #>
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    $hash = ([BitConverter]::ToString(
+        $sha.ComputeHash([System.Text.Encoding]::UTF8.GetBytes($Payload))) -replace '-', '').ToLower()
+    $now = [DateTimeOffset]::UtcNow.ToUnixTimeSeconds()
+    $ContentStateNew[$Key] = @{ hash = $hash; sent_at = $now }
+
+    $prev = $ContentState[$Key]
+    if (-not $prev) { return $false }
+    if ("$($prev.hash)" -ne $hash) { return $false }
+    $age = $now - [int64]$prev.sent_at
+    if ($age -ge ($FullResendAfterDays * 86400)) { return $false }
+    # Unchanged and recent: keep the stored sent_at so the weekly resend is
+    # measured from the last ACTUAL send, not refreshed on every skip -- or the
+    # deadline would never arrive and the self-healing property would be gone.
+    $ContentStateNew[$Key] = @{ hash = $hash; sent_at = [int64]$prev.sent_at }
+    return $true
+}
 
 function Read-Incremental([string]$Path, [string]$Key) {
     if (-not (Test-Path $Path)) { return "" }
@@ -122,7 +191,14 @@ function Read-Incremental([string]$Path, [string]$Key) {
     if ($from -gt 0 -or $truncated) {
         $msg = "[push-telemetry] $Key : sending $([math]::Round($text.Length/1KB,1))KB from offset $from of $len"
         if ($truncated) { $msg += " (capped; remainder goes next run)" }
-        Write-Output $msg
+        # Write-Host, NOT Write-Output: inside a function every value on the
+        # success stream joins the RETURN VALUE, so Write-Output made this
+        # return @($msg, $text) instead of $text. The body field then serialized
+        # as a JSON array and the server rejected the whole push with 422
+        # ("Input should be a valid string") -- losing the other fields too.
+        # It only bites from the SECOND push onward, when $from > 0 makes this
+        # branch reachable, so a fresh install always looked healthy.
+        Write-Host $msg
     }
     return $text
 }
@@ -259,17 +335,49 @@ if os.path.isdir(proot):
     if ($py) { $env:HS_ROOT = $HarnessRoot; $rs | & $py.Source - }
 } catch { }
 
-$Tel = Join-Path $HarnessRoot ".harness\telemetry"
-$Ledger = Join-Path $HarnessRoot ".harness\ledger"
-
 $Body = @{
     agentops        = Read-IfExists (Join-Path $Tel "agentops.log")
     chain_jsonl     = Read-Incremental (Join-Path $Ledger "chain.jsonl") "chain.jsonl"
     security_events = Read-Incremental (Join-Path $Tel "security-events.jsonl") "security-events.jsonl"
     tool_calls      = Read-Incremental (Join-Path $Tel "tool-calls.log") "tool-calls.log"
     test_reports    = Read-Incremental (Join-Path $Tel "test-reports.jsonl") "test-reports.jsonl"
+    # P-7: Agent Pack runs. The pack shipped to eleven projects with no way to
+    # tell whether anyone runs it, let alone whether it works. Incremental like
+    # the other append-only logs -- a run log grows for the life of the project
+    # and resending it whole every five minutes is how a sync gets switched off.
+    pipeline_runs   = Read-Incremental (Join-Path $Tel "pipeline-runs.jsonl") "pipeline-runs.jsonl"
+    # S-6: the SHAPE of the whole chain, not its contents. chain_jsonl above is
+    # incremental, so the server only ever sees a delta and cannot tell whether
+    # the file behind it was rebuilt. Four fields, computed over the full chain
+    # here, let the Portal remember where this chain had reached and notice if
+    # the next one does not extend it. Best-effort: never block a push.
+    ledger_anchor   = $(
+        try {
+            $ap = Join-Path $HarnessRoot ".harness\scripts\lib\harness_ledger_anchor.py"
+            if (Test-Path $ap) {
+                $pya = Get-Command python -ErrorAction SilentlyContinue
+                if (-not $pya) { $pya = Get-Command python3 -ErrorAction SilentlyContinue }
+                if ($pya) { (& $pya.Source $ap $HarnessRoot 2>$null) -join "" } else { "" }
+            } else { "" }
+        } catch { "" }
+    )
     member_email    = "$($Config.member_email)"
     buglist         = Read-IfExists (Join-Path $HarnessRoot "buglist.md")
+    # S-1: evidence-pipeline self-check, computed at push time. Without it the
+    # Portal knows a project's SCORE but not whether its pipeline is alive --
+    # state that only ever existed in a developer's terminal, which is how three
+    # projects ran for weeks with a dead pipeline whose only symptom was a score
+    # that would not move. Best-effort: doctor failing must never block the push.
+    doctor          = $(
+        try {
+            $dp = Join-Path $HarnessRoot ".harness\scripts\lib\harness_doctor.py"
+            if (Test-Path $dp) {
+                $py = Get-Command python -ErrorAction SilentlyContinue
+                if (-not $py) { $py = Get-Command python3 -ErrorAction SilentlyContinue }
+                if ($py) { (& $py.Source $dp $HarnessRoot --json 2>$null) -join "" } else { "" }
+            } else { "" }
+        } catch { "" }
+    )
 }
 
 # H3 — evidence bundles -> prompt_scores (send {filename: content})
@@ -283,6 +391,17 @@ if (Test-Path $BundleDir) {
         # string — and bundles is typed dict[str,str], so the ingest model 422s
         # the ENTIRE push, telemetry included, not just the bundle.
         $Bundles[$bf.Name] = Read-IfExists $bf.FullName
+    }
+}
+
+# S-3: the bundle set rarely changes between pushes; re-sending every file every
+# five minutes is pure repetition. Hashed as sorted name+content so a rename or
+# an edit both register as a change.
+if ($Bundles.Count -gt 0) {
+    $bKey = (($Bundles.Keys | Sort-Object | ForEach-Object { "$_`n$($Bundles[$_])" }) -join "`n--`n")
+    if (Test-ContentUnchanged "bundles" $bKey) {
+        Write-Host "[push-telemetry] bundles unchanged since last send -- skipped ($($Bundles.Count) file(s))"
+        $Bundles = @{}
     }
 }
 $Body.bundles = $Bundles
@@ -329,6 +448,17 @@ if ($pyd -and (Test-Path $SnapLib)) {
             $Withheld = @($Body.casan_skipped | Where-Object { $_.withheld }).Count
             Write-Output ("[push-telemetry] CASAN snapshot: {0} files, {1} manifest entries, {2} skipped ({3} withheld)" -f `
                 $cf.Count, $Body.casan_manifest.Count, $Body.casan_skipped.Count, $Withheld)
+
+            # S-3: hash the WHOLE snapshot -- files, manifest and skipped list.
+            # Hashing only the files would let a change in the withheld set slip
+            # through unsent, and withheld-vs-absent is the distinction that
+            # stops a deliberate omission from scoring as a failure.
+            if (Test-ContentUnchanged "casan_snapshot" $SnapRaw) {
+                Write-Host "[push-telemetry] CASAN snapshot unchanged since last send -- skipped"
+                $Body.casan_files = @{}
+                $Body.casan_manifest = @()
+                $Body.casan_skipped = @()
+            }
         }
     } catch { }
 }
@@ -376,6 +506,17 @@ try {
             foreach ($k in $PushCursorsNew.Keys) { $merged[$k] = $PushCursorsNew[$k] }
             $enc = New-Object System.Text.UTF8Encoding($false)
             [System.IO.File]::WriteAllText($PushCursorFile, ($merged | ConvertTo-Json -Compress), $enc)
+        }
+        # S-3: same rule as the cursors -- persisted only AFTER the server
+        # accepted the push. Recording a hash for content the server never
+        # received would skip it on every later run until the weekly deadline,
+        # i.e. lose a snapshot for a week over one failed request.
+        if ($ContentStateNew.Count -gt 0) {
+            $cmerged = @{}
+            foreach ($k in $ContentState.Keys)    { $cmerged[$k] = $ContentState[$k] }
+            foreach ($k in $ContentStateNew.Keys) { $cmerged[$k] = $ContentStateNew[$k] }
+            $enc2 = New-Object System.Text.UTF8Encoding($false)
+            [System.IO.File]::WriteAllText($ContentStateFile, ($cmerged | ConvertTo-Json -Depth 4 -Compress), $enc2)
         }
     } catch {
         # A cursor we failed to persist just means the next run re-sends. Warn, but

@@ -34,7 +34,7 @@ try:
 except Exception:  # pragma: no cover - environment dependent
     _HAS_YAML = False
 
-PASSED, FAILED, SKIPPED = [], [], []
+PASSED, FAILED, SKIPPED, WARNED = [], [], [], []
 
 
 def ok(name):
@@ -47,6 +47,22 @@ def fail(name, why):
 
 def skip(name, why):
     SKIPPED.append("%s: %s" % (name, why))
+
+
+def warn(name, why):
+    """Something true and worth fixing that is NOT breaking anything today.
+
+    Added because a check went out claiming "every reader fails on it" when
+    every reader in this system opens with utf-8-sig and copes. Forcing that
+    into fail() would have been a red build over a latent hazard; forcing it
+    into ok() would have hidden it. Overstating a consequence is the same
+    category of defect as missing one (C14), so the vocabulary gained the level
+    the finding actually needed.
+
+    Warnings do NOT fail the suite. `harness-eval` parses Passed/Failed/Skipped
+    by anchored label, so the extra count line below is ignored by the release
+    gate rather than breaking it."""
+    WARNED.append("%s: %s" % (name, why))
 
 
 def load(path):
@@ -67,6 +83,126 @@ def control_files(control):
         for n in os.listdir(control)
         if os.path.splitext(n)[1] in (".json", ".yaml", ".yml")
     )
+
+
+def evidence(items, n=8):
+    """Cap a FAIL's evidence list. The existing checks stop at a handful
+    (`leak_model[:5]`) for the same reason: a failure line carrying 40 paths is
+    scrolled past, and a check nobody reads is a check nobody acts on."""
+    items = list(items)
+    if len(items) <= n:
+        return "; ".join(items)
+    return "; ".join(items[:n]) + "; (+%d more)" % (len(items) - n)
+
+
+# Vendor trees, build output and VCS metadata. Pruning them is not cosmetic:
+# the file-shape checks below walk the WHOLE project (see walk_ext), and a
+# consuming project's node_modules alone carries thousands of .sh we neither
+# own nor can fix.
+# The first five match the set the plane check already walks with; the rest are
+# unambiguous vendor/tooling trees. Names that a project might plausibly use for
+# its OWN sources (env/, target/) are deliberately absent -- pruning one of those
+# would hide a real CRLF script, which is a silent pass, the worst outcome here.
+PRUNE_DIRS = {"node_modules", "__pycache__", ".venv", "dist", "build",
+              ".git", "venv", ".vite", ".next", ".pytest_cache", ".mypy_cache",
+              "vendor", "site-packages", ".tox", ".gradle"}
+
+
+# Test trees, by directory name or by file name. Both forms are needed: pytest
+# finds `tests/foo.py` and `src/pkg/test_foo.py` alike, and jest finds
+# `__tests__/x.ts` and `x.spec.ts`. Used only by the plane checks, which ask
+# what the SHIPPED product does -- never by the CRLF/BOM checks, where a test
+# script is as broken as any other file.
+_TEST_DIRS = {"tests", "test", "spec", "specs", "__tests__", "e2e", "testing"}
+_TEST_FILE = re.compile(
+    r"(^|[\\/])(conftest\.py|test_[^\\/]+|[^\\/]+_test\.[a-z]+"
+    r"|[^\\/]+\.(test|spec)\.[a-z]+)$", re.I)
+
+
+def is_test_path(rel):
+    """True if `rel` (a path relative to the repo root) is test code."""
+    parts = rel.replace("\\", "/").split("/")
+    return any(p.lower() in _TEST_DIRS for p in parts[:-1]) or bool(_TEST_FILE.search(rel))
+
+
+def walk_ext(root, exts):
+    """Every file under `root` with one of `exts`, vendor/VCS trees pruned.
+
+    Deliberately project-wide rather than scoped to `.harness/`: the CRLF and
+    BOM defects below arrive through the CONSUMING project's own checkout, so a
+    scan limited to bundle-installed paths would miss the `entrypoint.sh` that
+    is what actually crash-loops the container.
+
+    Known blind spot: a shipped script that lives under a pruned name (a
+    hand-written `build/entrypoint.sh`) is not seen."""
+    found = []
+    for dirpath, dirs, files in os.walk(root):
+        dirs[:] = [d for d in dirs if d not in PRUNE_DIRS]
+        # A nested `.git` means a submodule, a vendored checkout or an agent
+        # worktree -- a different repo, governed by its own .gitattributes.
+        # Counting it here double-reports this project's own files under a path
+        # nobody can fix from here.
+        dirs[:] = [d for d in dirs
+                   if not os.path.exists(os.path.join(dirpath, d, ".git"))]
+        for fn in files:
+            if os.path.splitext(fn)[1].lower() in exts:
+                found.append(os.path.join(dirpath, fn))
+    return sorted(found)
+
+
+def read_bytes(path, limit=None):
+    try:
+        with open(path, "rb") as f:
+            return f.read() if limit is None else f.read(limit)
+    except Exception:
+        return b""
+
+
+def lines_over_limit(path, limit, chunk=1 << 20):
+    """(lineno, byte_len) for every line of `path` longer than `limit` bytes.
+
+    Streamed in fixed-size chunks; never materialises a line. The entries this
+    hunts DOUBLE in size per append, so "read the line, then measure it" is
+    itself the multi-minute stall this check exists to catch."""
+    over = []
+    lineno, cur = 1, 0
+    with open(path, "rb") as f:
+        while True:
+            buf = f.read(chunk)
+            if not buf:
+                break
+            start = 0
+            while True:
+                nl = buf.find(b"\n", start)
+                if nl == -1:
+                    cur += len(buf) - start
+                    break
+                cur += nl - start
+                if cur > limit:
+                    over.append((lineno, cur))
+                lineno += 1
+                cur = 0
+                start = nl + 1
+    if cur > limit:
+        over.append((lineno, cur))
+    return over
+
+
+def count_lines(path, chunk=1 << 20):
+    """Total lines in `path`, streamed. Used to say how much of the chain came
+    AFTER the last bad entry -- a defect that stopped 400 appends ago and one
+    that is still writing are the same finding until you know that number."""
+    n, last = 0, b"\n"
+    with open(path, "rb") as f:
+        while True:
+            buf = f.read(chunk)
+            if not buf:
+                break
+            n += buf.count(b"\n")
+            last = buf[-1:]
+    if last != b"\n":
+        n += 1  # trailing line with no newline
+    return n
 
 
 # --------------------------------------------------------------- schema subset
@@ -106,6 +242,132 @@ SECRET_RE = [
 # Pattern files legitimately contain secret-shaped regexes; test fixtures carry
 # dummy keys. Skipping them is what keeps this check signal, not noise.
 SECRET_SKIP = re.compile(r"(patterns\.json|golden-cases|test_|[\\/]tests?[\\/]|conftest)")
+
+# ------------------------------------------------------------- CP932 lead byte
+def cp932_lead(b):
+    """True when byte `b` opens a two-byte CP932 (Shift-JIS) sequence.
+
+    Why this matters for a UTF-8 file: Windows PowerShell 5.1 reads a BOM-less
+    .ps1 in the system ANSI codepage. On a Japanese machine that is CP932,
+    where these bytes are LEAD bytes that consume the byte after them. The
+    trailing byte of a Vietnamese character or an em dash (E2 80 94) lands in
+    this range, so a comment ending in one swallows its own newline -- and the
+    NEXT LINE OF CODE vanishes from the parsed script. Exit code stays 0 and
+    the file on disk is correct, so neither CI nor code review can see it."""
+    return (0x81 <= b <= 0x9F) or (0xE0 <= b <= 0xFC)
+
+
+# --------------------------------------------------- PowerShell block tracking
+# `function|filter` at a statement start only. Anchoring here is what keeps the
+# Write-Output check from crying wolf: an unanchored keyword match also fires on
+# `-CommandType Function -Name X`, which would mark the NEXT unrelated `{` as a
+# function body and flag top-level code. Under-reporting an exotic declaration
+# is the safe direction; a check that produces false positives gets disabled.
+PS_FUNC_RE = re.compile(r"(?:^|[;}])\s*(?:function|filter)\s+[A-Za-z_]", re.I)
+
+
+def ps_blank_noncode(text):
+    """Blank out comments, strings and here-strings, preserving every byte
+    position and line break, so the braces that survive are real block
+    delimiters. Without this, `"{0}"` in a format string or a `{` inside a
+    comment desynchronises the depth counter and the caller silently reports
+    nonsense."""
+    out = []
+    i, n = 0, len(text)
+    state = None   # None | line | block | sq | dq | hs-sq | hs-dq
+    while i < n:
+        c = text[i]
+        nxt = text[i + 1] if i + 1 < n else ""
+        if state is None:
+            if c == "<" and nxt == "#":
+                state = "block"; out.append("  "); i += 2; continue
+            if c == "#":
+                state = "line"; out.append(" "); i += 1; continue
+            if c == "@" and nxt in ("'", '"'):
+                # A here-string only opens when @" is the last token on the
+                # line; otherwise @" is just a splat next to a string.
+                eol = text.find("\n", i)
+                if text[i + 2:eol if eol != -1 else n].strip() == "":
+                    state = "hs-sq" if nxt == "'" else "hs-dq"
+                    out.append("  "); i += 2; continue
+            if c == "'":
+                state = "sq"; out.append(" "); i += 1; continue
+            if c == '"':
+                state = "dq"; out.append(" "); i += 1; continue
+            if c == "`":
+                # Backtick-newline is a line continuation. Emitting the newline
+                # keeps reported line numbers aligned with the real file.
+                out.append(" ")
+                if nxt:
+                    out.append("\n" if nxt == "\n" else " ")
+                i += 2; continue
+            out.append(c); i += 1; continue
+        if state == "line":
+            if c == "\n":
+                state = None; out.append("\n"); i += 1; continue
+            out.append(" "); i += 1; continue
+        if state == "block":
+            if c == "#" and nxt == ">":
+                state = None; out.append("  "); i += 2; continue
+            out.append("\n" if c == "\n" else " "); i += 1; continue
+        if state == "sq":
+            if c == "'" and nxt == "'":
+                out.append("  "); i += 2; continue
+            if c == "'":
+                state = None
+            out.append("\n" if c == "\n" else " "); i += 1; continue
+        if state == "dq":
+            if c == "`":
+                out.append(" ")
+                if nxt:
+                    out.append("\n" if nxt == "\n" else " ")
+                i += 2; continue
+            if c == '"' and nxt == '"':
+                out.append("  "); i += 2; continue
+            if c == '"':
+                state = None
+            out.append("\n" if c == "\n" else " "); i += 1; continue
+        # here-string: the terminator must sit at the start of a line
+        quote = "'" if state == "hs-sq" else '"'
+        if c == "\n" and text[i + 1:i + 3] == quote + "@":
+            state = None; out.append("\n  "); i += 3; continue
+        out.append("\n" if c == "\n" else " "); i += 1; continue
+    return "".join(out)
+
+
+def ps_write_output_in_function(text):
+    """-> (line_numbers, saw_body, None)  or  (None, None, reason).
+
+    Line numbers of every `Write-Output` sitting inside a `function`/`filter`
+    body, plus whether the file declared any function body at all (no body means
+    nothing was actually checked -- the caller must SKIP, not claim a pass).
+
+    Returns a reason instead when the brace depth does not resolve to zero: the
+    blanking above then lost sync with the real source, and a guess here is
+    exactly the fabricated result C10 forbids."""
+    stack, pending, hits, saw_body = [], False, [], False
+    for lineno, ln in enumerate(ps_blank_noncode(text).split("\n"), 1):
+        if PS_FUNC_RE.search(ln):
+            pending = True
+        # Searched in the BLANKED line, so a Write-Output named inside a comment
+        # or a string is not a hit -- this repo carries exactly such a comment
+        # inside a function body today, explaining why the call was removed.
+        want = ln.lower().find("write-output")
+        for col, ch in enumerate(ln):
+            if ch == "{":
+                stack.append(pending)
+                saw_body = saw_body or pending
+                pending = False
+            elif ch == "}":
+                if not stack:
+                    return None, None, "unbalanced '}'"
+                stack.pop()
+            elif col == want and any(stack):
+                hits.append(lineno)
+    if stack:
+        return None, None, "%d unclosed '{'" % len(stack)
+    return hits, saw_body, None
+
 
 ALLOWED_MODELS = {
     "claude-fable-5", "claude-opus-4-8", "claude-sonnet-5",
@@ -305,6 +567,17 @@ def run(root):
                     if os.path.splitext(fn)[1] not in (".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".rb", ".php", ".cs"):
                         continue
                     fp = os.path.join(dirpath, fn)
+                    # A test is not product runtime. This rule asks what the
+                    # SHIPPED product does; a test that names `.harness/` is
+                    # usually asserting the separation rather than breaking it --
+                    # one project failed here on a test whose whole purpose is
+                    # proving the public export EXCLUDES the harness layer. It
+                    # was swept in because `source_globs: */__init__.py` makes
+                    # any package a "product directory", tests included. A rule
+                    # that fires on the code enforcing it is the false alarm C14
+                    # calls a P0.
+                    if is_test_path(os.path.relpath(fp, root)):
+                        continue
                     try:
                         text = open(fp, encoding="utf-8", errors="ignore").read()
                     except Exception:
@@ -388,14 +661,267 @@ def run(root):
         elif bad is not None:
             ok("C8:bundle-manifest-parses")
 
+    # ---- file shape: the three defects that survive code review -----------
+    # Everything above reads policy. The three below read BYTES, because each
+    # of these failures is invisible in a diff: the file renders correctly in
+    # every editor, and the damage happens in the shell that loads it.
+
+    # CRLF in a .sh makes Linux read the shebang as "/bin/sh\r" and exec fails
+    # with "no such file or directory" -- naming the INTERPRETER, not the
+    # script, which is why one project burned hours on 115 crash-loops with the
+    # file present and executable. The publishing repo is usually clean; the
+    # corruption happens in the CONSUMING checkout, where git's core.autocrlf
+    # rewrites the installed scripts and Docker then bakes them into an image.
+    # The fix is a .gitattributes -- see .harness/templates/gitattributes.template.
+    # Scope: first 400 bytes. The shebang is what breaks exec, and a head-only
+    # read stays cheap over a whole project. A CRLF appearing LATER in a file
+    # (which breaks `case` labels and quoted arguments) is NOT reported here.
+    sh_files = walk_ext(root, {".sh"})
+    if not sh_files:
+        skip("crlf:shell-scripts-are-lf", "no .sh files under %s" % root)
+    else:
+        crlf = [os.path.relpath(p, root) for p in sh_files
+                if b"\r\n" in read_bytes(p, 400)]
+        if crlf:
+            fail("crlf:shell-scripts-are-lf",
+                 "%d of %d .sh start with CRLF -- Linux will exec '/bin/sh\\r' and "
+                 "report 'no such file or directory' for the INTERPRETER: %s"
+                 % (len(crlf), len(sh_files), evidence(crlf)))
+        else:
+            ok("crlf:shell-scripts-are-lf")
+
+    # A BOM-less .ps1 is read by Windows PowerShell 5.1 in the system ANSI
+    # codepage, so on a CP932 machine any line whose last byte is a lead byte
+    # eats the newline AND the line after it. The script still exits 0. This
+    # has already silently disabled a live rule in a shipped project.
+    ps_files = walk_ext(root, {".ps1"})
+    if not ps_files:
+        skip("bom:powershell-has-utf8-bom", "no .ps1 files under %s" % root)
+    else:
+        # Three outcomes, not two. A BOM-less file whose bytes are all ASCII
+        # decodes IDENTICALLY under UTF-8 and under any ANSI codepage -- nothing
+        # about it is wrong today, only fragile the moment someone types an
+        # accented character into it. Fleet-wide that was 45 of 181 findings,
+        # every one of them reported with the same red as a file that really
+        # does mis-decode. Grading them the same is how a check stops being
+        # read (C14), so latent files WARN and only genuine mis-decodes FAIL.
+        mojibake, hazard, latent = [], [], []
+        for p in ps_files:
+            raw = read_bytes(p)
+            if not raw or raw[:3] == b"\xef\xbb\xbf":
+                continue
+            rel = os.path.relpath(p, root)
+            hit = False
+            for lineno, line in enumerate(raw.split(b"\n"), 1):
+                line = line.rstrip(b"\r")
+                if line and cp932_lead(line[-1]):
+                    hazard.append("%s:%d" % (rel, lineno))
+                    hit = True
+            if hit:
+                mojibake.append(rel)
+            elif any(b > 0x7F for b in raw):
+                # Non-ASCII but no line ENDS in a lead byte: no line is
+                # swallowed, but the text still decodes wrong -- mangled output,
+                # and mangled string literals if any are compared against.
+                mojibake.append(rel)
+            else:
+                latent.append(rel)
+        if mojibake:
+            why = ("%d of %d .ps1 have no UTF-8 BOM AND contain non-ASCII bytes, so "
+                   "Windows PowerShell 5.1 decodes them in the ANSI codepage and the "
+                   "text is wrong: %s" % (len(mojibake), len(ps_files), evidence(mojibake)))
+            if hazard:
+                why += (" || %d line(s) end in a CP932 lead byte "
+                        "(0x81-0x9F / 0xE0-0xFC) -- on a CP932 machine each one "
+                        "SWALLOWS THE NEXT LINE OF CODE and the script still exits 0: %s"
+                        % (len(hazard), evidence(hazard)))
+            if latent:
+                why += (" || plus %d BOM-less file(s) that are pure ASCII, harmless "
+                        "today -- see the warning" % len(latent))
+            fail("bom:powershell-has-utf8-bom", why)
+        elif latent:
+            warn("bom:powershell-has-utf8-bom",
+                 "%d of %d .ps1 have no UTF-8 BOM. They are pure ASCII, so they decode "
+                 "identically either way and nothing is broken now; the first non-ASCII "
+                 "character typed into one turns that into silent corruption: %s"
+                 % (len(latent), len(ps_files), evidence(latent)))
+        else:
+            ok("bom:powershell-has-utf8-bom")
+
+    # The MIRROR IMAGE of the check above, and the one the fleet actually keeps
+    # tripping over. A .ps1 NEEDS a BOM; a data file must NOT have one.
+    #
+    # `Add-Content -Encoding utf8` on Windows PowerShell 5.1 always writes
+    # EF BB BF on first write -- there is no "utf8 no BOM" flag -- so the first
+    # line of a .jsonl stops being valid JSON and every reader downstream fails
+    # on it. Two projects logged this independently, and the second one's own
+    # note says the trap was already written down when the bundle script hit it
+    # anyway. Documentation did not prevent it; nothing was checking.
+    #
+    # Scoped to the harness's own evidence files: a project's product data is
+    # its own business, and widening this to every .json in the repo would
+    # produce noise on vendored fixtures.
+    data_dirs = [os.path.join(root, ".harness", "telemetry"),
+                 os.path.join(root, ".harness", "ledger"),
+                 os.path.join(root, ".harness", "eval")]
+    data_files = []
+    for d in data_dirs:
+        if not os.path.isdir(d):
+            continue
+        for dirpath, _dirs, names in os.walk(d):
+            for n in names:
+                if n.endswith((".jsonl", ".json", ".log")):
+                    data_files.append(os.path.join(dirpath, n))
+    if not data_files:
+        skip("bom:evidence-files-have-no-bom", "no .harness evidence files under %s yet" % root)
+    else:
+        bommed = [os.path.relpath(p, root) for p in data_files
+                  if read_bytes(p, 3)[:3] == b"\xef\xbb\xbf"]
+        if bommed:
+            # WARN, not FAIL, and the wording is exact -- the first version of
+            # this check claimed "every reader fails on it, ingest, doctor and
+            # the Portal alike", which is FALSE. All three of this system's
+            # evidence readers open with utf-8-sig, which strips a BOM silently.
+            # They were hardened that way after B-06, so the BOM is TOLERATED
+            # here, not harmless everywhere: jq, most JS and Go tooling, and any
+            # future reader that forgets utf-8-sig still break on it, which is
+            # exactly how B-06 surfaced in the first place.
+            #
+            # Overstating a consequence is the C14 failure this check exists to
+            # help prevent, and it is worth more to be believed than to be loud.
+            warn("bom:evidence-files-have-no-bom",
+                 "%d of %d evidence file(s) start with a UTF-8 BOM: %s "
+                 "|| This system's own readers open with utf-8-sig and cope, so nothing is broken "
+                 "today. But the file is not valid JSONL for anything else -- jq and most non-Python "
+                 "tooling reject line 1 -- and depending on every future reader remembering "
+                 "utf-8-sig is the fragile part. Written by `Add-Content -Encoding utf8`, which on "
+                 "PS 5.1 has no BOM-less mode; use [System.IO.File]::AppendAllText with "
+                 "UTF8Encoding($false). `fix-fleet-evidence` strips them outside the ledger."
+                 % (len(bommed), len(data_files), evidence(bommed)))
+        else:
+            ok("bom:evidence-files-have-no-bom")
+
+    # In PowerShell every value on the success stream inside a function joins
+    # that function's RETURN VALUE. A progress message written with
+    # Write-Output therefore corrupts the data the caller gets -- this bundle
+    # shipped exactly that and every telemetry push was rejected 422, from the
+    # second push onward only. Use Write-Host / Write-Verbose for messages.
+    if not ps_files:
+        skip("ps:no-write-output-in-function", "no .ps1 files under %s" % root)
+    else:
+        hits, unread, bodies = [], [], 0
+        for p in ps_files:
+            rel = os.path.relpath(p, root)
+            raw = read_bytes(p)
+            if not raw:
+                continue
+            text = raw.decode("utf-8-sig", "replace").replace("\r\n", "\n")
+            lines, saw_body, why = ps_write_output_in_function(text)
+            if lines is None:
+                unread.append("%s (%s)" % (rel, why))
+                continue
+            bodies += 1 if saw_body else 0
+            hits.extend("%s:%d" % (rel, n) for n in lines)
+        if unread:
+            skip("ps:no-write-output-in-function:unanalysed",
+                 "brace depth did not resolve, so these files were NOT checked: %s"
+                 % evidence(unread))
+        if hits:
+            fail("ps:no-write-output-in-function",
+                 "Write-Output inside a function body -- the message joins the "
+                 "function's RETURN VALUE and silently corrupts it: %s || Scope: only "
+                 "`function`/`filter` bodies whose braces balance; a scriptblock held "
+                 "in a variable and a dot-sourced fragment are NOT covered."
+                 % evidence(hits))
+        elif bodies:
+            ok("ps:no-write-output-in-function")
+        else:
+            skip("ps:no-write-output-in-function",
+                 "no function/filter bodies found in %d .ps1 -- nothing to check"
+                 % len(ps_files))
+
+    # ---- C9: an oversized ledger entry means the WRITER regressed ---------
+    # A pre-b730629 append bug embedded each entry's predecessors, so entries
+    # DOUBLED in size per write. This repo's own chain grew a 2.19 MB single
+    # line; tailing it in PowerShell 5.1 took 70 measured minutes, so the
+    # PostToolUse hook timed out on every append and the ledger ran silent for
+    # 14 days. The reader now tolerates such lines -- this check exists so a
+    # regressed writer can never again get 14 quiet days.
+    # Byte lengths only, no JSON parsing: parsing a poisoned line is exactly
+    # the stall being detected. ACTIVE chain.jsonl only, never chain-*.jsonl
+    # archives -- a sealed archive is known-bad history kept as evidence, and
+    # flagging it would fail a repo forever for what it deliberately sealed.
+    if casan is None:
+        led_gov, led_why = {}, "casan-policies.yaml unavailable"
+    else:
+        led_gov = casan.get("governance") or {}
+        led_why = "governance.ledger_max_entry_bytes not set"
+    led_rel = led_gov.get("immutable_ledger") or ".harness/ledger/chain.jsonl"
+    led_limit = led_gov.get("ledger_max_entry_bytes")
+    if isinstance(led_limit, bool) or not isinstance(led_limit, int) or led_limit <= 0:
+        led_limit, led_src = 65536, "default 65536 -- %s" % led_why
+    else:
+        led_src = "governance.ledger_max_entry_bytes"
+    led = os.path.join(root, led_rel.replace("/", os.sep))
+    if not os.path.isfile(led):
+        skip("ledger:no-oversized-entry",
+             "no active ledger at %s -- nothing has appended yet" % led_rel)
+    else:
+        # The active chain is appended to by live hooks; a transient sharing
+        # violation must degrade to an honest SKIP, not take the suite down.
+        try:
+            over = lines_over_limit(led, led_limit)
+        except Exception as e:
+            over = None
+            skip("ledger:no-oversized-entry",
+                 "ledger exists but was NOT scanned (%s)" % e)
+        if over:
+            # Live or historical? The chain is append-only, so a fixed writer
+            # cannot un-poison what it already wrote -- the bad lines stay
+            # forever and the check stays red forever, which is how a gate stops
+            # being read (C14). Saying how many CLEAN entries were appended after
+            # the last bad one separates "this is still happening, stop it" from
+            # "this ended N appends ago, seal it" -- two findings that were
+            # printing identically.
+            try:
+                total = count_lines(led)
+            except Exception:
+                total = None
+            since = (total - over[-1][0]) if total else None
+            if since and since > 0:
+                era = (" || The last oversized entry is line %d of %d: %s appended "
+                       "since, all within the limit, so the writer is no longer "
+                       "producing them. This is history, and an append-only chain "
+                       "cannot be edited -- run `evidence-ledger.ps1 seal` (or "
+                       "evidence-ledger.sh seal) to archive the poisoned segment and "
+                       "start a clean one."
+                       % (over[-1][0], total,
+                          "1 entry has been" if since == 1
+                          else "%d entries have been" % since))
+            else:
+                era = (" || The newest entry in the chain is one of these, so the "
+                       "writer is embedding its predecessors RIGHT NOW -- every append "
+                       "makes the next one bigger. Stop the writer, then run "
+                       "`evidence-ledger.ps1 seal` (or evidence-ledger.sh seal).")
+            fail("ledger:no-oversized-entry",
+                 "%d line(s) in %s exceed %d bytes (%s; healthy entries are <1 KB): %s%s"
+                 % (len(over), led_rel, led_limit, led_src,
+                    evidence("line %d = %d B" % (ln, b) for ln, b in over), era))
+        elif over is not None:
+            ok("ledger:no-oversized-entry")
+
 
 if __name__ == "__main__":
     run(sys.argv[1] if len(sys.argv) > 1 else ".")
     print("Passed : %d" % len(PASSED))
     print("Failed : %d" % len(FAILED))
     print("Skipped : %d" % len(SKIPPED))
+    print("Warned : %d" % len(WARNED))
     for f in FAILED:
         print("  FAIL " + f)
+    for w in WARNED:
+        print("  WARN " + w)
     for s in SKIPPED:
         print("  SKIP " + s)
+    # A warning never fails the suite -- that is the whole point of the level.
     sys.exit(1 if FAILED else 0)

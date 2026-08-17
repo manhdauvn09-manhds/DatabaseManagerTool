@@ -62,6 +62,34 @@ context:
     - "*spec*.md"
     - "SPEC*.md"
     - "openapi*.y*ml"
+  # C2 - the exclusion list is DATA too. It used to be hardcoded inside both
+  # context builders, and the directory that mattered most was missing from it:
+  # in a repo with a git worktree under .claude/worktrees, srs_path resolved to
+  # the STALE COPY inside the worktree. Sub-agents then read the wrong SRS with
+  # no error and no signal - a silent-wrong, worse than a crash.
+  #
+  # SCOPE: this filters the RECURSIVE candidate scan only - the wildcard entries
+  # of srs_candidates / spec_candidates above. It is deliberately NOT applied to
+  # artifact_globs / source_globs, which is why ".harness" can be excluded from
+  # the scan and still be recorded as an artifact dir.
+  #
+  # An entry matches when it appears as a path SEGMENT of a candidate's path
+  # relative to the repo root, so "vendor" excludes "a/vendor/b.md" but not
+  # "a/vendored.md". "*" and "?" are wildcards; matching is case-insensitive in
+  # both shells.
+  #
+  # Deleting this key does NOT disable filtering - both builders fall back to
+  # exactly the list below. Excluding nothing would silently start indexing
+  # node_modules and .git, a louder regression than the bug this key fixes.
+  exclude_globs:
+    - "node_modules"        # thousands of vendored READMEs/specs, none of them yours
+    - ".git"                # object store and other branches' copies of your own docs
+    - "dist"                # build output: a generated, already-stale copy of a real doc
+    - "build"               # same hazard, the other conventional name
+    - ".harness"            # the harness's own docs would outrank the project's SRS
+    - ".claude/worktrees"   # a second full checkout -> stale SRS (the reported failure)
+    - "vendor"              # Go/Composer vendored trees: same problem as node_modules
+    - ".venv"               # site-packages ships its own *requirements*.md and specs
   retrieval:                                # RAG-lite / semantic cache (harness_rag.py)
     sources:                                # what gets indexed for retrieval
       - "docs/**/*.md"
@@ -101,6 +129,61 @@ evaluation:
   enforce: true                             # server-side release gate on/off
   release_tools: ["deploy", "rollback_deploy"]
   golden_dataset_path: ".harness/eval/golden/"
+  # R-4 — every production bug earns a golden case. The constitution has asked
+  # for this as a recommendation for a while; the generator can scaffold the
+  # case, but without something that CHECKS it the scaffold stays empty, and
+  # 8 of 9 project reviews complained the golden set is 12 generic cases.
+  #
+  # A golden case claims a bug by naming it: {"id": "...", "bug": "B-04", ...}.
+  # harness doctor reports the coverage ratio and names uncovered bugs.
+  #
+  # Default false ON PURPOSE. Shipping a check that turns eleven existing
+  # projects red on day one is the cry-wolf failure C14 forbids -- it would
+  # teach everyone to skip doctor's output in the same week C12 started relying
+  # on people reading it. Flip to true per project once it has caught up, and
+  # the same check becomes a hard FAIL.
+  require_golden_per_bug: false
+  # H3 "closing question": if a step fails after two earlier steps already ran,
+  # does the pipeline recover -- and can anyone TELL whether the recovery ever
+  # ran at all? Agent Pipeline Runs sat at 0/12 fleet-wide not because nobody
+  # used impact-review, but because RECORD (harness-pipeline-log) is a prompted
+  # step in a SKILL.md, not a hook -- "ran the pipeline, forgot to log it" and
+  # "never ran it" render as the identical zero. This closes that gap for real:
+  # when true, a release is denied unless a PipelineRun was actually logged for
+  # the EXACT commit being shipped (matched on head_ref against the hook's own
+  # `git rev-parse HEAD`, not a self-reported claim). It does not re-verify
+  # that run's own numbers (found/confirmed/fixed stay self-reported) -- only
+  # that a run was logged for this commit at all.
+  #
+  # Default false ON PURPOSE, same reasoning as require_golden_per_bug just
+  # above: every project's PipelineRun history starts at zero, so shipping this
+  # ON turns every release fleet-wide red on day one -- the cry-wolf failure
+  # C14 forbids. Flip to true per project once its release workflow actually
+  # calls impact-review (or another pipeline skill) and logs the result before
+  # deploying.
+  require_pipeline_record_for_release: false
+  buglist_path: "buglist.md"
+  # Bugs that CANNOT be a golden case, and why. The golden runner evaluates
+  # exactly one thing: whether an input string is denied by the guard policy. A
+  # parser bug, an encoding bug or an ingest 422 has no such input. Demanding a
+  # case for those invites the worst outcome available -- a fake case written to
+  # clear a check -- so they are exempted in the open with a reason instead.
+  #
+  # doctor verifies the exemption is DECLARED. It cannot verify the reason is
+  # true or that the named regression test exists; that limit is stated in the
+  # check's own output rather than left for a reader to discover (C12).
+  golden_exempt_bugs:
+    B-01: "missing buglist.md — a repo-layout gap, no runtime input to deny"
+    B-02: "policy file did not declare its plane — a config-content bug"
+    B-03: "bundle.yaml not YAML-parseable — packer read it line-wise; covered by schema validation in policy-ci"
+    B-04: "ingest returned 422 on evidence bundles — HTTP payload shape, covered by portal backend tests"
+    B-05: "release parser read passed/failed backwards — output parsing, covered by anchored regex + suite tests"
+    B-06: "Add-Content wrote a BOM into JSONL — file encoding, covered by policy-ci bom check"
+    B-07: "buglist table column shift — covered by tests/test_ingest_buglist.py"
+    B-08: "repeat of B-03 while hand-editing bundle.yaml — same schema coverage"
+    B-09: "CASAN withheld-evidence could launder a real failure — scoring logic, covered by portal backend tests"
+    B-10: "plane check filtered on a vendor prefix — covered by policy-ci plane checks"
+    B-11: "H4-1/H5-4 could only recognise one vendor's hook — wording/scoring, no deny input"
   regression_suites_required:               # must PASS before a deploy/release is allowed
     - "policy-ci"
     - "red-team"

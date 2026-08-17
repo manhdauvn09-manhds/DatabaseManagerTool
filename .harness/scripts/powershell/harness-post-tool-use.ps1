@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 
 # Append one JSONL line WITHOUT a BOM. `Add-Content -Encoding utf8` on Windows
 # PowerShell 5.1 always writes EF BB BF when it creates the file, so the FIRST
@@ -10,6 +10,17 @@ function Add-JsonLine([string]$Path, [string]$Line) {
     $dir = Split-Path -Parent $Path
     if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     [System.IO.File]::AppendAllText($Path, $Line + [Environment]::NewLine, $enc)
+}
+
+# One line per swallowed failure, into hook-errors.log (W1-4). A hook must never
+# fail the tool call, but "never fail" had rotted into "never tell anyone":
+# this repo's ledger was dead for 14 days with zero trace because every error
+# path here ended in $null. Best-effort with a record beats best-effort blind.
+function Write-HookError([string]$Msg) {
+    try {
+        $line = @{ timestamp = (Get-Date -Format 'o'); hook = "post-tool-use"; error = $Msg } | ConvertTo-Json -Compress
+        Add-JsonLine "$_HarnessRoot\.harness\telemetry\hook-errors.log" $line
+    } catch { }  # the error log failing must not take the hook down with it
 }
 
 <#
@@ -63,6 +74,13 @@ Add-JsonLine $LogFile $LogEntry
 
 # C9: every side-effect tool call appends one line to the evidence ledger
 # (identity + input/output hash). Best-effort — never fail the hook on it.
+#
+# "Best-effort" used to mean `*>$null` around the call and an empty catch, which
+# is not best-effort, it is blind. This repo's own ledger stopped growing on
+# 2026-07-23 and nobody found out for 14 days: the append was being killed by the
+# hook timeout every single time, and every trace of that was thrown away here.
+# Failures now land in hook-errors.log. The hook still never fails the tool call --
+# that part was right -- but a silent subsystem is one nobody can operate.
 try {
     $LedgerScript = Join-Path $PSScriptRoot "evidence-ledger.ps1"
     if (Test-Path $LedgerScript) {
@@ -76,10 +94,32 @@ try {
             action = @{ type = "tool_call"; tool = "$ToolName"; description = "completed tool call"; input_hash = $inputHash; output_hash = $outputHash }
             decision = @{ result = "allow"; reason = "completed"; risk_level = "none" }
         } | ConvertTo-Json -Compress -Depth 4
-        & $LedgerScript append -EntryJson $entry *>$null
+        $sw = [System.Diagnostics.Stopwatch]::StartNew()
+        # Reset before the call. `& script.ps1` does NOT set $LASTEXITCODE unless
+        # the script calls `exit` explicitly, so on a successful append the
+        # variable kept whatever a previous native command left -- or $null on
+        # first use. `$null -ne 0` is TRUE, so every SUCCESSFUL append was logged
+        # as a failure: 266 lines of "ledger append exited  for tool=..." whose
+        # own payload reads "Appended entry 201". A log that cries wolf on every
+        # success trains the reader to ignore it, which costs more than having no
+        # log at all -- the exact failure this log exists to prevent.
+        $global:LASTEXITCODE = 0
+        $ledgerOut = & $LedgerScript append -EntryJson $entry 2>&1
+        $ok = $?
+        $sw.Stop()
+        if (-not $ok -or $LASTEXITCODE -ne 0) {
+            Write-HookError "ledger append exited $LASTEXITCODE for tool=$ToolName :: $($ledgerOut -join ' | ')"
+        } elseif ($sw.ElapsedMilliseconds -gt 2000) {
+            # An append is a tail-read plus one AppendAllText; seconds means the
+            # chain holds something pathological. Warn while the hook still
+            # completes, so the next person sees it coming instead of finding a
+            # frozen ledger weeks later.
+            Write-HookError "ledger append took $($sw.ElapsedMilliseconds)ms (expected <100ms) -- chain may hold an oversized entry"
+        }
     }
 } catch {
-    # Swallow — evidence is best-effort; a ledger failure must not fail the hook.
+    # Never fail the tool call on evidence capture -- but record why it failed.
+    Write-HookError "ledger append threw for tool=$ToolName :: $($_.Exception.Message)"
 }
 
 # --- H3/H5: qa-gate verdict gates the release-affecting tools (C2/C10) --------

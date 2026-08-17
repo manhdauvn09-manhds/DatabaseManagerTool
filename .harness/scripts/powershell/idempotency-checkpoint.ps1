@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   Idempotency + Rate-limit Checkpoint (H2) — PreToolUse hook.

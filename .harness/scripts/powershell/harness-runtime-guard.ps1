@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   PreToolUse hook — Runtime Guard (H4). PEP for side-effect prevention.
@@ -77,6 +77,24 @@ if ($ToolInput) {
 $GuardLibPath = Join-Path $PSScriptRoot "lib-security-log.ps1"
 if (Test-Path $GuardLibPath) { . $GuardLibPath }
 
+# STDERR is the only channel that reaches the agent. Claude Code surfaces a
+# non-zero PreToolUse exit as "No stderr output" when nothing was written there,
+# and Write-Warning does NOT land on stderr -- the host renders it to stdout.
+# So a deny told the agent it was blocked but never by what: it would guess,
+# rewrite the command and retry, and every occurrence looked like a brand-new
+# mystery. Every deny path must name the rule it matched, on stderr.
+function Write-DenyToStderr {
+    param([string]$Reason, [string]$Tool, [string]$Command = "")
+    $snip = ""
+    if ($Command) {
+        # Capped at 200 chars: the command may carry a secret and this text is
+        # echoed verbatim into the agent transcript.
+        $snip = $Command.Substring(0, [Math]::Min($Command.Length, 200))
+        $snip = " | command: $snip"
+    }
+    [Console]::Error.WriteLine("[harness-runtime-guard] DENIED tool=$Tool :: $Reason$snip")
+}
+
 # C9: persist a deny entry to the evidence ledger (chain.jsonl) so the Portal
 # blocked-count reflects real guard denies. Best-effort — a ledger failure must
 # never change the guard verdict.
@@ -107,6 +125,7 @@ foreach ($pattern in $DenyPatterns) {
     if ($isMatch) {
         $DenyReason = "Command matched deny pattern: $pattern"
         Write-Warning "[harness-runtime-guard] DENIED: $DenyReason"
+        Write-DenyToStderr -Reason $DenyReason -Tool $ToolName -Command $CommandString
 
         if (Get-Command Write-SecurityEvent -ErrorAction SilentlyContinue) {
             $cmdSnip = $CommandString.Substring(0, [Math]::Min($CommandString.Length, 240))
@@ -139,6 +158,7 @@ if (Test-Path $ToolDenyPath) {
             if ($ToolEntry.risk_level -in @("high", "critical") -and $ToolEntry.default_action -eq "deny") {
                 $DenyReason = "Tool '$ToolName' has risk level '$($ToolEntry.risk_level)' — deny-by-default"
                 Write-Warning "[harness-runtime-guard] DENIED: $DenyReason"
+                Write-DenyToStderr -Reason $DenyReason -Tool $ToolName -Command $CommandString
                 if (Get-Command Write-SecurityEvent -ErrorAction SilentlyContinue) {
                     Write-SecurityEvent -HarnessRoot $HarnessRoot -Type "guard_block" -Severity $ToolEntry.risk_level `
                         -Category $ToolName -DetectedBy "harness-runtime-guard" `
@@ -181,13 +201,29 @@ try {
                 if ($Key) {
                     [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
                     $Url = "$($SyncCfg.portal_url.TrimEnd('/'))/api/pdp/$($SyncCfg.project_id)/decide"
-                    $Body = @{ tool = "$ToolName"; command = "$CommandString"; actor = "$env:HARNESS_SESSION_ID" } | ConvertTo-Json -Compress
+                    # Actor identity: prefer the per-machine human identity (same convention as the
+                    # ledger-deny actor above) so the Portal can resolve a real requester, not a
+                    # session id nobody can read (C10). Fall back to session id only when the
+                    # developer machine has no HARNESS_USER configured, so we still send *something*.
+                    $Actor = if ($env:HARNESS_USER) { $env:HARNESS_USER } else { $env:HARNESS_SESSION_ID }
+                    $ActorHost = "$env:COMPUTERNAME"
+                    # H3 pipeline-record gate: the commit THIS release would actually ship is
+                    # whatever HEAD resolves to right now on this checkout (deploy takes no
+                    # commit parameter of its own -- it pulls HEAD). Resolved here, not asserted
+                    # by the caller, so the server has something it can trust as "what commit".
+                    # Best-effort: git absent or not a repo just means an empty string, which the
+                    # gate (when its opt-in toggle is on) correctly reports as unverifiable rather
+                    # than guessing.
+                    $CommitHead = ""
+                    try { $CommitHead = (& git -C $HarnessRoot rev-parse HEAD 2>$null | Select-Object -First 1).Trim() } catch {}
+                    $Body = @{ tool = "$ToolName"; command = "$CommandString"; actor = "$Actor"; actor_host = "$ActorHost"; commit_head = "$CommitHead" } | ConvertTo-Json -Compress
                     $Resp = Invoke-RestMethod -Uri $Url -Method Post -ContentType "application/json; charset=utf-8" `
                         -Headers @{ "X-Ingest-Key" = $Key } -UserAgent "harness-runtime-guard/1.0" `
                         -Body ([System.Text.Encoding]::UTF8.GetBytes($Body)) -TimeoutSec 8
                     if ($Resp.decision -eq 'deny' -or $Resp.decision -eq 'ask') {
                         $DenyReason = "PDP $($Resp.decision): $($Resp.reason)"
                         Write-Warning "[harness-runtime-guard] $DenyReason"
+                        Write-DenyToStderr -Reason $DenyReason -Tool $ToolName -Command $CommandString
                         if (Get-Command Write-SecurityEvent -ErrorAction SilentlyContinue) {
                             Write-SecurityEvent -HarnessRoot $HarnessRoot -Type "pdp_block" -Severity "high" `
                                 -Category $ToolName -DetectedBy "harness-runtime-guard-pdp" `

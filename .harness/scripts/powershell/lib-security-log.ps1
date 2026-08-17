@@ -1,4 +1,4 @@
-# Shared helper (dot-sourced by the H4 guard scripts) that appends a
+﻿# Shared helper (dot-sourced by the H4 guard scripts) that appends a
 # structured security event to .harness/telemetry/security-events.jsonl.
 # Closes the gap where guard scripts only Write-Warning'd to the console, so
 # the Portal had to *infer* security incidents from ledger denies (approximation).

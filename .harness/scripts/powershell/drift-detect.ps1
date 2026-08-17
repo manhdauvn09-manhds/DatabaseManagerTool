@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   Drift Detection (H6) — compares current metrics vs baseline, detects behavioral drift.

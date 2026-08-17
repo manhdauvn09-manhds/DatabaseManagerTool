@@ -1,4 +1,4 @@
-# D9: size-based rotation for the security-events telemetry log so it can't
+﻿# D9: size-based rotation for the security-events telemetry log so it can't
 # grow without bound on a long-lived checkout. When the JSONL exceeds
 # -MaxSizeMB, it is gzip-archived with a timestamp and a fresh empty file is
 # started; the newest -Retain archives are kept.

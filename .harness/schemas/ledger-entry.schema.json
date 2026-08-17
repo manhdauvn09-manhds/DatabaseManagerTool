@@ -27,7 +27,7 @@
       "type": "object",
       "required": ["type", "tool", "description"],
       "properties": {
-        "type": { "type": "string", "enum": ["tool_call", "approval", "decision", "pipeline_event", "config_change"] },
+        "type": { "type": "string", "enum": ["tool_call", "approval", "decision", "pipeline_event", "config_change", "seal"], "description": "'seal' closes a chain segment: the final entry written before the file is archived and a fresh segment starts. Exists because a poisoned entry (pre-b730629 doubling bug) is permanent once written -- the honest way out is to close the segment around it, never to rewrite history." },
         "tool": { "type": "string" },
         "description": { "type": "string" },
         "input_hash": { "type": "string" },
@@ -44,6 +44,9 @@
     },
     "payload_ref": { "type": "string", "description": "Path to the evidence bundle or detailed payload for this entry" },
     "signature": { "type": "string", "description": "Future: cryptographic signature of entry_hash" },
+
+    "prev_segment": { "type": "string", "description": "On a genesis entry only: filename of the sealed segment this chain continues from (e.g. chain-001.jsonl). Together with prev_segment_head it keeps continuity ACROSS files: an auditor verifies the named archive's seal entry hash equals prev_segment_head, so rotating segments never becomes a way to quietly drop history." },
+    "prev_segment_head": { "type": "string", "description": "On a genesis entry only: entry_hash of the sealed segment's final (seal) entry. See prev_segment." },
 
     "per_agent_cost_usd": { "type": "number", "minimum": 0, "description": "Cost attributable to the agent that produced this entry. Optional: an entry written by a hook has no model call behind it and must stay valid without this." },
     "token_count": { "type": "integer", "minimum": 0, "description": "Total tokens for the call behind this entry (in + out)" },

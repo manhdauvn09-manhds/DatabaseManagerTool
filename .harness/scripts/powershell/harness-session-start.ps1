@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   SessionStart hook — initialises per-session state.
@@ -79,7 +79,17 @@ $env:HARNESS_SESSION_START = (Get-Date -Format 'o')
 # Issue identity token for the session (D9)
 $RolesFile = "$HarnessRoot\.harness\control\session-roles.json"
 $GatewayIssuer = "$HarnessRoot\gateway\src\oidc-issuer.py"
-if (Test-Path $RolesFile -and (Test-Path $GatewayIssuer)) {
+# Each Test-Path MUST be parenthesised on its own. Written as
+# `Test-Path $RolesFile -and (Test-Path $GatewayIssuer)`, PowerShell binds
+# `-and` as a PARAMETER of Test-Path and throws ParameterBindingException --
+# which, with $ErrorActionPreference = "Stop" and a hook that swallows output,
+# kills the whole SessionStart hook right here. Everything below (including the
+# context-build that refreshes pipeline-context.yaml) then never runs, H1-2
+# starts failing on staleness, and the CASAN score drifts down with no error
+# anyone can see. Found by a consuming project that hit it, debugged it, and
+# fixed their own copy; the bundle kept shipping the broken line to everyone
+# else. Verified in a real PowerShell 5.1: the old form throws, this one does not.
+if ((Test-Path $RolesFile) -and (Test-Path $GatewayIssuer)) {
     $DefaultRole = (Get-Content $RolesFile -Raw -Encoding utf8 | ConvertFrom-Json).default_role
     if (-not $DefaultRole) { $DefaultRole = "developer" }
     $TokenJson = & python $GatewayIssuer --agent "session-init" --user "local" --project "harness" --role $DefaultRole --session-id $SessionId 2>$null

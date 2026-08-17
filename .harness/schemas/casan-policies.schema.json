@@ -96,6 +96,25 @@
         },
         "judge": {
           "type": "object"
+        },
+        "require_golden_per_bug": {
+          "type": "boolean",
+          "description": "R-4. When true, harness doctor FAILS if a bug logged in buglist.md has no golden case referencing it (a case whose `bug` field names the bug id). Default false: a check that turns every existing project red the day it ships is the cry-wolf failure C14 forbids, so a project opts in once it has caught up."
+        },
+        "require_pipeline_record_for_release": {
+          "type": "boolean",
+          "description": "When true, the PDP release gate (deploy/rollback_deploy) FAILS unless a PipelineRun was logged for the exact commit being released (head_ref matched against the hook's own `git rev-parse HEAD`). Closes the gap where RECORD is a prompted SKILL.md step, not a hook, so 'ran the pipeline but forgot to log it' looks identical to '0 runs'. Default false, same reasoning as require_golden_per_bug: every project starts with zero PipelineRun history, so shipping this ON turns every release red on day one -- the cry-wolf failure C14 forbids. Opt in per project once its release workflow actually logs pipeline runs."
+        },
+        "buglist_path": {
+          "type": "string",
+          "description": "R-4. Where the bug log lives, if not the default buglist.md at the project root. Read from config rather than hardcoded so a project that keeps it elsewhere is not silently reported as having no bugs (C2)."
+        },
+        "golden_exempt_bugs": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "description": "R-4. Bug ids that cannot be expressed as a golden case, mapped to the REASON. This harness's golden runner evaluates one thing: whether an input string is denied by the guard policy. A parser bug, an encoding bug or an ingest 422 has no such input, so demanding a golden case for it would be demanding something the runner cannot represent -- and the usual result is a fake case written to clear a check. doctor can verify an exemption is DECLARED; it cannot verify the reason is true or that a regression test exists (C12)."
         }
       }
     },

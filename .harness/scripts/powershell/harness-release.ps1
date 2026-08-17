@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   H3 Evaluation — auto-run regression suites BEFORE a release, then gate it.

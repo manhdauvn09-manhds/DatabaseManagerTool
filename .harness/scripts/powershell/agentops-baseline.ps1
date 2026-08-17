@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   AgentOps Baseline (H6) — computes baseline metrics from historical telemetry.

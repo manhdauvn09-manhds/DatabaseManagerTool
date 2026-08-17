@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   Idempotency Executor — ensures side-effect tools run at most once per unique key (H2).

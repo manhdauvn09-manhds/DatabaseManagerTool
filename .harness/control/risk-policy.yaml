@@ -19,7 +19,10 @@ command_deny_patterns:
     reason: "Script trỏ server cũ đã xoá; host nginx đã có vhost (CLAUDE.md cấm)"
     action: "deny"
   # --- Common patterns (shipped baseline) ---
-  - pattern: "rm\\s+-[rR][fF]"
+  # \\brm, not rm: without the boundary this matched "rm" inside "confirm" and
+  # denied ordinary prose. A guard that blocks a sentence is a guard people
+  # switch off (C14) — see golden case tk-allow-word-containing-verb.
+  - pattern: "\\brm\\s+-[rR][fF]"
     risk: "critical"
     reason: "Recursive force delete — potential data loss"
     action: "deny"
@@ -64,7 +67,11 @@ command_deny_patterns:
     risk: "critical"
     reason: "Download piped into Invoke-Expression — remote code execution"
     action: "deny"
-  - pattern: "-[Ee]nc(odedCommand)?\\s+[A-Za-z0-9+/=]{24,}"
+  # Prefixed with (^|.) so the pattern does not START with '-': grep -qE reads a
+  # leading '-' as an option, so the bash guard silently never ran this rule while
+  # the PowerShell guard did. (^|.) = start-of-line OR any one char — coverage
+  # is unchanged, portability is restored.
+  - pattern: "(^|.)-[Ee]nc(odedCommand)?\\s+[A-Za-z0-9+/=]{24,}"
     risk: "critical"
     reason: "PowerShell encoded command — obfuscated execution"
     action: "deny"
@@ -147,7 +154,10 @@ command_deny_patterns:
     reason: "History rewrite / mirror push — erases shared-branch evidence"
     action: "deny"
   # --- Tamper the immutable audit ledger (C9) — only destructive verbs ---
-  - pattern: "(rm|del|Remove-Item|truncate|shred)\\s+.*chain\\.jsonl"
+  # Boundaries on both sides: "del" inside "model" plus a later mention of the
+  # ledger file made this fire on the sentence "the model reads chain.jsonl".
+  # Documentation about a file must not be treated as an attack on it (C14).
+  - pattern: "\\b(rm|del|Remove-Item|truncate|shred)\\b\\s+.*chain\\.jsonl"
     risk: "critical"
     reason: "Deleting/truncating the hash-chain ledger — audit tampering (C9)"
     action: "deny"

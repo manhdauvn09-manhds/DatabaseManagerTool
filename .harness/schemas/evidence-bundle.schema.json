@@ -78,13 +78,14 @@
         "feedback": { "type": "string" },
         "rubric_scores": {
           "type": "object",
-          "description": "Per-dimension judge scores 0-100 (H3). Overall = weighted/avg of these.",
+          "description": "Per-dimension judge scores 0-100 (H3). Overall = weighted/avg of these. The 5 keys below are the H3-2 gate (casan-criteria.yaml#rubric_dimensions) -- keep them in sync, or a judge scoring exactly what this schema documents can silently fail to satisfy the gate (found 2026-08-11: catalogue said 'perf', this schema said 'performance'). intake_clarity is a 6th dimension qa-gate/verify-implementation already score (judge-rubric.md) but is deliberately NOT yet gate-required -- see that doc's own note -- so it is listed for schema accuracy, not because H3-2 reads it.",
           "properties": {
             "correctness":    { "type": "number", "minimum": 0, "maximum": 100 },
             "maintainability":{ "type": "number", "minimum": 0, "maximum": 100 },
             "security":       { "type": "number", "minimum": 0, "maximum": 100 },
             "performance":    { "type": "number", "minimum": 0, "maximum": 100 },
-            "traceability":   { "type": "number", "minimum": 0, "maximum": 100 }
+            "traceability":   { "type": "number", "minimum": 0, "maximum": 100 },
+            "intake_clarity": { "type": "number", "minimum": 0, "maximum": 100 }
           }
         }
       }

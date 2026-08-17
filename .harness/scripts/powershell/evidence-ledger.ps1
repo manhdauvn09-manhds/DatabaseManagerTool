@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   Hash-chain ledger + Evidence Bundle generator (H5).
@@ -14,6 +14,9 @@
     init      - Create genesis block
     append    - Add a new ledger entry (-EntryJson, -EntryFile, or piped stdin)
     verify    - Verify chain integrity from genesis to head
+    seal      - Close the current chain segment: write a final seal entry, archive
+                the file as chain-NNN.jsonl, start a fresh chain.jsonl whose genesis
+                records the archive's name + head hash (-Reason for the why)
     bundle    - Generate an evidence bundle for a change (-EntryJson/-EntryFile/stdin)
     export    - Export ledger as CSV
 
@@ -26,14 +29,18 @@
 
 param(
     [Parameter(Position = 0)]
-    [ValidateSet("init", "append", "verify", "bundle", "export")]
+    [ValidateSet("init", "append", "verify", "seal", "bundle", "export")]
     [string]$Command = "append",
 
     [string]$LedgerDir = "",
 
     [string]$EntryJson = "",
 
-    [string]$EntryFile = ""
+    [string]$EntryFile = "",
+
+    # seal only: why this segment is being closed. Recorded verbatim in the seal
+    # entry -- an auditor reading the archive should not have to guess.
+    [string]$Reason = ""
 )
 
 # --- Helper: resolve entry input without ever blocking on an unredirected console (PIPE-1) ---
@@ -91,35 +98,118 @@ function Get-EntryHash {
 }
 
 # --- Helper: read last entry ---
+# Appending needs exactly TWO values off the previous entry -- its entry_hash and
+# its index -- so this pulls those two out by pattern and never deserializes the
+# line.
+#
+# Deserializing it is what killed this repo's own ledger. An older index bug
+# appended arrays instead of adding, so each entry embedded the one before it and
+# DOUBLED: 365 KB, 730 KB, 1.46 MB, 2.19 MB. ConvertFrom-Json on that final 2.19 MB
+# line takes ~70 MINUTES under Windows PowerShell 5.1 (measured, not estimated).
+# The PostToolUse hook's timeout is seconds, so every append was killed mid-flight
+# and the chain silently stopped growing on 2026-07-23 -- 14 days before anyone
+# noticed, because the caller redirected all streams to $null. Regex over the same
+# 2.19 MB is milliseconds.
+#
+# The index bug itself is fixed (b730629), but a poisoned entry is permanent: it
+# stays in the chain and breaks every append that comes after it. Reading has to
+# survive data that is already bad, not just avoid producing more of it.
 function Get-LastEntry {
-    if (Test-Path $ChainFile) {
-        $lastLine = Get-Content -Path $ChainFile -Tail 1 -Encoding utf8 -ErrorAction SilentlyContinue
-        if ($lastLine) {
-            try {
-                # `Select-Object -Last 1` is load-bearing, not tidiness. If this
-                # ever yields more than one object -- a line holding a JSON ARRAY,
-                # or two concatenated objects from interleaved appends -- then
-                # `$LastEntry.index` becomes an ARRAY via PowerShell member
-                # enumeration, and `+ 1` on an array APPENDS instead of adding.
-                # The next entry then carries index @(2264,2265,1), the one after
-                # @(2264,2265,1,1), and the corruption compounds forever. That is
-                # not hypothetical: it produced 2836 malformed entries out of 5238
-                # in this repo's own chain, and crashed the Portal's ingest with
-                # "unhashable type: 'list'".
-                return ($lastLine | ConvertFrom-Json | Select-Object -Last 1)
-            } catch { return $null }
+    if (-not (Test-Path $ChainFile)) { return $null }
+
+    # Read the tail with a raw FileStream, never Get-Content -Tail. -Tail walks the
+    # file BACKWARDS decoding as it goes, and on a line this chain actually has
+    # (2.19 MB, see below) that walk was measured at over TEN MINUTES in Windows
+    # PowerShell 5.1 -- it, not JSON parsing, was what let the PostToolUse hook
+    # time out on every append. Seek-and-read of the last 4 MB is milliseconds
+    # regardless of how the line got there.
+    $text = $null
+    try {
+        $fs = [System.IO.File]::Open($ChainFile, 'Open', 'Read', 'ReadWrite')
+        try {
+            $len = $fs.Length
+            if ($len -le 0) { return $null }
+            $cap = 4MB
+            $take = [int][Math]::Min([int64]$cap, $len)
+            $fs.Seek($len - $take, 'Begin') | Out-Null
+            $buf = New-Object byte[] $take
+            $read = $fs.Read($buf, 0, $take)
+            # A window that starts mid-file may open mid-way through a multi-byte
+            # UTF-8 char; harmless here, because everything matched below is ASCII.
+            $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $read)
+        } finally { $fs.Dispose() }
+    } catch { return $null }
+    if (-not $text) { return $null }
+
+    $trimmed = $text.TrimEnd("`r", "`n")
+    if ($trimmed.Length -eq 0) { return $null }
+    $nl = $trimmed.LastIndexOf("`n")
+    $line = if ($nl -ge 0) { $trimmed.Substring($nl + 1) } else {
+        # No newline left in the window. Two very different causes, and the
+        # earlier version conflated them:
+        #
+        #   a) the window is FULL (take == cap) and still has no newline, so the
+        #      final line really does exceed 4 MB -- the case this warning is for;
+        #   b) the file is SMALLER than the cap and holds exactly one line. After
+        #      TrimEnd strips its trailing newline there is no "`n" left, which
+        #      is not a 4 MB line, it is a brand-new chain with only its genesis.
+        #
+        # (b) is the state of every freshly installed project at its first
+        # append, so the warning fired across the fleet on the most ordinary
+        # event there is. A warning that cries wolf on the normal case is a P0
+        # defect, not noise (C14) -- found on a real project whose chain was
+        # 476 bytes long.
+        if ($take -ge $cap) {
+            # The regexes still run over the window's tail, which is where the
+            # outermost entry's own fields sit -- best-effort linkage, said out loud.
+            Write-Warning "[evidence-ledger] last entry exceeds 4MB; reading its tail window only"
+        }
+        $trimmed
+    }
+
+    # Corruption sentinel: an index stored as an ARRAY is the fingerprint of the
+    # pre-b730629 append bug, whose entries also embed nested copies of their
+    # predecessors and DOUBLE in size each write (365 KB -> 730 KB -> 1.46 MB ->
+    # 2.19 MB in this repo's own chain). Such an entry's index is meaningless --
+    # never arithmetic on it; the caller falls back to the chain length. The old
+    # "defence" took the corrupt array's last element (a 1) and wrote index 2 onto
+    # a 5238-entry chain, destroying the ordering the chain exists to prove.
+    $isCorrupt = $line -match '"index"\s*:\s*\['
+
+    $hashMatches = [regex]::Matches($line, '"entry_hash"\s*:\s*"([0-9a-fA-F]{64})"')
+    $entryHash = $null
+    if ($hashMatches.Count -ge 1) {
+        $entryHash = $hashMatches[$hashMatches.Count - 1].Groups[1].Value
+        if ($hashMatches.Count -gt 1) {
+            Write-Warning "[evidence-ledger] last entry contains $($hashMatches.Count) entry_hash values (corrupted); linking to the outermost one"
         }
     }
-    return $null
+
+    $index = $null
+    if (-not $isCorrupt) {
+        $idxMatch = [regex]::Match($line, '"index"\s*:\s*(\d+)\s*[,}]')
+        if ($idxMatch.Success) { $index = $idxMatch.Groups[1].Value }
+    } else {
+        Write-Warning "[evidence-ledger] last entry stores index as an array (pre-b730629 corruption); ignoring it and using chain length"
+    }
+
+    if ($null -eq $entryHash -and $null -eq $index) { return $null }
+    return [PSCustomObject]@{ index = $index; entry_hash = $entryHash }
 }
 
 # --- Helper: get chain length ---
 function Get-ChainLength {
-    if (Test-Path $ChainFile) {
-        $lines = Get-Content -Path $ChainFile -Encoding utf8 -ErrorAction SilentlyContinue
-        return ($lines | Where-Object { $_ -ne '' }).Count
-    }
-    return 0
+    if (-not (Test-Path $ChainFile)) { return 0 }
+    # Streamed, not Get-Content: this is the fallback path for a chain already
+    # known to hold multi-megabyte entries, and loading all of them into memory to
+    # count them would reintroduce the stall this function exists to escape.
+    $n = 0
+    try {
+        foreach ($l in [System.IO.File]::ReadLines($ChainFile)) {
+            if ($l -ne '') { $n++ }
+        }
+    } catch { return 0 }
+    return $n
 }
 
 # ===== COMMANDS =====
@@ -195,7 +285,20 @@ switch ($Command) {
                 Write-Warning "[evidence-ledger] previous entry has a non-numeric index ($($LastEntry.index -join ',')); using chain length $NextIndex instead"
             }
         }
-        $PrevHash = if ($LastEntry) { $LastEntry.entry_hash } else { "GENESIS" }
+        # "GENESIS" means one thing only: this is entry 0. Writing it because the
+        # previous hash could not be READ would claim the chain starts here and
+        # silently orphan everything before it -- the chain would then verify as
+        # intact while having lost its history, which is worse than an obvious gap.
+        # An unreadable predecessor is recorded as exactly that.
+        $PrevHash = "GENESIS"
+        if ($LastEntry) {
+            if ($LastEntry.entry_hash) {
+                $PrevHash = $LastEntry.entry_hash
+            } else {
+                $PrevHash = "UNREADABLE"
+                Write-Warning "[evidence-ledger] previous entry has no readable entry_hash; linking as UNREADABLE so verify reports the break instead of hiding it"
+            }
+        }
 
         # Build canonical entry
         $NewEntry = @{
@@ -284,6 +387,87 @@ switch ($Command) {
         break
     }
 
+    "seal" {
+        # Close the segment around bad history instead of editing it. A poisoned
+        # entry (pre-b730629 doubling bug) is permanent once written; rewriting or
+        # deleting it would make the "immutable" ledger a file someone fixes when
+        # it embarrasses them, which is worth less than no ledger at all. Seal =
+        # one final entry saying why, archive the file untouched, fresh segment.
+        if (-not (Test-Path $ChainFile)) {
+            Write-Output "[evidence-ledger] Nothing to seal -- no chain.jsonl"
+            break
+        }
+
+        $SealReason = if ($Reason) { $Reason } else { "segment sealed (no reason given)" }
+
+        # Same index/prev resolution as append -- including the corruption
+        # fallbacks, since sealing a poisoned chain is this command's whole job.
+        $LastEntry = Get-LastEntry
+        $NextIndex = 0
+        if ($LastEntry) {
+            $parsed = 0
+            if ([int]::TryParse("$($LastEntry.index)", [ref]$parsed)) { $NextIndex = $parsed + 1 }
+            else { $NextIndex = Get-ChainLength }
+        }
+        $PrevHash = "GENESIS"
+        if ($LastEntry) {
+            $PrevHash = if ($LastEntry.entry_hash) { $LastEntry.entry_hash } else { "UNREADABLE" }
+        }
+
+        $SealEntry = @{
+            index = $NextIndex
+            prev_hash = $PrevHash
+            entry_hash = ""
+            timestamp = (Get-Date -Format 'o')
+            actor = @{ agent = "harness"; user = "$env:HARNESS_USER"; session_id = "$env:HARNESS_SESSION_ID"; role = "system" }
+            action = @{ type = "seal"; tool = "evidence-ledger"; description = $SealReason }
+            decision = @{ result = "allow"; reason = "segment sealed"; risk_level = "none" }
+            payload_ref = ""
+            signature = ""
+        }
+        $JsonNoHash = $SealEntry | ConvertTo-Json -Depth 10 -Compress
+        $SealEntry.entry_hash = Get-EntryHash $JsonNoHash
+        Add-Utf8NoBom -Path $ChainFile -Value "$($SealEntry | ConvertTo-Json -Depth 10 -Compress)`n"
+
+        # Next free archive number -- never overwrite an existing archive.
+        $ArchiveNum = 1
+        Get-ChildItem -Path $LedgerDir -Filter "chain-*.jsonl" -ErrorAction SilentlyContinue | ForEach-Object {
+            if ($_.Name -match '^chain-(\d+)\.jsonl$') {
+                $n = [int]$Matches[1]
+                if ($n -ge $ArchiveNum) { $ArchiveNum = $n + 1 }
+            }
+        }
+        $ArchiveName = "chain-{0:D3}.jsonl" -f $ArchiveNum
+
+        # New genesis is STAGED before the archive rename so the window where
+        # chain.jsonl does not exist is one Move-Item, not a build-then-write.
+        # A hook appending into that window would create its own unlinked chain.
+        $Genesis = @{
+            index = 0
+            prev_hash = "GENESIS"
+            entry_hash = ""
+            timestamp = (Get-Date -Format 'o')
+            actor = @{ agent = "harness"; user = "system"; session_id = "seal"; role = "system" }
+            action = @{ type = "config_change"; tool = "evidence-ledger"; description = "Genesis block -- segment continues from $ArchiveName" }
+            decision = @{ result = "allow"; reason = "segment rotation"; risk_level = "none" }
+            payload_ref = ""
+            signature = ""
+            prev_segment = $ArchiveName
+            prev_segment_head = $SealEntry.entry_hash
+        }
+        $GenNoHash = $Genesis | ConvertTo-Json -Depth 10 -Compress
+        $Genesis.entry_hash = Get-EntryHash $GenNoHash
+        $StagedGenesis = Join-Path $LedgerDir ".chain.genesis.tmp"
+        Write-Utf8NoBom -Path $StagedGenesis -Value "$($Genesis | ConvertTo-Json -Depth 10 -Compress)`n"
+
+        Move-Item -Path $ChainFile -Destination (Join-Path $LedgerDir $ArchiveName)
+        Move-Item -Path $StagedGenesis -Destination $ChainFile
+
+        Write-Output "[evidence-ledger] Sealed segment -> $ArchiveName (head $($SealEntry.entry_hash))"
+        Write-Output "[evidence-ledger] New segment started; genesis links prev_segment_head for cross-file continuity"
+        break
+    }
+
     "bundle" {
         # Generate an evidence bundle for a change
         $InputJson = Get-EntryInput -EntryJsonParam $EntryJson -EntryFileParam $EntryFile
@@ -303,19 +487,35 @@ switch ($Command) {
             created_by = @{
                 agent = if ($Input.created_by.agent) { $Input.created_by.agent } else { "unknown" }
                 user = if ($Input.created_by.user) { $Input.created_by.user } else { "unknown" }
-                session_id = if ($Input.created_by.session_id) { $Input.created_by.session_id } else { $env:HARNESS_SESSION_ID }
+                # $env:HARNESS_SESSION_ID is "" when unset in PowerShell, but a bare
+                # `if (unset-env-var)` test is falsy for "" too, so this fell through
+                # to the bare $env: reference as the else-value -- which is $null
+                # when the variable was never set at all (vs "" when set-but-empty).
+                # The schema requires session_id to be a string; null failed it. A
+                # final `+ ""` is the smallest fix that can never turn a real value
+                # into empty (string concatenation with a non-null string is a no-op).
+                session_id = $(if ($Input.created_by.session_id) { $Input.created_by.session_id } else { $env:HARNESS_SESSION_ID }) + ""
             }
             requirement_trace = @{
                 spec_ref = if ($Input.requirement_trace.spec_ref) { $Input.requirement_trace.spec_ref } else { "" }
-                requirement_ids = if ($Input.requirement_trace.requirement_ids) { $Input.requirement_trace.requirement_ids } else { @() }
+                # @(...) around the WHOLE if/else, not just the else branch: an
+                # if/else used as a value here returns whatever the taken branch
+                # "outputs", and PowerShell's pipeline unrolling silently turns an
+                # empty-array branch into $null, which ConvertTo-Json then renders
+                # as "{}" -- schema type "array" -- instead of "[]". Found live: 3
+                # of 6 bundles already on disk across the fleet have this exact
+                # {} where the schema requires an array. @() forces array context
+                # on the result regardless of which branch ran or how many
+                # elements it has.
+                requirement_ids = @( if ($Input.requirement_trace.requirement_ids) { $Input.requirement_trace.requirement_ids } else { @() } )
             }
             design_impact = @{
                 description = if ($Input.design_impact.description) { $Input.design_impact.description } else { "" }
-                affected_components = if ($Input.design_impact.affected_components) { $Input.design_impact.affected_components } else { @() }
+                affected_components = @( if ($Input.design_impact.affected_components) { $Input.design_impact.affected_components } else { @() } )
                 design_doc_ref = if ($Input.design_impact.design_doc_ref) { $Input.design_impact.design_doc_ref } else { "" }
             }
             code_diff = @{
-                files_changed = if ($Input.code_diff.files_changed) { $Input.code_diff.files_changed } else { @() }
+                files_changed = @( if ($Input.code_diff.files_changed) { $Input.code_diff.files_changed } else { @() } )
                 diff_ref = if ($Input.code_diff.diff_ref) { $Input.code_diff.diff_ref } else { "" }
                 diff_hash = if ($Input.code_diff.diff_hash) { $Input.code_diff.diff_hash } else { "" }
             }
@@ -338,6 +538,32 @@ switch ($Command) {
                 score = if ($Input.review_verdict.score) { $Input.review_verdict.score } else { 0 }
                 reviewer_agent = if ($Input.review_verdict.reviewer_agent) { $Input.review_verdict.reviewer_agent } else { "" }
                 feedback = if ($Input.review_verdict.feedback) { $Input.review_verdict.feedback } else { "" }
+                # H3-2 depth: pass the judge's per-dimension rubric through into the
+                # bundle. This block used to whitelist only the four fields above and
+                # silently drop rubric_scores -- a judge following qa-gate/
+                # verify-implementation SKILL.md to the letter (which tells it to put
+                # the 5 scores here) still produced a bundle with none, so
+                # ingest_prompt_scores always stored an empty rubric and H3-2 could
+                # never be met from real evaluation activity. Only numeric per-
+                # dimension values are kept (same filter hard-gate.ps1 already
+                # applies when READING this field) -- a dimension the judge did not
+                # score is dropped rather than defaulted to 0, per SKILL.md ("never
+                # invent a dimension score"). rubric_scores itself is always present,
+                # empty {} when the judge gave nothing: ingest.py already treats a
+                # missing key and an empty object the same way, and an explicit {}
+                # says the writer looked rather than never asked.
+                rubric_scores = $(
+                    $rs = [ordered]@{}
+                    if ($null -ne $Input.review_verdict.rubric_scores) {
+                        foreach ($p in $Input.review_verdict.rubric_scores.PSObject.Properties) {
+                            $v = $p.Value
+                            if ($v -is [int] -or $v -is [long] -or $v -is [double] -or $v -is [decimal]) {
+                                $rs[$p.Name] = [double]$v
+                            }
+                        }
+                    }
+                    $rs
+                )
             }
             approval_record = @{
                 required = if ($Input.approval_record.required) { $Input.approval_record.required } else { $false }
@@ -379,3 +605,9 @@ switch ($Command) {
         break
     }
 }
+
+# Every success path above leaves the switch via `break`, which does NOT set an
+# exit code -- so a caller checking $LASTEXITCODE saw whatever was there before
+# (or $null) and could not tell success from failure. The failure paths already
+# `exit 1`/`exit 2` and never reach this line, so reaching it means success.
+exit 0

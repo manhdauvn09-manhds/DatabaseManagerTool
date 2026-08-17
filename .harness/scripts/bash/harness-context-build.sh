@@ -39,6 +39,40 @@ yaml_list() {
       || true
 }
 
+# Scan exclusions, read from config (C2). The fallback is the shipped default
+# rather than "exclude nothing": casan-policies.yaml is project-owned in
+# bundle-ownership.yaml, so an upgraded project keeps its old copy and never
+# receives this key -- and with an empty list the scan would start indexing
+# node_modules and .git.
+EXCLUDE_GLOBS=$(yaml_list "exclude_globs")
+[ -n "$EXCLUDE_GLOBS" ] || EXCLUDE_GLOBS=$'node_modules\n.git\ndist\nbuild\n.harness\n.claude/worktrees\nvendor\n.venv'
+IFS=$'\n' read -r -d '' -a EXCLUDE_ARR < <(printf '%s\0' "$EXCLUDE_GLOBS") || true
+
+# An entry matches a path SEGMENT. Wrapping both sides in '/' is what keeps
+# "build" from swallowing "rebuild-notes.md". The pattern is left UNQUOTED so a
+# '*' in the config still globs, and nocasematch mirrors PowerShell's
+# case-insensitive -like so both shells exclude the same files.
+is_excluded() {
+    local rel="/$1/" e g rc=1
+    shopt -s nocasematch
+    for e in ${EXCLUDE_ARR[@]+"${EXCLUDE_ARR[@]}"}; do
+        g="${e#/}"; g="${g%/}"
+        [ -n "$g" ] || continue
+        case "$rel" in */$g/*) rc=0; break;; esac
+    done
+    shopt -u nocasematch
+    return "$rc"
+}
+# Filtering in the shell, not via find -path: -ipath is not portable, and only a
+# post-filter can apply the same case rules as the PowerShell side.
+filter_excluded() {
+    local line
+    while IFS= read -r line; do
+        if is_excluded "$line"; then continue; fi
+        printf '%s\n' "$line"
+    done
+}
+
 # Deterministic pointer discovery: an entry with no wildcard is an exact path
 # taken when present (canonical wins); a wildcard entry globs recursively and the
 # matches are SORTED so the chosen file cannot flip between runs.
@@ -47,10 +81,9 @@ find_first() {
     for p in "$@"; do
         case "$p" in
             *[*?]*)
-                hit=$(find "$HARNESS_ROOT" -type f -iname "$p" \
-                      -not -path '*/node_modules/*' -not -path '*/.git/*' \
-                      -not -path '*/dist/*' -not -path '*/build/*' -not -path '*/.harness/*' 2>/dev/null \
-                      | sed "s#^$HARNESS_ROOT/##" | LC_ALL=C sort | head -1 || true)
+                hit=$(find "$HARNESS_ROOT" -type f -iname "$p" 2>/dev/null \
+                      | sed "s#^$HARNESS_ROOT/##" | filter_excluded \
+                      | LC_ALL=C sort | head -1 || true)
                 ;;
             *)
                 if [ -f "$HARNESS_ROOT/$p" ]; then hit="$p"; else hit=""; fi
@@ -68,13 +101,46 @@ IFS=$'\n' read -r -d '' -a SPEC_ARR < <(printf '%s\0' "$SPEC_CANDIDATES") || tru
 SRS=$(find_first "${SRS_ARR[@]}")
 SPEC=$(find_first "${SPEC_ARR[@]}")
 
+# Look one level down as well as at the root.
+#
+# Root-only detection gives every MONOREPO the poison value ["unknown"], because
+# its manifests live in subdirectories. That value fails H1-4 permanently and
+# silently, and since this file is rebuilt on every SessionStart, filling it in
+# by hand does not survive the next session.
+#
+# Bounded to depth 2: deep enough for the standard apps/<name>/ or <service>/
+# layout, shallow enough that it never walks node_modules or a vendored tree.
+_skip_dir() {
+  case "$(basename "$1")" in
+    node_modules|.git|.venv|venv|vendor|dist|build|__pycache__|.harness|.*) return 0;;
+    *) return 1;;
+  esac
+}
+_detect_in() {
+  local d="$1"
+  [ -f "$d/package.json" ] && STACK+=("node")
+  { [ -f "$d/requirements.txt" ] || [ -f "$d/pyproject.toml" ]; } && STACK+=("python")
+  [ -f "$d/go.mod" ] && STACK+=("go")
+  [ -f "$d/pom.xml" ] && STACK+=("java")
+  [ -f "$d/Cargo.toml" ] && STACK+=("rust")
+  [ -f "$d/composer.json" ] && STACK+=("php")
+  return 0
+}
+
 STACK=()
-[ -f "$HARNESS_ROOT/package.json" ] && STACK+=("node")
-{ [ -f "$HARNESS_ROOT/requirements.txt" ] || [ -f "$HARNESS_ROOT/pyproject.toml" ]; } && STACK+=("python")
-[ -f "$HARNESS_ROOT/go.mod" ] && STACK+=("go")
-[ -f "$HARNESS_ROOT/pom.xml" ] && STACK+=("java")
-[ -f "$HARNESS_ROOT/Cargo.toml" ] && STACK+=("rust")
-[ -f "$HARNESS_ROOT/composer.json" ] && STACK+=("php")
+_detect_in "$HARNESS_ROOT"
+for _d1 in "$HARNESS_ROOT"/*/; do
+  [ -d "$_d1" ] || continue
+  _skip_dir "${_d1%/}" && continue
+  _detect_in "${_d1%/}"
+  # One more level for the apps/<name>/ and packages/<name>/ shape, which puts
+  # every manifest two directories down.
+  for _d2 in "${_d1%/}"/*/; do
+    [ -d "$_d2" ] || continue
+    _skip_dir "${_d2%/}" && continue
+    _detect_in "${_d2%/}"
+  done
+done
 [ ${#STACK[@]} -eq 0 ] && STACK+=("unknown")
 # de-dup
 STACK=($(printf '%s\n' "${STACK[@]}" | awk '!seen[$0]++'))
@@ -123,7 +189,12 @@ NOW=$(date -u +%Y-%m-%dT%H:%M:%SZ)
     echo "artifact_paths: [$(join_q "${ARTIFACTS[@]}")]"
 } > "$STORE"
 
-echo "[context] built pipeline-context.yaml (stack=$(IFS=/; echo "${STACK[*]}"); artifacts=${#ARTIFACTS[@]})"
+# The PS1 has always appended this; bash never did, so the two shells disagreed
+# on the one line an operator reads to notice that no SRS/spec was found.
+MISSING=""
+[ -n "$SRS" ]  || MISSING="srs_path"
+[ -n "$SPEC" ] || MISSING="${MISSING:+$MISSING,}spec_path"
+echo "[context] built pipeline-context.yaml (stack=$(IFS=/; echo "${STACK[*]}"); artifacts=${#ARTIFACTS[@]})${MISSING:+ missing: $MISSING}"
 
 # H1 RAG-lite — (re)build the retrieval index over context sources (best-effort).
 RAG="$HARNESS_ROOT/.harness/scripts/lib/harness_rag.py"

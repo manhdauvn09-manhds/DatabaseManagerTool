@@ -6,6 +6,17 @@ set -euo pipefail
 HARNESS_ROOT="${HARNESS_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 TEL="$HARNESS_ROOT/.harness/telemetry"
 mkdir -p "$TEL"
+
+# W1-4 parity of Write-HookError (harness-post-tool-use.ps1): one line per
+# swallowed failure into hook-errors.log. "Never fail the tool call" had rotted
+# into "never tell anyone" -- this repo's ledger was dead for 14 days with zero
+# trace because every error path ended in /dev/null. Record, then carry on.
+hook_error() {
+  { printf '{"timestamp":"%s","hook":"post-tool-use","error":"' "$(date +%Y-%m-%dT%H:%M:%S%z)"
+    printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g' | tr -d '\n'
+    printf '"}\n'
+  } >> "$TEL/hook-errors.log" 2>/dev/null || true
+}
 INPUT="$(cat || true)"
 [ -n "$INPUT" ] || exit 0
 
@@ -51,7 +62,20 @@ print(json.dumps({
 }))
 PY
 )
-    [ -n "$ENTRY" ] && bash "$LEDGER" append --entry-json "$ENTRY" >/dev/null 2>&1 || true
+    if [ -n "$ENTRY" ]; then
+      # Failures and stalls both land in hook-errors.log (same contract as the
+      # PowerShell hook). SECONDS gives whole-second granularity, which is enough:
+      # a healthy append is a tail-read plus one write -- if it takes 3+ seconds
+      # the chain holds something pathological, and that early warning is exactly
+      # what 14 silent days lacked.
+      _t0=$SECONDS
+      if LEDGER_OUT="$(bash "$LEDGER" append --entry-json "$ENTRY" 2>&1)"; then
+        _dt=$((SECONDS - _t0))
+        [ "$_dt" -ge 3 ] && hook_error "ledger append took ${_dt}s (expected <1s) -- chain may hold an oversized entry"
+      else
+        hook_error "ledger append failed for this call :: $(printf '%.300s' "$LEDGER_OUT")"
+      fi
+    fi
   fi
 
   # --- H3/H5: qa-gate verdict gates the release-affecting tools (C2/C10) ------

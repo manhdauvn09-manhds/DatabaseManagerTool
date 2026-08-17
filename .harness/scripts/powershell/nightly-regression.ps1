@@ -1,4 +1,4 @@
-#!/usr/bin/env pwsh
+﻿#!/usr/bin/env pwsh
 <#
 .SYNOPSIS
   Nightly full-suite regression (H3/H6) — luoi an toan cho chien luoc test theo
