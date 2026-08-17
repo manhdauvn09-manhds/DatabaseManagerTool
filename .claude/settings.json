@@ -34,26 +34,156 @@
   },
   "hooks": {
     "SessionStart": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "powershell", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/harness-session-start.ps1"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/harness-session-start.ps1"
+            ]
+          }
+        ]
+      }
     ],
     "UserPromptSubmit": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "powershell", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/injection-scan.ps1"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/injection-scan.ps1"
+            ]
+          }
+        ]
+      }
     ],
     "PreToolUse": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "powershell", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/harness-runtime-guard.ps1"] } ] },
-      { "matcher": "", "hooks": [ { "type": "command", "command": "powershell", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/approval-checkpoint.ps1"] } ] },
-      { "matcher": "", "hooks": [ { "type": "command", "command": "powershell", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/idempotency-checkpoint.ps1"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/harness-runtime-guard.ps1"
+            ]
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/approval-checkpoint.ps1"
+            ]
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/idempotency-checkpoint.ps1"
+            ]
+          }
+        ]
+      }
     ],
     "PostToolUse": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "powershell", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/harness-post-tool-use.ps1"] } ] },
-      { "matcher": "", "hooks": [ { "type": "command", "command": "powershell", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/idempotency-record.ps1"] } ] },
-      { "matcher": "", "hooks": [ { "type": "command", "command": "powershell", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/deploy-verify.ps1"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/harness-post-tool-use.ps1"
+            ]
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/idempotency-record.ps1"
+            ]
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/deploy-verify.ps1"
+            ]
+          }
+        ]
+      }
     ],
     "SubagentStop": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "powershell", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/agentops-sampler.ps1"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/agentops-sampler.ps1"
+            ]
+          }
+        ]
+      }
     ],
     "SessionEnd": [
-      { "matcher": "", "hooks": [ { "type": "command", "command": "powershell", "args": ["-NoProfile", "-File", "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/harness-session-end.ps1"] } ] }
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/harness-session-end.ps1"
+            ]
+          }
+        ]
+      }
     ]
   }
 }

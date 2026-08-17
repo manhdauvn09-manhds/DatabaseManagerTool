@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
     Deploy DatabaseManager: commit local changes, push to git, SSH to server, pull, rebuild Docker, verify.
 

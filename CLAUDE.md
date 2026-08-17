@@ -50,7 +50,7 @@ docs/DEVELOPER_GUIDE.html
 ---
 
 <!-- BEGIN harness-governance -->
-<!-- standard-governance v1.6.0 - MANAGED BLOCK. Edits inside are replaced on the next install; put your own project rules OUTSIDE this block. -->
+<!-- standard-governance v1.6.18 - MANAGED BLOCK. Edits inside are replaced on the next install; put your own project rules OUTSIDE this block. -->
 
 <!--
   Harness AI Toolkit — Common Governance Reference
@@ -161,6 +161,35 @@ what is inside it. Run the installer with `-MergeGuides` / `--merge-guides`.
   option concretely (what it does, its cost, its risk), then **recommend one and
   say why** — the operator should be choosing between spelled-out options, not
   inventing them.
+- **C12 — A gate must prove it ran.** Any blocking mechanism — a CI workflow, a
+  hook, an approval step, an eval suite — has to leave evidence that it
+  executed. A gate with no execution trace is **unproven**, and unproven must be
+  reported as unproven, never as green. "We have no evidence it ran" and "it ran
+  and passed" are opposite claims; a dashboard that renders them the same way is
+  worse than no dashboard, because absence of a gate is visible while a dead one
+  reads as coverage. Where execution genuinely cannot be observed from where you
+  are standing (a CI run is a server-side fact), say *that* — "cannot verify
+  from here" is compliant; assuming good is not. `harness doctor` asserts this.
+- **C13 — Inference must cite its source, and refuse a weak one.** When a script
+  infers a value rather than being told it — the default branch, the test
+  runner, the tech stack — it must carry *where the value came from* alongside
+  the value, and it must decline to act confidently when the only available
+  source is stale or ambiguous. Provenance is not documentation; it is what lets
+  a caller downstream decide whether the value is good enough. `refs/remotes/*/HEAD`
+  is a local cache written at clone time: one repo's pointed at a temporary
+  branch while its real default was `main`, and trusting it pinned CI to a
+  branch that was later deleted. Prefer asking the authority (the remote, the
+  config file, the lockfile); treat a guess as a guess, and let a guessed value
+  produce a warning rather than a pass.
+- **C14 — A warning channel must keep its credibility.** A diagnostic log,
+  alert, or health badge that raises false alarms is a **P0 defect**, not an
+  annoyance. Its entire value is that someone still reads it on the day it
+  matters, and every false positive spends that down. Treat "the log reports
+  successes as failures" with the same urgency as a broken build, and when
+  cleaning one up, remove only the entries you can *prove* are false — deleting
+  genuine diagnostics to quiet a noisy file trades a cosmetic problem for a
+  blind spot. Corollary: a screen that renders "no data" as green is the same
+  bug in another medium.
 
 ## Plane separation — what these policies do NOT govern
 

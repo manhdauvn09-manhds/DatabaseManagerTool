@@ -1,0 +1,494 @@
+# Tool contracts — input/output/error shape per tool, plus the idempotency key
+# that identifies "the same call again". Merged into
+# .harness/control/tool-registry.json by tools/harness-registry/apply-contracts.py.
+#
+# WHY THIS FILE EXISTS, and the trap it is built to avoid.
+#
+# H2-1 wants ≥80% of registry entries to declare input+output contracts, and H2-3
+# wants ≥80% of side-effect tools to declare an idempotency key. The cheap way to
+# pass both is 62 lines of `input_contract: "object"`. That turns two criteria
+# green and tells nobody anything, and it permanently ends any chance of someone
+# doing it properly — a criterion met by filler is worse than a red one.
+#
+# PROVENANCE, STATED PRECISELY — the first version of this header did not, and a
+# review caught it. It said every contract was "derived from the tool's REAL
+# schema". Only half of that is true, and the untrue half is the kind of claim
+# this file exists to prevent:
+#
+#   input_contract   — IS from the live JSON Schema. Field names, types, enums,
+#                      defaults and optionality are copied, not inferred.
+#   output_contract  — is NOT. An MCP schema describes inputs only; there is no
+#                      machine-readable return shape to copy. These are read off
+#                      the tool's own description text.
+#   error_contract   — likewise: failure modes named in the description, plus
+#                      the ones the description implies (a required flag that is
+#                      absent, a timeout that is configurable).
+#
+# So `contract_source` below means "where the INPUT came from". Output and error
+# are description-derived for every entry, including the ones marked
+# `mcp-schema`, and a reader should weigh them accordingly (C13 — provenance
+# travels with the value, and an overclaimed provenance is worse than none
+# because it stops the reader checking).
+#
+# Tools with NO entry here have no schema available from the live server:
+# read_files, find_files and code_outline are registered but not exposed, so
+# their input shape would have to be invented. The merge script prints them as
+# uncovered every run, so the gap stays visible instead of being rounded away.
+# (An earlier version of this note also listed task_get, task_list, note_list
+# and container_stats as evidence-free. That was wrong — all four are exposed
+# and are now included.)
+#
+# IDEMPOTENCY KEYS USE REAL FIELD NAMES. The old patterns in
+# contracts/tool-registry.yaml did not: `deploy:{target}:{version}` names two
+# fields `deploy` does not have (its inputs are `app_id` and `server_id`), so the
+# key could never be computed. A pattern over non-existent fields looks like a
+# key and is not one.
+#
+# A key answers "did this exact operation already run?", NOT "will the result be
+# identical?". `deploy` pulls whatever is at HEAD, so two identical calls can
+# produce different deployments — the key still correctly identifies an
+# accidental repeat, which is what the H2 checkpoint asks. Where that distinction
+# matters it is stated in `idempotency_note`.
+
+schema_version: "1.0.0"
+generated_from: "live MCP tool schemas (codeprovider-mcp) + Claude Code builtin tool definitions"
+generated_at: "2026-08-11"
+
+contracts:
+
+  # ── Built-in read tools ───────────────────────────────────────────────────
+  Read:
+    contract_source: builtin-schema
+    input_contract: "{ file_path: string(absolute), offset?: int, limit?: int, pages?: string }"
+    output_contract: "{ content: string(cat -n format), truncated?: bool }"
+    error_contract: "not_found | is_directory | empty_file | permission_denied"
+
+  Glob:
+    contract_source: builtin-schema
+    input_contract: "{ pattern: string(glob), path?: string(dir) }"
+    output_contract: "{ paths: string[] (sorted by mtime) }"
+    error_contract: "invalid_pattern | path_not_a_directory"
+
+  Grep:
+    contract_source: builtin-schema
+    input_contract: "{ pattern: string(regex), path?: string, glob?: string, type?: string, output_mode?: content|files_with_matches|count, -i?: bool, -n?: bool, -o?: bool, -A?: int, -B?: int, -C?: int, context?: int, multiline?: bool, head_limit?: int, offset?: int }"
+    output_contract: "{ matches: string[] } | { files: string[] } | { counts: map<string,int> }"
+    error_contract: "invalid_regex | path_not_found"
+
+  WebSearch:
+    contract_source: builtin-schema
+    input_contract: "{ query: string, allowed_domains?: string[], blocked_domains?: string[] }"
+    output_contract: "{ results: [{ title, url, snippet }] }"
+    error_contract: "network_error | rate_limited | no_results"
+
+  WebFetch:
+    contract_source: builtin-schema
+    input_contract: "{ url: string, prompt: string }"
+    output_contract: "{ content: string(extracted) }"
+    error_contract: "network_error | http_error | robots_denied | too_large"
+
+  # ── Built-in side-effect tools ────────────────────────────────────────────
+  Write:
+    contract_source: builtin-schema
+    input_contract: "{ file_path: string(absolute), content: string }"
+    output_contract: "{ written: bool, path: string }"
+    error_contract: "not_read_first(overwrite guard) | permission_denied | path_is_directory"
+    idempotency_key_pattern: "write:{file_path}:sha256({content})"
+    idempotency_note: "Same path + same content is a true no-op; same path + different content is a DIFFERENT operation and must not dedupe."
+
+  Edit:
+    contract_source: builtin-schema
+    input_contract: "{ file_path: string(absolute), old_string: string, new_string: string, replace_all?: bool }"
+    output_contract: "{ replaced: int, path: string }"
+    error_contract: "file_not_read_first | old_string_not_found | old_string_not_unique | no_change"
+    idempotency_key_pattern: "edit:{file_path}:sha256({old_string}|{new_string})"
+    idempotency_note: "Not replayable by design: after a successful edit old_string no longer matches, so a repeat fails loudly rather than double-applying."
+
+  Bash:
+    contract_source: builtin-schema
+    input_contract: "{ command: string, timeout?: int(ms, max 600000), run_in_background?: bool, dangerouslyDisableSandbox?: bool, description?: string }"
+    output_contract: "{ stdout: string, stderr: string, exit_code: int }"
+    error_contract: "timeout | non_zero_exit | denied_by_guard | interactive_prompt_blocked"
+    idempotency_key_pattern: "bash:sha256({command})"
+    contract_note: "`dangerouslyDisableSandbox` was missing from the first version. It is the only input on this tool that changes what the call is ALLOWED to touch — omitting it from the contract hides the one field a reviewer would look for."
+    idempotency_note: "A shell command's safety on replay is unknowable from its text; the key detects the repeat and hands the decision to a human."
+
+  PowerShell:
+    contract_source: builtin-schema
+    input_contract: "{ command: string, timeout?: int(ms, max 600000), run_in_background?: bool, dangerouslyDisableSandbox?: bool, description?: string }"
+    output_contract: "{ stdout: string, stderr: string, exit_code: int }"
+    error_contract: "timeout | non_zero_exit | denied_by_guard | parse_error"
+    idempotency_key_pattern: "pwsh:sha256({command})"
+    idempotency_note: "Same reasoning as Bash."
+
+  Agent:
+    contract_source: builtin-schema
+    input_contract: "{ description: string, prompt: string, subagent_type?: string, model?: sonnet|opus|haiku|fable, isolation?: worktree|remote, run_in_background?: bool }"
+    contract_note: "`model` is an ENUM, not a free string — writing it as `string` threw away the one place this registry could have expressed the C4 model ladder as a machine-checkable constraint."
+    output_contract: "{ agent_id: string, final_text: string }"
+    error_contract: "unknown_subagent_type | agent_died | budget_exhausted"
+    idempotency_key_pattern: "agent:{subagent_type}:sha256({prompt})"
+    idempotency_note: "An agent run is non-deterministic; the key catches an accidental duplicate dispatch, not an equivalent result."
+
+  Workflow:
+    contract_source: builtin-schema
+    input_contract: "{ script?: string, scriptPath?: string, name?: string, args?: any, resumeFromRunId?: string }"
+    output_contract: "{ runId: string, result: any, transcriptDir: string }"
+    error_contract: "script_syntax_error | unknown_workflow_name | agent_cap_exceeded | budget_exhausted"
+    idempotency_key_pattern: "workflow:{name|scriptPath}:sha256({args})"
+
+  harness-switch-account:
+    contract_source: repo-script
+    input_contract: "{ account: string(profile name in power-policy) }"
+    output_contract: "{ switched_to: string, previous: string }"
+    error_contract: "unknown_account | credential_missing"
+    idempotency_key_pattern: "switch-account:{account}"
+    idempotency_note: "Switching to the account already active is a genuine no-op."
+
+  # ── MCP: file read ────────────────────────────────────────────────────────
+  codeprovider-mcp.read_file:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, path: string(relative to app workDir) }"
+    output_contract: "{ content: string }"
+    error_contract: "unknown_server | unknown_app | not_found | ssh_error"
+
+  codeprovider-mcp.search_code:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, pattern: string(POSIX ERE), file_glob?: string, case_sensitive?: bool, max_results?: int=50 }"
+    output_contract: "{ matches: [{ file, line, content }] }"
+    error_contract: "invalid_regex | unknown_app | ssh_error"
+
+  # ── MCP: file write ───────────────────────────────────────────────────────
+  codeprovider-mcp.write_file:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, path: string(relative), content: string(max 1MB) }"
+    output_contract: "{ written: bool, path: string }"
+    error_contract: "content_too_large(>1MB) | unknown_app | permission_denied | ssh_error"
+    idempotency_key_pattern: "mcp-write:{server_id}:{app_id}:{path}:sha256({content})"
+
+  codeprovider-mcp.apply_patch:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, patch: string(unified diff with ---/+++/@@), strip?: int=1 }"
+    output_contract: "{ applied: bool, files_changed: string[], dry_run_output: string }"
+    error_contract: "dry_run_failed(nothing changed) | malformed_diff | context_mismatch"
+    idempotency_key_pattern: "patch:{server_id}:{app_id}:sha256({patch})"
+    idempotency_note: "Dry-runs first, so a re-apply fails on context mismatch instead of double-applying. The key exists to prevent the pointless retry, not to protect the file."
+
+  codeprovider-mcp.edit_file:
+    contract_source: registry-description
+    contract_note: "NOT exposed by the live MCP server — the registry lists it but no schema is available, so this contract is from the registry description only. Verify or remove the entry. NO idempotency_key_pattern on purpose: a key over field names nobody has verified exist cannot be computed, and counting it toward the H2-3 threshold would inflate a criterion with a guess. Same reason `deploy:{target}:{version}` in tool-registry.yaml was useless."
+    input_contract: "{ server_id: string, app_id: string, path: string, ... } (unverified)"
+    output_contract: "{ edited: bool } (unverified)"
+    error_contract: "unverified"
+
+  codeprovider-mcp.quick_fix:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, file_path: string(relative), old_string: string(must match EXACTLY once), new_string: string, commit_msg: string, deploy?: bool=true }"
+    output_contract: "{ committed: bool, pushed: bool, deployed: bool, commit_sha?: string }"
+    error_contract: "old_string_missing | old_string_multiple_matches | commit_failed | deploy_failed"
+    idempotency_key_pattern: "quickfix:{server_id}:{app_id}:{file_path}:sha256({old_string}|{new_string})"
+    idempotency_note: "deploy defaults to TRUE, so a duplicate call is a duplicate DEPLOY. This is the highest-value key in the file."
+
+  # ── MCP: execution ────────────────────────────────────────────────────────
+  codeprovider-mcp.run_command:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, command: string(allow-listed binaries), confirm?: bool, timeout_sec?: int=120 }"
+    output_contract: "{ stdout: string, stderr: string, exit_code: int }"
+    error_contract: "binary_not_allow_listed | destructive_verb_needs_confirm | timeout | ssh_error"
+    idempotency_key_pattern: "cmd:{server_id}:sha256({command})"
+
+  codeprovider-mcp.exec_in_container:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, container: string, command: string, workdir?: string, timeout_sec?: int=60 }"
+    output_contract: "{ stdout: string, stderr: string, exit_code: int }"
+    error_contract: "container_not_found | timeout | ssh_error"
+    idempotency_key_pattern: "exec:{server_id}:{container}:sha256({command})"
+
+  codeprovider-mcp.task_create:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, command: string, label?: string='background-task' }"
+    output_contract: "{ task_id: string }"
+    error_contract: "max_concurrent_reached(50) | ssh_error"
+    idempotency_key_pattern: "task:{server_id}:sha256({command})"
+    idempotency_note: "A duplicate call starts a SECOND background process; nothing downstream notices two builds racing."
+
+  codeprovider-mcp.task_kill:
+    contract_source: mcp-schema
+    input_contract: "{ task_id: string }"
+    output_contract: "{ killed: bool, signal: SIGTERM|SIGKILL }"
+    error_contract: "unknown_task | already_exited"
+    idempotency_key_pattern: "task-kill:{task_id}"
+    idempotency_note: "Killing an already-dead task is a genuine no-op."
+
+  codeprovider-mcp.test_run:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, runner?: auto|npm|pnpm|composer|pytest|artisan, filter?: string, timeout_sec?: int=600 }"
+    output_contract: "{ runner: string, exit_code: int, duration_sec: number, tail: string }"
+    error_contract: "no_runner_detected | timeout | unknown_app"
+    idempotency_key_pattern: "test:{server_id}:{app_id}:{runner}:{filter}"
+    idempotency_note: "Re-running tests is safe; the key exists so the pack does not re-run a 10-minute suite on an unchanged tree."
+
+  codeprovider-mcp.lint_run:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, mode?: check|fix (default check), runner?: auto|eslint|prettier|ruff|shellcheck|php-syntax, paths?: string='.', timeout_sec?: int=120 }"
+    output_contract: "{ runner: string, issues: int, exit_code: int, output: string }"
+    error_contract: "no_linter_detected | timeout | unknown_app"
+    idempotency_key_pattern: "lint:{server_id}:{app_id}:{mode}:{runner}:{paths}"
+    idempotency_note: "mode=fix WRITES to the tree; mode=check does not. The mode is in the key because they are different operations."
+
+  # ── MCP: deploy ───────────────────────────────────────────────────────────
+  codeprovider-mcp.deploy:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, skip_build?: bool }"
+    output_contract: "{ pulled: string(commit), built: bool, restarted: bool, health: pass|fail }"
+    error_contract: "git_pull_failed | build_failed | health_check_failed | unknown_app | ssh_error"
+    idempotency_key_pattern: "deploy:{server_id}:{app_id}"
+    idempotency_note: "Deliberately NOT including a commit: the tool takes none, it pulls whatever is at HEAD. So two identical calls can deploy different code — the key identifies an accidental repeat, it does not promise the same result."
+
+  codeprovider-mcp.deploy_safe:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, agent_id?: string='deploy_safe', run_tests?: bool, ready_pattern?: string }"
+    output_contract: "{ lock_acquired: bool, images_snapshotted: bool, tests?: pass|fail, health_checks: 3, rolled_back: bool }"
+    error_contract: "lock_held_by_other_agent | tests_failed(auto-rollback) | ready_pattern_timeout(auto-rollback) | health_failed(auto-rollback)"
+    idempotency_key_pattern: "deploy_safe:{server_id}:{app_id}"
+    idempotency_note: "Takes an app lock itself, so a concurrent duplicate is refused by the lock rather than by this key."
+
+  codeprovider-mcp.rollback_deploy:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, confirm?: bool — OPTIONAL in the schema, enforced at runtime: the call fails without it }"
+    output_contract: "{ revert_commit: string, redeployed: bool }"
+    error_contract: "confirm_not_set | nothing_to_revert | redeploy_failed"
+    idempotency_key_pattern: "rollback:{server_id}:{app_id}"
+    idempotency_note: "NOT a no-op on repeat: each call reverts the NEW most-recent commit, so calling twice reverts the revert. The key is what stops that."
+
+  codeprovider-mcp.webhook_trigger:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, action?: test|test-and-deploy (default test), branch?: string='master', commit_sha?: string, author?: string }"
+    output_contract: "{ tests: pass|fail, deployed?: bool }"
+    error_contract: "unknown_app | tests_failed | deploy_failed"
+    idempotency_key_pattern: "webhook:{server_id}:{app_id}:{action}:{branch}:{commit_sha}"
+
+  # ── MCP: git ──────────────────────────────────────────────────────────────
+  codeprovider-mcp.git_status:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string }"
+    output_contract: "{ branch: string, changed: string[], untracked: string[] }"
+    error_contract: "unknown_app | not_a_git_repo"
+
+  codeprovider-mcp.git_log:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, count?: int=10 }"
+    output_contract: "{ commits: [{ sha, author, date, subject }] }"
+    error_contract: "unknown_app | not_a_git_repo"
+
+  codeprovider-mcp.git_diff:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, file?: string, staged?: bool }"
+    output_contract: "{ diff: string(unified) }"
+    error_contract: "unknown_app | file_not_found"
+
+  codeprovider-mcp.git_branch:
+    contract_source: mcp-schema
+    input_contract: "{ action: list|current|create|switch|delete|sync (required), server_id: string, app_id: string, name?: string }"
+    output_contract: "{ branches?: string[], current?: string, created?: bool, switched?: bool, deleted?: bool }"
+    error_contract: "unknown_action | branch_exists | branch_not_found | dirty_tree_blocks_switch"
+    idempotency_key_pattern: "git-branch:{server_id}:{app_id}:{action}:{name}"
+    idempotency_note: "list/current/sync are read-only; create/switch/delete mutate. delete is FORCE, so a repeat on a recreated branch destroys different work — hence name is in the key."
+
+  codeprovider-mcp.git_commit:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, message: string, files?: string[]=['.'] }"
+    output_contract: "{ commit_sha: string, pushed: bool }"
+    error_contract: "nothing_to_commit | push_rejected(behind remote) | hook_failed"
+    idempotency_key_pattern: "commit:{server_id}:{app_id}:sha256({message}|{files})"
+    idempotency_note: "This tool commits AND pushes. A repeat with the same message on a changed tree creates a second commit — not a no-op."
+
+  codeprovider-mcp.git_push:
+    contract_source: registry-description
+    contract_note: "NOT exposed by the live MCP server — git_commit already pushes. The registry entry may be legacy; verify or remove it. NO idempotency_key_pattern on purpose, same reason as edit_file: an unverified key counted toward H2-3 inflates the criterion it is supposed to measure."
+    input_contract: "{ server_id: string, app_id: string, branch?: string } (unverified)"
+    output_contract: "{ pushed: bool } (unverified)"
+    error_contract: "unverified"
+
+  # ── MCP: database ─────────────────────────────────────────────────────────
+  codeprovider-mcp.mysql_query:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, query: string, confirm_write?: bool, app_id?: string(credentials from .env), database?: string, host?: string, port?: number, user?: string, password?: string, format?: table|tsv|vertical, row_limit?: int=100 }"
+    contract_note: "`confirm_write` was missing from the first version of this contract even though the error_contract and idempotency_note below both name it. It is the flag that gates INSERT/UPDATE/DELETE/DROP — leaving the one destructive gate out of the input description is the worst single omission this file could have."
+    output_contract: "{ rows: any[], row_count: int, format: string }"
+    error_contract: "dml_without_confirm_write | sql_error | credentials_not_found | connection_refused"
+    idempotency_key_pattern: "mysql:{server_id}:{database}:sha256({query})"
+    idempotency_note: "SELECT is safe to repeat; INSERT/UPDATE/DELETE is not. The tool separates them with confirm_write, and this key catches the repeated write."
+
+  codeprovider-mcp.db_snapshot:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, description?: string }"
+    output_contract: "{ path: string(.sql.gz) }"
+    error_contract: "credentials_not_found | mysqldump_failed | disk_full"
+    idempotency_key_pattern: "snapshot:{server_id}:{app_id}"
+    idempotency_note: "Repeating is harmless but wastes disk; snapshots are timestamped so a repeat does not overwrite."
+
+  codeprovider-mcp.backup_create:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, target?: volume|db|dir (default volume), dir_path?: string }"
+    output_contract: "{ path: string(/opt/_backups/...), rotated: int }"
+    error_contract: "unknown_target | disk_full | unknown_app"
+    idempotency_key_pattern: "backup:{server_id}:{app_id}:{target}:{dir_path}"
+    idempotency_note: "Keeps only the 7 most recent — so repeated calls silently ROTATE OUT older backups. A duplicate is not free."
+
+  codeprovider-mcp.backup_restore:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, backup_file: string(abs path or name in /opt/_backups/), confirm?: bool — OPTIONAL in the schema, enforced at runtime: the call fails without it }"
+    output_contract: "{ restored: bool, target: volume|db }"
+    error_contract: "confirm_not_set | backup_not_found | restore_failed(app data may be partial)"
+    idempotency_key_pattern: "restore:{server_id}:{app_id}:{backup_file}"
+    idempotency_note: "OVERWRITES current app data. Restoring the same file twice is closer to a no-op than most, but a repeat after new writes destroys them again — hence the key."
+
+  # ── MCP: infrastructure ───────────────────────────────────────────────────
+  codeprovider-mcp.http_fetch:
+    contract_source: mcp-schema
+    input_contract: "{ url: string, method?: GET|POST|PUT|PATCH|DELETE|HEAD (default GET), headers?: map<string,string>, body?: string, timeout_sec?: int=30, max_response_bytes?: int=500000 }"
+    output_contract: "{ status: int, headers: map, body: string|object(json auto-parsed) }"
+    error_contract: "dns_error | timeout | tls_error | response_too_large | host_not_in_allowlist(PDP)"
+    idempotency_key_pattern: "http:{method}:{url}:sha256({body})"
+    idempotency_note: "GET/HEAD are safe to repeat; POST/PUT/PATCH/DELETE are not, and the method is in the key for exactly that reason."
+
+  codeprovider-mcp.nginx_vhost:
+    contract_source: mcp-schema
+    input_contract: "{ action: list|get|set (required), server_id: string, domain?: string, content?: string }"
+    output_contract: "{ vhosts?: string[], content?: string, tested: bool, reloaded: bool, reverted?: bool }"
+    error_contract: "nginx_test_failed(auto-revert, NO reload) | path_outside_sites_enabled | unknown_domain"
+    idempotency_key_pattern: "nginx:{server_id}:{action}:{domain}:sha256({content})"
+    idempotency_note: "Guards itself: backup → write → nginx -t → auto-revert on failure. Same content twice is a real no-op."
+
+  codeprovider-mcp.cron_manage:
+    contract_source: mcp-schema
+    input_contract: "{ action: list|add|remove (required), server_id: string, key?: string(## MCP:<key> marker), schedule?: string(cron expr), command?: string, description?: string }"
+    output_contract: "{ entries?: [{ key, schedule, command }], added?: bool, removed?: bool }"
+    error_contract: "unknown_action | key_missing | invalid_schedule"
+    idempotency_key_pattern: "cron:{server_id}:{action}:{key}"
+    idempotency_note: "Keyed by marker, so add-with-same-key replaces rather than duplicating. Unmarked crons are never touched."
+
+  codeprovider-mcp.app_lock:
+    contract_source: mcp-schema
+    input_contract: "{ app_id: string, agent_id: string, label?: string, ttl_sec?: int=600 }"
+    output_contract: "{ token: string, expires_at: timestamp }"
+    error_contract: "already_locked_by_other_agent(409) | unknown_app"
+    idempotency_key_pattern: "lock:{app_id}:{agent_id}"
+    idempotency_note: "Must NOT be deduped across agents — the whole point is that a second agent gets refused. Keyed by agent so one agent re-asking is the only case treated as a repeat."
+
+  codeprovider-mcp.app_unlock:
+    contract_source: mcp-schema
+    input_contract: "{ token: string(from app_lock) }"
+    output_contract: "{ released: bool }"
+    error_contract: "unknown_token | already_released | token_expired"
+    idempotency_key_pattern: "unlock:{token}"
+    idempotency_note: "Releasing twice is a genuine no-op."
+
+  codeprovider-mcp.kv_set:
+    contract_source: mcp-schema
+    input_contract: "{ key: string, value: string, ttl_sec?: number }"
+    output_contract: "{ set: bool }"
+    error_contract: "none(in-memory; lost on MCP restart)"
+    idempotency_key_pattern: "kv-set:{key}:sha256({value})"
+
+  codeprovider-mcp.kv_get:
+    contract_source: mcp-schema
+    input_contract: "{ key: string }"
+    output_contract: "{ value: string | '(not set)' }"
+    error_contract: "none"
+
+  codeprovider-mcp.note_post:
+    contract_source: mcp-schema
+    input_contract: "{ tag: string(free-form, e.g. app_id or topic), body: string, agent_id?: string }"
+    output_contract: "{ id: string }"
+    error_contract: "none"
+    idempotency_key_pattern: "note:{tag}:sha256({body})"
+
+  codeprovider-mcp.note_consume:
+    contract_source: mcp-schema
+    input_contract: "{ id: string }"
+    output_contract: "{ consumed: bool }"
+    error_contract: "unknown_id"
+    idempotency_key_pattern: "note-consume:{id}"
+    idempotency_note: "Consuming an already-consumed note is a no-op; notes are deleted after 24h."
+
+  codeprovider-mcp.worktree_create:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, agent_id: string, branch?: string(defaults to source HEAD) }"
+    output_contract: "{ path: string(/opt/_worktrees/<app_id>-<agent_id>) }"
+    error_contract: "worktree_exists | unknown_app | branch_not_found"
+    idempotency_key_pattern: "worktree:{server_id}:{app_id}:{agent_id}"
+    idempotency_note: "The path is derived from app+agent, so a repeat targets the same directory — the key matches that reality."
+
+  codeprovider-mcp.worktree_remove:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, app_id: string, agent_id: string }"
+    output_contract: "{ removed: bool }"
+    error_contract: "worktree_not_found"
+    idempotency_key_pattern: "worktree-rm:{server_id}:{app_id}:{agent_id}"
+    idempotency_note: "FORCE-cleans if dirty, so a repeat after new work in a recreated worktree destroys it. Not as harmless as it looks."
+
+  # ── MCP: observability (read-only) ────────────────────────────────────────
+  codeprovider-mcp.server_health:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string }"
+    output_contract: "{ apps: [{ app_id, url, status, latency_ms }] }"
+    error_contract: "unknown_server | ssh_error"
+
+  codeprovider-mcp.docker_status:
+    contract_source: mcp-schema
+    input_contract: "{ server_id?: string (omit = all servers) }"
+    output_contract: "{ containers: [{ name, image, status, ports }] }"
+    error_contract: "unknown_server | docker_unavailable"
+
+  codeprovider-mcp.smoke_check:
+    contract_source: mcp-schema
+    input_contract: "{ url: string, expect_status?: int=200, expect_text?: string, timeout_sec?: int=10, server_id?: string }"
+    output_contract: "{ status: int, matched_text: bool, elapsed_ms: int }"
+    error_contract: "timeout | dns_error | status_mismatch | text_not_found"
+
+  codeprovider-mcp.log_scan:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, containers?: string, pattern?: string(default ERROR|FATAL|exception|panic|Segmentation|Traceback|Fatal|CRITICAL), since?: string='24h', case_sensitive?: bool }"
+    output_contract: "{ by_container: map<string, { count, top: string[] }> }"
+    error_contract: "unknown_server | invalid_regex | docker_unavailable"
+
+  codeprovider-mcp.disk_usage:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string, path?: string='/' }"
+    output_contract: "{ filesystems: [{ mount, size, used, avail, pct }], heavy_dirs: [{ path, size }] }"
+    error_contract: "unknown_server | path_not_found"
+
+  # Added after a review found the header wrongly listing these four as
+  # evidence-free. All four are exposed by the live server and their input
+  # schemas were loaded like every other.
+  codeprovider-mcp.task_get:
+    contract_source: mcp-schema
+    input_contract: "{ task_id: string }"
+    output_contract: "{ state: running|done, exit_code?: int, elapsed_sec: number, buffered_output_bytes: int }"
+    error_contract: "unknown_task | task_lost(MCP container restarted)"
+
+  codeprovider-mcp.task_list:
+    contract_source: mcp-schema
+    input_contract: "{} (no parameters)"
+    output_contract: "{ tasks: [{ task_id, label, state, elapsed_sec }] } — running plus finished within the last hour"
+    error_contract: "none"
+
+  codeprovider-mcp.note_list:
+    contract_source: mcp-schema
+    input_contract: "{ tag?: string, include_consumed?: bool, limit?: int=50 }"
+    output_contract: "{ notes: [{ id, tag, body, agent_id, consumed }] } — newest first"
+    error_contract: "none"
+
+  codeprovider-mcp.container_stats:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string(required per description) }"
+    output_contract: "{ containers: [{ name, cpu_pct, mem, net_io, block_io }] }"
+    error_contract: "unknown_server | docker_unavailable"
+
+  codeprovider-mcp.cert_status:
+    contract_source: mcp-schema
+    input_contract: "{ server_id: string }"
+    output_contract: "{ certs: [{ domain, expires_at, days_left }], certbot_timer: string, warnings: string[] }"
+    error_contract: "unknown_server | certbot_not_installed"

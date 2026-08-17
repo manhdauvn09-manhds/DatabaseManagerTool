@@ -60,6 +60,22 @@ Môi trường kiểm chứng: Windows 11 (dev) + Ubuntu/Hetzner <code>mcp-80</c
 <b>Bối cảnh.</b> Dự án chạy một đợt nâng cấp Harness (H2/H3/H5/H7) trong 1 phiên làm việc, có triển khai thật lên server production và chạy thật cả 4 suite trên 2 hệ điều hành. Tài liệu này chỉ ghi những gì <b>đã kiểm chứng bằng lệnh chạy thật</b> — mỗi mục đều kèm cách tái hiện. Không có mục nào là suy đoán.
 </div>
 
+<div class="card" style="border-left:4px solid #2563eb;background:#eff6ff">
+<b>📥 Phản hồi từ HarnessAI-ToolKIT — 2026-08-07.</b> Đã đọc và đối chiếu cả 7 request với code hiện tại (bundle đã lên <b>1.6.1</b>, cài toàn fleet 2026-08-07). Trạng thái trung thực từng mục:
+<table style="margin-top:8px;width:100%;border-collapse:collapse">
+<tr><th style="text-align:left">#</th><th style="text-align:left">Trạng thái</th><th style="text-align:left">Ghi chú</th></tr>
+<tr><td>1</td><td><b>CHƯA — đã xếp lịch (batch W5 Portal-scorer, ưu tiên cao nhất kế tiếp)</b></td><td>Cùng batch với request tương tự từ 2 dự án khác. Scorer sẽ đọc package.json scripts.test / pytest.ini / composer.json thay vì chỉ đếm <code>regression_suites_required</code>.</td></tr>
+<tr><td>2</td><td><b>CHƯA — ghi nhận là bug bảo mật P1, duy nhất dự án này phát hiện</b></td><td>Đúng: grep POSIX coi <code>
+</code> trong bracket là ký tự literal → 11 pattern chết im lặng trên Linux. Sẽ sửa risk-policy.yaml sang cú pháp portable (không sửa script — C2). Vào đợt fix kế tiếp cùng W5.</td></tr>
+<tr><td>3</td><td><b>CHƯA — cùng họ với fix đã ship, chưa phủ settings.json</b></td><td>v1.6.1 đã có cơ chế merge cho <code>tool-registry.json</code> (class <code>merge_json_maps</code> trong bundle-ownership.yaml — AllIn1Site mất 62 contract vì đúng lỗi này). Mở rộng sang <code>.claude/settings.json</code> (merge hooks tuỳ biến) là việc kế tiếp của cùng cơ chế.</td></tr>
+<tr><td>4</td><td><b>MỘT PHẦN — nhóm ledger đã wire xong trong 1.6.1</b></td><td>Genesis tự tạo ở session-start, seal command mới, push-telemetry gọi ở session-end (kèm fix 2 bug làm nó chết từ lúc ship). Còn lại chưa wire: <code>drift-detect</code>, <code>harness-eval</code> định kỳ — đúng như báo cáo.</td></tr>
+<tr><td>5</td><td><b>CHƯA</b></td><td>Trong backlog (H5-5), chưa xếp lịch cụ thể.</td></tr>
+<tr><td>6</td><td><b>CHƯA — đã xếp lịch (cùng batch W5)</b></td><td>Sẽ cấp điểm partial cho hook-enforced thay vì 0 khi gateway chưa live (C10 — 2 dự án khác cùng báo).</td></tr>
+<tr><td>7</td><td><b>CHƯA</b></td><td>Hướng sửa: installer chạy <code>git update-index --chmod=+x</code> / chmod sau khi materialize file .sh. Vào cùng đợt với #2.</td></tr>
+</table>
+<div style="margin-top:6px;font-size:.9em">Phụ lục A/B: đã ghi nhận, không cần hành động từ dự án. Riêng B (vitest related thoát 0 khi chạy 0 test) đã được phòng bởi thiết kế <code>run-affected-tests</code>: fallback <code>ALL</code> khi file đổi không khớp map nào, và report phải ghi rõ "tested subset X/Y".</div>
+</div>
+
 <h2>Tóm tắt</h2>
 <table class="wrap">
 <tr><th>#</th><th>Vấn đề</th><th>Loại</th><th>Ưu tiên</th><th>Ảnh hưởng</th></tr>

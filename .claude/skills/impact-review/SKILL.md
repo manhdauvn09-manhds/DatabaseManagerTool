@@ -33,6 +33,25 @@ prompt_template: |
 
   Report: the impact map, findings (confirmed vs dropped), fixes applied, the test
   report, retry count, and the final verdict.
+
+  7. RECORD (always, including on failure) — append the run to
+     .harness/telemetry/pipeline-runs.jsonl so it survives this terminal:
+
+       powershell -File .harness\scripts\powershell\harness-pipeline-log.ps1 `
+         -Skill impact-review -PipelineId {pipeline_id} -Verdict <APPROVED|CHANGES_REQUIRED|REJECTED|ESCALATED|ABORTED> `
+         -Found <n> -Confirmed <n> -Dropped <n> -Fixed <n> -Retries <n> `
+         -Files <n> -TestsPassed <n> -TestsFailed <n> -Base {base} -Head {head}
+
+       # bash: .harness/scripts/bash/harness-pipeline-log.sh --skill impact-review ...
+
+     Report the ACTUAL counts from this run. The recorder rejects a record whose
+     numbers cannot describe a real run -- more fixed than confirmed, or
+     confirmed+dropped exceeding found -- so a padded record does not silently
+     become a dashboard row.
+
+     Record the run even when it ends ESCALATED or ABORTED. A loop that only logs
+     its successes produces a success rate of 100%, which is worse than no
+     number: it reads as evidence and is not.
 inputs:
   pipeline_id:
     type: string

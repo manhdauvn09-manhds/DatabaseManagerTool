@@ -31,6 +31,10 @@ deploy/.env.production.local
 # One-time backup written when a legacy guide block is migrated
 *.pre-migration.bak
 
+# Python bytecode cache from harness lib scripts
+__pycache__/
+*.py[cod]
+
 # Harness runtime state - local per-machine, khong phai source.
 # Ledger van tamper-evident nho hash-chain + day len Portal (portal-sync.json);
 # commit vao git se churn moi tool call va conflict lien tuc.
