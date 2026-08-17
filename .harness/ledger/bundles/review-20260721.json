@@ -1,0 +1,26 @@
+{
+  "bundle_id": "1cfb5213-991c-47ad-b5d8-54a2486e9951",
+  "change_id": "review-20260721-DatabaseManager",
+  "created_at": "2026-07-21T03:34:14Z",
+  "created_by": {
+    "agent": "code-reviewer",
+    "user": "manhdauvn09@gmail.com",
+    "session_id": "eval-review-20260721"
+  },
+  "review_verdict": {
+    "verdict": "APPROVED",
+    "score": 88,
+    "feedback": "Clean Next.js DB tool: SSRF+DNS-rebind guard, RSA-OAEP, rate limit, audit, ~20 test files + e2e + CI. Minor gaps only.",
+    "reviewer_agent": "code-reviewer (LLM-judge)"
+  },
+  "requirement_trace": {
+    "requirement_ids": [],
+    "spec_ref": ""
+  },
+  "security_scan": {
+    "passed": true,
+    "high_critical_count": 0,
+    "scanner": "review-pass",
+    "findings_count": 0
+  }
+}

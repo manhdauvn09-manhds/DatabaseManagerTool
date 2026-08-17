@@ -1,0 +1,52 @@
+# agent-config.yaml — dự án khai cách chạy test cho impact-analyzer / targeted-tester.
+# Schema: .harness/schemas/agent-config.schema.json
+#
+# C2: đây là DATA. Agent đọc file này, không hardcode lệnh test hay danh sách hub.
+#
+# Hợp nhất 2026-08-04: nội dung port từ
+# .claude/skills/change-pipeline/pipeline-config.yaml (bản tự viết trước khi
+# bundle ship impact-analyzer/targeted-tester). Bản pipeline-config.yaml đã bỏ.
+
+test:
+  # {files} được thay bằng danh sách file đã đổi (đường dẫn tính từ repo root).
+  # Vitest tự lần dependency graph nên bắt được cả reverse-dep (đổi mutate.ts ->
+  # kéo theo bulkMutate.test.ts). Đo thực tế: 10-17s so với full suite 27s.
+  #
+  # ⚠️ PHẢI `cd SecureConnect` và bỏ tiền tố `SecureConnect/` khỏi {files}.
+  # Đã thử và LOẠI 3 dạng khác:
+  #   npx vitest related --run {files} --dir SecureConnect   -> "No test files found", EXIT 0 (!!)
+  #   npx vitest related --run {files} --root SecureConnect  -> "No test files found", EXIT 0 (!!)
+  #   npm test --prefix SecureConnect -- related --run {f}   -> "No test files found", exit 1
+  # Hai dạng đầu thoát 0 khi không tìm thấy test nào — tức âm thầm báo "pass"
+  # trong khi chạy 0 test. Đó là kiểu hỏng nguy hiểm nhất của selective testing.
+  # Dạng dưới đã kiểm chứng: 2 file nguồn -> 3 test file / 45 test.
+  unit_related_cmd: "cd SecureConnect && npx vitest related --run $(echo '{files}' | sed 's#SecureConnect/##g')"
+
+  # Dùng khi chạm hub file và ở release gate. Khớp với suite secureconnect-unit
+  # trong casan-policies.yaml -> evaluation.suite_commands (một SSOT).
+  full_suite_cmd: "npm test --silent --prefix SecureConnect"
+
+  integration_smoke:
+    - "curl -sf https://DBManager.allin1site.com/api/health"
+
+impact:
+  # Chạm 1 trong các path này => chạy full suite, vì chúng được import ở quá
+  # nhiều nơi hoặc đổi hành vi toàn cục; dependency graph không đủ để tin.
+  force_full_test_on:
+    # Kết nối + lưu trữ: mọi route DB đều đi qua
+    - "SecureConnect/src/lib/connections/store.ts"
+    - "SecureConnect/src/lib/connections/dbConnector.ts"
+    # Vòng đời request của mọi API route
+    - "SecureConnect/src/lib/db-api/route-helper.ts"
+    - "SecureConnect/src/middleware.ts"
+    # Bảo mật / mã hoá: hỏng là hỏng toàn hệ
+    - "SecureConnect/src/lib/security/ssrfGuard.ts"
+    - "SecureConnect/src/lib/crypto/serverVault.ts"
+    - "SecureConnect/src/lib/crypto/serverKeyStore.ts"
+    - "SecureConnect/src/lib/redis/client.ts"
+    # Đổi dependency hoặc cấu hình test => graph cũ không còn đúng
+    - "SecureConnect/package.json"
+    - "SecureConnect/package-lock.json"
+    - "SecureConnect/vitest.config.*"
+    - "SecureConnect/next.config.*"
+    - "SecureConnect/Dockerfile"

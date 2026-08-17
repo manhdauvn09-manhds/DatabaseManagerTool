@@ -1,0 +1,173 @@
+﻿# Risk Policy — SSOT for runtime guard decisions
+# Guard scripts READ this file; never hardcode rules in .ps1 (C2)
+schema_version: "1.0.0"
+
+# Deny patterns for Bash/PowerShell commands
+# Each entry: regex pattern matched against the command string
+command_deny_patterns:
+  # --- DBManager project-specific (CLAUDE.md "KHÔNG" list) ---
+  - pattern: "docker\\s+volume\\s+rm\\s+.*dbmanager"
+    risk: "critical"
+    reason: "Xoá volume dbmanager_* = mất saved-connections/Redis AOF của user (CLAUDE.md cấm)"
+    action: "deny"
+  - pattern: "docker[\\s-]+compose\\s+down.*(-v|--volumes)"
+    risk: "critical"
+    reason: "compose down -v recreate volume — mất data user (CLAUDE.md cấm)"
+    action: "deny"
+  - pattern: "setup-nginx-site\\.sh"
+    risk: "critical"
+    reason: "Script trỏ server cũ đã xoá; host nginx đã có vhost (CLAUDE.md cấm)"
+    action: "deny"
+  # --- Common patterns (shipped baseline) ---
+  # \\brm, not rm: without the boundary this matched "rm" inside "confirm" and
+  # denied ordinary prose. A guard that blocks a sentence is a guard people
+  # switch off (C14) — see golden case tk-allow-word-containing-verb.
+  - pattern: "\\brm\\s+-[rR][fF]"
+    risk: "critical"
+    reason: "Recursive force delete — potential data loss"
+    action: "deny"
+  - pattern: "sudo\\s+"
+    risk: "critical"
+    reason: "Privilege escalation — requires approval"
+    action: "deny"
+  - pattern: "chmod\\s+-R"
+    risk: "high"
+    reason: "Recursive permission change — potential security bypass"
+    action: "deny"
+  - pattern: "git\\s+reset\\s+--hard"
+    risk: "high"
+    reason: "Destructive git reset — loses uncommitted work"
+    action: "deny"
+  - pattern: "git\\s+push\\s+--force"
+    risk: "high"
+    reason: "Force push — overwrites remote history"
+    action: "deny"
+  - pattern: "del\\s+/[FfSs]"
+    risk: "critical"
+    reason: "Force/silent delete on Windows — potential data loss"
+    action: "deny"
+  - pattern: "Remove-Item\\s+-Recurse\\s+-Force"
+    risk: "critical"
+    reason: "Recursive force remove on Windows — potential data loss"
+    action: "deny"
+  - pattern: "Start-Process\\s+-Verb\\s+RunAs"
+    risk: "critical"
+    reason: "Elevated execution — privilege escalation"
+    action: "deny"
+  # --- Remote code execution: pipe-to-shell / decode-to-shell ---
+  - pattern: "(curl|wget)\\s+[^|]*\\|\\s*(sudo\\s+)?(ba|z|d)?sh\\b"
+    risk: "critical"
+    reason: "Piping a download straight into a shell — arbitrary remote code execution"
+    action: "deny"
+  - pattern: "base64\\s+-{1,2}d[^|]*\\|\\s*(ba|z)?sh\\b"
+    risk: "critical"
+    reason: "Decoding a blob straight into a shell — obfuscated code execution"
+    action: "deny"
+  - pattern: "(Invoke-WebRequest|iwr|curl|wget)[^|]*\\|\\s*(iex|Invoke-Expression)"
+    risk: "critical"
+    reason: "Download piped into Invoke-Expression — remote code execution"
+    action: "deny"
+  # Prefixed with (^|.) so the pattern does not START with '-': grep -qE reads a
+  # leading '-' as an option, so the bash guard silently never ran this rule while
+  # the PowerShell guard did. (^|.) = start-of-line OR any one char — coverage
+  # is unchanged, portability is restored.
+  - pattern: "(^|.)-[Ee]nc(odedCommand)?\\s+[A-Za-z0-9+/=]{24,}"
+    risk: "critical"
+    reason: "PowerShell encoded command — obfuscated execution"
+    action: "deny"
+  # --- Disk / filesystem destruction ---
+  - pattern: "dd\\s+.*of=/dev/"
+    risk: "critical"
+    reason: "Writing raw to a block device — disk wipe"
+    action: "deny"
+  - pattern: "\\bmkfs(\\.[a-z0-9]+)?\\b"
+    risk: "critical"
+    reason: "Formatting a filesystem — data loss"
+    action: "deny"
+  - pattern: "\\b(wipefs|shred)\\b"
+    risk: "critical"
+    reason: "Secure-wipe / erase filesystem signatures — data loss"
+    action: "deny"
+  - pattern: ":\\(\\)\\s*\\{\\s*:\\s*\\|"
+    risk: "critical"
+    reason: "Fork bomb — resource-exhaustion denial of service"
+    action: "deny"
+  # --- Permission / ownership weakening ---
+  - pattern: "chmod\\s+.*777"
+    risk: "high"
+    reason: "World-writable permissions — security downgrade"
+    action: "deny"
+  - pattern: "chown\\s+-R"
+    risk: "high"
+    reason: "Recursive ownership change — potential privilege issue"
+    action: "deny"
+  # --- Destructive VCS ---
+  - pattern: "git\\s+clean\\s+-[a-zA-Z]*f"
+    risk: "high"
+    reason: "git clean -f — deletes untracked files irrecoverably"
+    action: "deny"
+  # --- Audit / defense tampering ---
+  - pattern: "history\\s+-c"
+    risk: "high"
+    reason: "Clearing shell history — anti-forensics"
+    action: "deny"
+  - pattern: "rm\\s+.*\\.(bash|zsh)_history"
+    risk: "high"
+    reason: "Deleting shell history — anti-forensics"
+    action: "deny"
+  - pattern: "(ufw\\s+disable|iptables\\s+-F|systemctl\\s+(stop|disable)\\s+(ufw|fail2ban|firewalld))"
+    risk: "critical"
+    reason: "Disabling firewall / security service — defense evasion"
+    action: "deny"
+  # --- Secret exfiltration ---
+  - pattern: "(cat|type|Get-Content)\\s+[^|]*(id_rsa|\\.aws[\\\\/]credentials|\\.ssh[\\\\/]id_)"
+    risk: "high"
+    reason: "Reading private keys / cloud credentials — potential exfiltration"
+    action: "deny"
+  - pattern: "(\\.env|id_rsa|credentials).*\\|.*(curl|wget|nc)\\b"
+    risk: "critical"
+    reason: "Piping secrets to the network — credential exfiltration"
+    action: "deny"
+  # --- Cloud metadata SSRF (v1.2.7) ---
+  - pattern: "169\\.254\\.169\\.254"
+    risk: "critical"
+    reason: "Cloud instance metadata endpoint — IAM credential theft (SSRF)"
+    action: "deny"
+  # --- Reverse shell ---
+  - pattern: "(nc|ncat)\\s+.*-e\\b|/dev/tcp/"
+    risk: "critical"
+    reason: "Reverse shell (nc -e / bash /dev/tcp) — remote takeover"
+    action: "deny"
+  # --- Container escape (scoped to `docker run` so compose/build is unaffected) ---
+  - pattern: "docker\\s+run.*(--privileged|/var/run/docker\\.sock)"
+    risk: "critical"
+    reason: "Privileged container / docker.sock mount — host escape"
+    action: "deny"
+  # --- Setuid escalation (only the setuid mode, not normal chmod 755/644) ---
+  - pattern: "chmod\\s+.*(u\\+s|\\b4[0-7]{3}\\b)"
+    risk: "high"
+    reason: "Setuid bit — privilege-escalation binary"
+    action: "deny"
+  # --- Rewrite shared git history / anti-forensics ---
+  - pattern: "git\\s+filter-repo|git\\s+push.*--mirror"
+    risk: "high"
+    reason: "History rewrite / mirror push — erases shared-branch evidence"
+    action: "deny"
+  # --- Tamper the immutable audit ledger (C9) — only destructive verbs ---
+  # Boundaries on both sides: "del" inside "model" plus a later mention of the
+  # ledger file made this fire on the sentence "the model reads chain.jsonl".
+  # Documentation about a file must not be treated as an attack on it (C14).
+  - pattern: "\\b(rm|del|Remove-Item|truncate|shred)\\b\\s+.*chain\\.jsonl"
+    risk: "critical"
+    reason: "Deleting/truncating the hash-chain ledger — audit tampering (C9)"
+    action: "deny"
+
+# Tool-level deny (matches tool name in tool-registry)
+# Used by PreToolUse hook for non-command tools
+tool_deny_defaults:
+  deploy: { risk: "high", action: "deny", unless_in_workflow: true }
+  rollback_deploy: { risk: "high", action: "deny", unless_in_workflow: true }
+  mysql_query: { risk: "high", action: "deny", unless_in_workflow: true }
+  http_fetch: { risk: "medium", action: "ask" }
+  exec_in_container: { risk: "high", action: "deny", unless_in_workflow: true }
+  run_command: { risk: "medium", action: "ask" }

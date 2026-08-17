@@ -24,23 +24,35 @@ if (-not $changes) {
     if (-not $?) { throw "git add that bai" }
 
     Write-Host "==> git commit"
-    git commit -m @'
-chore(harness): commit toan bo harness uplift + wire CI gates (C12)
+    # Message di qua FILE, khong qua -m: Windows PowerShell 5.1 dung lai command
+    # line cho native exe va tach argument theo dau " nam trong here-string, nen
+    # `git commit -m @'...'@` vo message thanh nhieu pathspec va commit that bai.
+    $msgLines = @(
+        'chore(harness): commit toan bo harness uplift + wire CI gates (C12)',
+        '',
+        '205 file cua harness/agents/skills dang chi ton tai tren mot may. Commit',
+        'de governance khong con phu thuoc vao mot workstation, va de 2 workflow',
+        '.github/workflows/tests.yml + harness-gate.yml thuc su chay tren GitHub.',
+        '',
+        'Truoc commit nay harness doctor bao ci gates la present va triggering on',
+        'main - nhung do la file local chua bao gio duoc push, tuc la gate ton tai',
+        'ma chua bao gio chay. Theo C12 do la UNPROVEN, khong phai green.',
+        '',
+        'Kem theo:',
+        '- risk-policy.yaml: 3 fix regex (\brm, \b(rm|del)\b, (^|.)-Enc) - rule',
+        '  -Enc truoc day khong bao gio chay tren bash vi grep doc - la option.',
+        '- .gitignore: bo qua __pycache__/ va *.py[cod] tu .harness/scripts/lib',
+        '- xoa 4 file .new da het gia tri sau khi merge',
+        '',
+        'Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>'
+    )
+    $msgFile = Join-Path $env:TEMP 'harness-commit-msg.txt'
+    $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+    [System.IO.File]::WriteAllText($msgFile, ($msgLines -join "`n"), $utf8NoBom)
 
-205 file cua harness/agents/skills dang chi ton tai tren mot may. Commit
-de governance khong con phu thuoc vao mot workstation, va de 2 workflow
-.github/workflows/{tests,harness-gate}.yml thuc su chay tren GitHub.
-
-Truoc commit nay `harness doctor` bao ci gates "present, triggering on
-main" — nhung do la file local chua bao gio duoc push, tuc la gate ton
-tai ma chua bao gio chay. Theo C12 do la UNPROVEN, khong phai green.
-
-Kem theo:
-- .gitignore: bo qua __pycache__/ va *.py[cod] tu .harness/scripts/lib
-
-Co-Authored-By: Claude Opus 5 <noreply@anthropic.com>
-'@
+    git commit -F $msgFile
     if (-not $?) { throw "git commit that bai" }
+    Remove-Item $msgFile -Force -ErrorAction SilentlyContinue
 }
 
 Write-Host ""
