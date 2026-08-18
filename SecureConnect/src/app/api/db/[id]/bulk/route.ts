@@ -16,7 +16,7 @@ const MAX_BODY_BYTES = 32 * 1024;
 
 // PUT /api/db/:id/bulk { database, table, search, set, token } — bulk UPDATE.
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
-  const a = await authorize(req, params.id, "db.bulk.update", { rateLimitMax: 15, rateLimitWindowMs: 60_000 });
+  const a = await authorize(req, params.id, "db.bulk.update", { rateLimitMax: 15, rateLimitWindowMs: 60_000, mutation: true });
   if (!a.ok) return a.response;
   const { ctx } = a;
 
@@ -58,7 +58,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
 // DELETE /api/db/:id/bulk { database, table, search, token } — bulk DELETE (+ optional backup).
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
-  const a = await authorize(req, params.id, "db.bulk.delete", { rateLimitMax: 15, rateLimitWindowMs: 60_000 });
+  const a = await authorize(req, params.id, "db.bulk.delete", { rateLimitMax: 15, rateLimitWindowMs: 60_000, mutation: true });
   if (!a.ok) return a.response;
   const { ctx } = a;
 

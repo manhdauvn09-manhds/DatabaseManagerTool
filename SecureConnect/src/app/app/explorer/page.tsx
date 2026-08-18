@@ -670,12 +670,17 @@ function ExplorerInner() {
                     >
                       Search
                     </button>
-                    <button
-                      onClick={() => setView("sql")}
-                      className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "sql" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
-                    >
-                      SQL
-                    </button>
+                    {/* Share links are read-only, and the SQL console now refuses
+                        share tokens (it executes arbitrary SQL). Hide the tab rather
+                        than let a share user reach it and collect a 403. */}
+                    {!readonly && (
+                      <button
+                        onClick={() => setView("sql")}
+                        className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "sql" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
+                      >
+                        SQL
+                      </button>
+                    )}
                     <button
                       onClick={() => setView("monitor")}
                       className={"px-3 py-1.5 rounded-xl text-sm border " + (view === "monitor" ? "bg-zinc-900 text-white" : "bg-white hover:bg-zinc-50")}
@@ -833,7 +838,7 @@ function ExplorerInner() {
                   </table>
                 )}
                 {view === "data" && loading && !rowsData && <div className="p-4 text-sm text-zinc-500">Loading…</div>}
-                {view === "sql" && <SQLEditor connectionId={cid} shareToken={shareToken || undefined} database={selectedDb || undefined} />}
+                {view === "sql" && !readonly && <SQLEditor connectionId={cid} database={selectedDb || undefined} />}
                 {view === "search" && selectedDb && selectedTable && (
                   <AdvancedSearch
                     connectionId={cid}

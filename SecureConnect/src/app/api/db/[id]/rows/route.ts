@@ -69,7 +69,7 @@ export async function GET(req: Request, { params }: { params: { id: string } }) 
 
 // -------------------- POST (insert 1 row) --------------------
 export async function POST(req: Request, { params }: { params: { id: string } }) {
-  const a = await authorize(req, params.id, "db.rows.insert", { rateLimitMax: 30, rateLimitWindowMs: 60_000 });
+  const a = await authorize(req, params.id, "db.rows.insert", { rateLimitMax: 30, rateLimitWindowMs: 60_000, mutation: true });
   if (!a.ok) return a.response;
   const { ctx } = a;
 
@@ -115,7 +115,7 @@ export async function POST(req: Request, { params }: { params: { id: string } })
 
 // -------------------- PUT (update with confirmation token) --------------------
 export async function PUT(req: Request, { params }: { params: { id: string } }) {
-  const a = await authorize(req, params.id, "db.rows.update", { rateLimitMax: 30, rateLimitWindowMs: 60_000 });
+  const a = await authorize(req, params.id, "db.rows.update", { rateLimitMax: 30, rateLimitWindowMs: 60_000, mutation: true });
   if (!a.ok) return a.response;
   const { ctx } = a;
 
@@ -161,7 +161,7 @@ export async function PUT(req: Request, { params }: { params: { id: string } }) 
 
 // -------------------- DELETE (with confirmation token + optional backup) --------------------
 export async function DELETE(req: Request, { params }: { params: { id: string } }) {
-  const a = await authorize(req, params.id, "db.rows.delete", { rateLimitMax: 30, rateLimitWindowMs: 60_000 });
+  const a = await authorize(req, params.id, "db.rows.delete", { rateLimitMax: 30, rateLimitWindowMs: 60_000, mutation: true });
   if (!a.ok) return a.response;
   const { ctx } = a;
 

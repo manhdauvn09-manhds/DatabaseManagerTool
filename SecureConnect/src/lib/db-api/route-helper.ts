@@ -99,15 +99,32 @@ export async function authorizeUser(
  * Default: owner-only (record must belong to the session email).
  * When `opts.allowShare` is true AND the request carries a valid `x-share-token`
  * header, a non-owner is granted READ-ONLY access to the owner's record
- * (ctx.readonly = true). Mutation routes MUST NOT set allowShare — that is the
- * security boundary that keeps shares read-only.
+ * (ctx.readonly = true).
+ *
+ * Routes that write MUST pass `mutation: true`. That is enforced here, not by
+ * convention: a readonly (share) caller reaching a mutation route is refused,
+ * and declaring both `allowShare` and `mutation` is rejected outright as a
+ * configuration error. Before this, the ONLY thing keeping shares read-only was
+ * remembering not to pass allowShare on a write handler — and `ctx.readonly`
+ * was computed but never read anywhere, so there was no second line of defense.
  */
 export async function authorize(
   req: Request,
   connectionId: string,
   action: string,
-  opts: { rateLimitMax?: number; rateLimitWindowMs?: number; allowShare?: boolean } = {}
+  opts: {
+    rateLimitMax?: number;
+    rateLimitWindowMs?: number;
+    allowShare?: boolean;
+    /** Route performs a write. Refuses share (read-only) callers. */
+    mutation?: boolean;
+  } = {}
 ): Promise<AuthorizeResult<RouteCtx>> {
+  // Contradictory declaration — fail closed rather than pick a winner silently.
+  if (opts.allowShare && opts.mutation) {
+    logInternal("authorize.config", new Error(`${action}: allowShare + mutation are mutually exclusive`));
+    return { ok: false, response: jerr("FORBIDDEN", "Not permitted", 403) };
+  }
   const u = await authorizeUser(req, action, opts);
   if (!u.ok) return u;
   const { email, ip } = u.ctx;
@@ -117,8 +134,18 @@ export async function authorize(
     return { ok: false, response: jerr("BAD_CONNECTION_ID", "Invalid connection id", 400) };
   }
 
+  // A share token presented to a write route is refused explicitly rather than
+  // ignored. Ignoring it also denies (the owner-scoped lookup below fails), but
+  // it lands in the audit log as CONNECTION_NOT_FOUND — indistinguishable from a
+  // stale link. "Someone tried to write through a read-only share" is precisely
+  // the event worth being able to see later, so it gets its own code.
+  if (opts.mutation && req.headers.get(SHARE_HEADER)) {
+    audit({ action, email, ip, ok: false, errCode: "SHARE_READONLY" });
+    return { ok: false, response: jerr("FORBIDDEN", "Share links are read-only.", 403) };
+  }
+
   // Read-only share path — only when the route opts in.
-  const shareToken = opts.allowShare ? req.headers.get(SHARE_HEADER) : null;
+  const shareToken = opts.allowShare && !opts.mutation ? req.headers.get(SHARE_HEADER) : null;
   if (shareToken) {
     const share = await getShare(shareToken);
     if (!share || share.connectionId !== connectionId) {
@@ -130,7 +157,14 @@ export async function authorize(
       audit({ action, email, ip, ok: false, errCode: "CONNECTION_NOT_FOUND" });
       return { ok: false, response: jerr("CONNECTION_NOT_FOUND", "Shared connection has expired.", 404) };
     }
-    return { ok: true, ctx: { email, ip, rec, readonly: true } };
+    const ctx: RouteCtx = { email, ip, rec, readonly: true };
+    // Belt-and-braces: even if the guards above are ever loosened, a readonly
+    // context must never reach a write.
+    if (opts.mutation) {
+      audit({ action, email, ip, ok: false, errCode: "SHARE_READONLY" });
+      return { ok: false, response: jerr("FORBIDDEN", "Share links are read-only.", 403) };
+    }
+    return { ok: true, ctx };
   }
 
   const rec = await getConnectionRecord(connectionId, email);

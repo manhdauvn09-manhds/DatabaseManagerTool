@@ -13,7 +13,13 @@ const MAX_BODY_BYTES = 50 * 1024; // 50 KiB — large SQL files
 
 // POST /api/db/:id/query — Execute read-only SQL
 export async function POST(req: Request, { params }: { params: { id: string } }) {
-  const a = await authorize(req, params.id, "db.query", { rateLimitMax: 60, rateLimitWindowMs: 60_000, allowShare: true });
+  // NO allowShare. This route runs arbitrary SQL, and validateSql() is a regex
+  // denylist — not a boundary. On PostgreSQL (simple query protocol) and MSSQL
+  // (batches) a string starting with SELECT can carry further statements after
+  // a ';', including ones the denylist misses (COPY ... TO PROGRAM, EXECUTE,
+  // SET, REPLACE, MERGE). A read-only share link must not reach that.
+  // Share users browse via the dedicated tables/columns/rows routes instead.
+  const a = await authorize(req, params.id, "db.query", { rateLimitMax: 60, rateLimitWindowMs: 60_000 });
   if (!a.ok) return a.response;
   const { ctx } = a;
 
@@ -93,8 +99,13 @@ export async function POST(req: Request, { params }: { params: { id: string } })
       ms: Date.now() - t0
     });
 
+    // V-06: mask driver internals. Every other route already does this; this one
+    // returned the raw driver message, leaking table/column names, file paths and
+    // server version to the caller. Validation-shaped errors stay visible because
+    // the user needs them to fix their own SQL.
     const msg = e instanceof Error ? e.message : "Query failed";
-    return jerr("QUERY_FAIL", msg, 500);
+    const isValidation = /^(Invalid |Query timed out|SQL )/i.test(msg);
+    return jerr("QUERY_FAIL", isValidation ? msg : "Query failed", isValidation ? 400 : 500);
   }
 }
 

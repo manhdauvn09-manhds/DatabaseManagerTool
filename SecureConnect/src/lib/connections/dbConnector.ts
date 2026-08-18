@@ -141,7 +141,14 @@ async function connectPg(rec: ConnectionRecord): Promise<Handle> {
     password: rec.password,
     connectionTimeoutMillis: CONNECT_TIMEOUT_MS,
     statement_timeout: QUERY_TIMEOUT_MS,
-    ssl: SSL_STRICT ? { rejectUnauthorized: true, servername: rec.host } : undefined
+    // V-02: `ssl: undefined` in node-postgres means NO TLS, not "lenient TLS" —
+    // so the old `SSL_STRICT ? {...} : undefined` sent every password and every
+    // row over the wire in cleartext whenever DB_SSL_STRICT was unset (its
+    // default). Mirror the MySQL branch above: TLS always on, strict optional,
+    // and only DB_SSL_DISABLED turns it off for servers that truly cannot do TLS.
+    ssl: SSL_DISABLED
+      ? undefined
+      : (SSL_STRICT ? { rejectUnauthorized: true, servername: rec.host } : { rejectUnauthorized: false })
   });
   await withTimeout(client.connect(), CONNECT_TIMEOUT_MS + 500, "pg connect");
   const q: QueryFn = async (sql, params) => {
@@ -151,7 +158,13 @@ async function connectPg(rec: ConnectionRecord): Promise<Handle> {
       let i = 0;
       bound = bound.replace(/\?/g, () => `$${++i}`);
     }
-    const result = await withTimeout(client.query(bound, params), QUERY_TIMEOUT_MS, "pg query");
+    // V-03: ALWAYS pass a values array. With `values` omitted, node-postgres uses
+    // the SIMPLE query protocol, which happily executes several statements
+    // separated by ';' — so "SELECT 1; COPY ... TO PROGRAM ..." ran as two
+    // statements and only a regex denylist stood in the way. Supplying an array
+    // (even empty) selects the EXTENDED protocol, where one request = one
+    // statement, enforced by the driver instead of by pattern matching.
+    const result = await withTimeout(client.query(bound, params ?? []), QUERY_TIMEOUT_MS, "pg query");
     const cols = result.fields?.map((f) => f.name) ?? [];
     const out = (result.rows ?? []) as Record<string, unknown>[];
     const affected = result.rowCount ?? out.length;

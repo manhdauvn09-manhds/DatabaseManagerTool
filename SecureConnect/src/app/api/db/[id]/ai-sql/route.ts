@@ -15,8 +15,10 @@ const SCHEMA_TABLE_CAP = 40; // bound how many tables we introspect for context
 
 // POST /api/db/:id/ai-sql  { database, prompt }  → { sql, explanation, warnings }
 export async function POST(req: Request, { params }: { params: { id: string } }) {
-  // Read-only feature, but it reads schema — allow share tokens, tight rate limit.
-  const a = await authorize(req, params.id, "db.ai_sql", { rateLimitMax: 15, rateLimitWindowMs: 60_000, allowShare: true });
+  // NO allowShare. This route does not execute SQL, so it is not the escalation
+  // path db.query was — but it spends the server's LLM budget and takes free-form
+  // prompt text from the caller. Neither belongs to an untrusted share-link holder.
+  const a = await authorize(req, params.id, "db.ai_sql", { rateLimitMax: 15, rateLimitWindowMs: 60_000 });
   if (!a.ok) return a.response;
   const { ctx } = a;
 

