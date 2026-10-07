@@ -60,22 +60,67 @@ push="$(dirname "$0")/push-telemetry.sh"
 decision="allow"; reason="(gate not consulted)"
 CFG="$HARNESS_ROOT/.harness/portal-sync.json"
 if [ -f "$CFG" ]; then
-  read -r decision reason < <(CFG="$CFG" ROOT="$HARNESS_ROOT" KEY="${HARNESS_PORTAL_INGEST_KEY:-}" ALLGREEN="$all_green" python3 - <<'PY'
+  read -r decision reason < <(CFG="$CFG" ROOT="$HARNESS_ROOT" KEY="${HARNESS_PORTAL_INGEST_KEY:-}" ALLGREEN="$all_green" AUTH_LIB="$HARNESS_ROOT/.harness/scripts/lib/harness_checkout_facts.py" python3 - <<'PY'
 import os,json,urllib.request
 try: cfg=json.load(open(os.environ["CFG"],encoding="utf-8-sig"))
 except Exception: cfg={}
-key=os.environ.get("KEY") or ""
-if not key:
-    kf=os.path.join(os.environ["ROOT"],".harness","portal-sync.key")
-    if os.path.isfile(kf): key=open(kf,encoding="utf-8").read().strip()
-if cfg.get("portal_url") and cfg.get("project_id") and key:
+# Portal v2 P1 1.2b: the CHECKOUT credential (X-Checkout-Id + X-Checkout-Credential) when
+# this machine holds one, read by the shared reader, headers only (C5); else the legacy
+# shared key (X-Ingest-Key) with a once-a-day notice. Never both. Parity with the .ps1.
+import re,subprocess,sys,importlib.util
+def _native(p):
+    m=re.match(r"^/([a-zA-Z])/(.*)$",p)
+    return "%s:/%s"%(m.group(1),m.group(2)) if (m and os.name=="nt") else p
+root=_native(os.environ["ROOT"])
+fm=None; headers={}
+try:
+    lib=_native(os.environ.get("AUTH_LIB",""))
+    if lib and os.path.isfile(lib):
+        sp=importlib.util.spec_from_file_location("harness_checkout_facts",lib)
+        fm=importlib.util.module_from_spec(sp); sp.loader.exec_module(fm)
+        a=fm.checkout_auth(root)
+        if a: headers={"X-Checkout-Id":a["checkout_id"],"X-Checkout-Credential":a["checkout_credential"]}
+except Exception:
+    headers={}
+if not headers:
+    key=os.environ.get("KEY") or ""
+    if not key:
+        kf=os.path.join(os.environ["ROOT"],".harness","portal-sync.key")
+        if os.path.isfile(kf): key=open(kf,encoding="utf-8").read().strip()
+    if key:
+        headers={"X-Ingest-Key":key}
+        try:
+            w=fm.legacy_warning("harness-release") if fm else ""
+            if w: sys.stderr.write(w+chr(10))
+        except Exception: pass
+if cfg.get("portal_url") and cfg.get("project_id") and headers:
     url=cfg["portal_url"].rstrip("/")+"/api/pdp/"+cfg["project_id"]+"/decide"
-    body=json.dumps({"tool":"deploy","command":"release","actor":"harness-release"}).encode()
-    req=urllib.request.Request(url,data=body,method="POST",headers={"Content-Type":"application/json","X-Ingest-Key":key,"User-Agent":"harness-release/1.0"})
+    # The REAL requester: HARNESS_USER, else git user.email; with neither, empty and the
+    # server uses the member bound to the credential. The script's own name is never an
+    # actor -- it travels as requested_via.
+    actor=os.environ.get("HARNESS_USER") or ""
+    if not actor:
+        try: actor=subprocess.check_output(["git","-C",root,"config","user.email"],stderr=subprocess.DEVNULL,timeout=5).decode().strip()
+        except Exception: actor=""
+    body=json.dumps({"tool":"deploy","command":"release","actor":actor,"requested_via":"harness-release"}).encode()
+    req=urllib.request.Request(url,data=body,method="POST",headers={"Content-Type":"application/json","User-Agent":"harness-release/1.0",**headers})
     try:
         d=json.load(urllib.request.urlopen(req,timeout=15)); print(d.get("decision","deny"), (d.get("reason","") or "-").replace(" ","_"))
-    except Exception:
-        print("allow" if os.environ["ALLGREEN"]=="1" else "deny", "local_suites")
+    except Exception as e:
+        # Tell "the PDP answered no" from "the PDP could not be reached". An explicit 403 is a
+        # server refusal and never falls back to allow; 401 and network errors keep the
+        # local-suite fallback (documented design, C10) but are named for what they are.
+        code=getattr(e,"code",0)
+        local="allow" if os.environ["ALLGREEN"]=="1" else "deny"
+        if code==403:
+            sys.stderr.write("[release] PDP rejected this credential (HTTP 403: revoked / disabled / not permitted) -- release refused"+chr(10))
+            print("deny","PDP_rejected_this_credential_(HTTP_403)")
+        elif code==401:
+            sys.stderr.write("[release] PDP rejected this credential (HTTP 401: revoked / expired) -- server-side enforcement is NOT active; using local suite result"+chr(10))
+            print(local,"local_suites")
+        else:
+            sys.stderr.write("[release] PDP not reachable -- using local suite result"+chr(10))
+            print(local,"local_suites")
 else:
     print("allow","gate_not_consulted")
 PY

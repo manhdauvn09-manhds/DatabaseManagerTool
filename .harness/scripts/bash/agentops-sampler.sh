@@ -171,6 +171,13 @@ record = {
     "end_time": last_ts or now,
     "active_account": active_account,
     "active_member": active_member,
+    # WHICH assistant produced this line (B9a). A literal, not config: this
+    # script IS the Claude Code sampler -- it runs from a Claude Code hook and
+    # reads a Claude Code transcript, so the value is a fact about the writer,
+    # not a rule to be looked up. A collector for another assistant stamps its
+    # own value; the ingest defaults a MISSING stamp to claude-code, so an
+    # un-upgraded machine still lands in the right bucket.
+    "assistant": "claude-code",
 }
 
 with open(log_file, "a", encoding="utf-8") as f:

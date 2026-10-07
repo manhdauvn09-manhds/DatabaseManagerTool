@@ -40,57 +40,126 @@ read_entry_input() {
 }
 
 hash_entry() {
-    echo -n "$1" | sha256sum | cut -d' ' -f1
+    # printf, not `echo -n`: echo eats a leading -n/-e as a flag (and some
+    # shells print the -n literally), so the digest would silently be taken
+    # over different bytes than the caller passed. In a hash chain a quietly
+    # wrong digest is worse than a loud failure.
+    printf '%s' "$1" | sha256sum | cut -d' ' -f1
 }
 
-get_last_hash() {
-    if [ -f "$CHAIN_FILE" ]; then
-        # UNREADABLE, not GENESIS, when the last entry cannot be parsed:
-        # "GENESIS" claims the chain STARTS here, silently orphaning everything
-        # above the bad line -- and the chain would then verify as intact while
-        # having lost its history. An unreadable predecessor is recorded as
-        # exactly that, so `verify` reports the break instead of hiding it.
-        # (PS parity: Get-LastEntry/$PrevHash in evidence-ledger.ps1.)
-        tail -1 "$CHAIN_FILE" | python3 -c "import sys,json; print(json.load(sys.stdin).get('entry_hash') or 'UNREADABLE')" 2>/dev/null || echo "UNREADABLE"
-    else
-        echo "GENESIS"
-    fi
-}
+# Shared Python prelude for every command that writes chain.jsonl (PS parity:
+# Enter-LedgerLock / Get-LastEntry in evidence-ledger.ps1).
+#
+# "Read the last entry_hash, then append a line linking to it" used to be two
+# separate shell steps (get_last_hash, then python). Two hooks running at once
+# both read the same last hash and both linked to it: the chain FORKED -- 974 of
+# 8,953 entries in the toolkit's own chain on 2026-09-29, with doctor still OK.
+# Now read and write happen in ONE python process holding the lock.
+#
+# The lock is a byte-range lock on byte 0 of chain.lock (msvcrt.locking on
+# Windows, fcntl.lockf elsewhere) -- the primitive .NET's FileStream.Lock uses,
+# so this and the PowerShell writer exclude each other on one machine. An OS
+# lock dies with its process; a hook killed on timeout cannot wedge the ledger.
+LEDGER_PY_PRELUDE='
+import json, os, re, sys, time, random, hashlib
+from datetime import datetime, timezone
 
-get_next_index() {
-    if [ -f "$CHAIN_FILE" ]; then
-        wc -l < "$CHAIN_FILE" | tr -d ' '
-    else
-        echo "0"
-    fi
-}
+LOCK_TIMEOUT_S = 10.0
+
+def ledger_lock(ledger_dir):
+    f = open(os.path.join(ledger_dir, "chain.lock"), "a+b")
+    deadline = time.time() + LOCK_TIMEOUT_S
+    while True:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                f.seek(0)
+                msvcrt.locking(f.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.lockf(f, fcntl.LOCK_EX | fcntl.LOCK_NB, 1, 0)
+            return f
+        except OSError:
+            if time.time() >= deadline:
+                f.close()
+                raise TimeoutError("ledger lock not acquired within %ss (another append is holding it)" % LOCK_TIMEOUT_S)
+            time.sleep(random.uniform(0.01, 0.05))
+
+def ledger_unlock(f):
+    try:
+        if os.name == "nt":
+            import msvcrt
+            f.seek(0)
+            msvcrt.locking(f.fileno(), msvcrt.LK_UNLCK, 1)
+        else:
+            import fcntl
+            fcntl.lockf(f, fcntl.LOCK_UN, 1, 0)
+    finally:
+        f.close()
+
+def last_link(chain_file):
+    """(prev_hash, next_index) for the entry about to be written. Caller holds the lock.
+
+    UNREADABLE, never GENESIS, when the last entry cannot be parsed: GENESIS
+    would claim the chain starts here and orphan everything above it. The index
+    is the line count, as before."""
+    if not os.path.exists(chain_file) or os.path.getsize(chain_file) == 0:
+        return "GENESIS", 0
+    n = 0
+    with open(chain_file, "rb") as f:
+        for line in f:
+            if line.strip():
+                n += 1
+    with open(chain_file, "rb") as f:
+        size = os.path.getsize(chain_file)
+        f.seek(max(0, size - 4 * 1024 * 1024))
+        tail = f.read().decode("utf-8", "replace").rstrip("\r\n")
+    last = tail.rsplit("\n", 1)[-1]
+    h = None
+    try:
+        h = json.loads(last).get("entry_hash")
+    except ValueError:
+        m = re.findall(r"\"entry_hash\"\s*:\s*\"([0-9a-fA-F]{64})\"", last)
+        h = m[-1] if m else None
+    return (h or "UNREADABLE"), n
+
+def entry_hash(e):
+    c = dict(e)
+    c["entry_hash"] = ""
+    return hashlib.sha256(json.dumps(c, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+def now_utc():
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+'
 
 case "$COMMAND" in
     init)
-        TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        cat > "$CHAIN_FILE" << JSONL
-{"index":0,"prev_hash":"GENESIS","entry_hash":"","timestamp":"$TIMESTAMP","actor":{"agent":"harness","user":"system","session_id":"genesis","role":"system"},"action":{"type":"config_change","tool":"harness-init","description":"Genesis block"},"decision":{"result":"allow","reason":"System initialization","risk_level":"none"},"payload_ref":"","signature":""}
-JSONL
-        # Compute hash of the entry (without entry_hash field)
-        ENTRY_NO_HASH=$(python3 -c "
-import json
-with open('$CHAIN_FILE') as f:
-    e = json.load(f)
-e['entry_hash'] = ''
-print(json.dumps(e, sort_keys=True, separators=(',',':')))
-")
-        HASH=$(hash_entry "$ENTRY_NO_HASH")
-        # Rewrite with computed hash
-        python3 -c "
-import json
-with open('$CHAIN_FILE') as f:
-    e = json.load(f)
-e['entry_hash'] = '$HASH'
-with open('$CHAIN_FILE', 'w') as f:
-    json.dump(e, f, separators=(',',':'))
-    f.write('\n')
+        # Under the lock, and never over a chain that already has entries (PS
+        # parity). Two sessions starting together both saw "no chain" and the
+        # second genesis overwrote the first chain; starting over on top of history
+        # is also what cut 24hHotnewsAI's live chain off from its sealed segment.
+        # Paths travel in the ENVIRONMENT, never spliced into the python source
+        # (a directory named O'Brien would otherwise close the string literal).
+        CHAIN_FILE="$CHAIN_FILE" LEDGER_DIR="$LEDGER_DIR" python3 -c "$LEDGER_PY_PRELUDE
+chain_file = os.environ['CHAIN_FILE']
+lk = ledger_lock(os.environ['LEDGER_DIR'])
+try:
+    if os.path.exists(chain_file) and os.path.getsize(chain_file) > 0:
+        print('[evidence-ledger] chain.jsonl already has entries -- not overwriting. To start a new segment use: evidence-ledger.sh seal --reason \"<why>\"')
+        sys.exit(0)
+    g = {'index': 0, 'prev_hash': 'GENESIS', 'entry_hash': '', 'timestamp': now_utc(),
+         'actor': {'agent': 'harness', 'user': 'system', 'session_id': 'genesis', 'role': 'system'},
+         'action': {'type': 'config_change', 'tool': 'harness-init', 'description': 'Genesis block'},
+         'decision': {'result': 'allow', 'reason': 'System initialization', 'risk_level': 'none'},
+         'payload_ref': '', 'signature': ''}
+    g['entry_hash'] = entry_hash(g)
+    with open(chain_file, 'w') as f:
+        json.dump(g, f, separators=(',', ':'))
+        f.write('\n')
+    print('[evidence-ledger] Genesis block created at index 0, hash=' + g['entry_hash'])
+finally:
+    ledger_unlock(lk)
 "
-        echo "[evidence-ledger] Genesis block created at index 0, hash=$HASH"
         ;;
     append)
         INPUT_JSON=$(read_entry_input)
@@ -98,21 +167,36 @@ with open('$CHAIN_FILE', 'w') as f:
             echo "[evidence-ledger] No input" >&2
             exit 1
         fi
-        NEXT_INDEX=$(get_next_index)
-        PREV_HASH=$(get_last_hash)
-        TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         # Entry JSON is piped to python's stdin, never string-interpolated into
         # the script literal — untrusted content in a `python -c` string would
         # otherwise be a code-injection hole (e.g. an entry crafted to break out
-        # of the ''' literal).
-        printf '%s' "$INPUT_JSON" | NEXT_INDEX="$NEXT_INDEX" PREV_HASH="$PREV_HASH" TIMESTAMP="$TIMESTAMP" CHAIN_FILE="$CHAIN_FILE" python3 -c "
-import json, sys, os, hashlib
-
+        # of the ''' literal). Reading the last hash, building the entry and
+        # writing it all happen inside this one process, under the lock.
+        printf '%s' "$INPUT_JSON" | CHAIN_FILE="$CHAIN_FILE" LEDGER_DIR="$LEDGER_DIR" python3 -c "$LEDGER_PY_PRELUDE
 entry = json.load(sys.stdin)
-next_idx = int(os.environ['NEXT_INDEX'])
-prev_hash = os.environ['PREV_HASH']
-ts = os.environ['TIMESTAMP']
 chain_file = os.environ['CHAIN_FILE']
+stage = 'lock'
+lk = None
+try:
+    lk = ledger_lock(os.environ['LEDGER_DIR'])
+    stage = 'read-last-entry'
+    prev_hash, next_idx = last_link(chain_file)
+except Exception as exc:
+    fail_file = os.path.join(os.path.dirname(chain_file), 'append-failures.jsonl')
+    try:
+        with open(fail_file, 'a') as ff:
+            json.dump({'ts': now_utc(), 'type': 'append_failed', 'stage': stage,
+                       'tool': (entry.get('action') or {}).get('tool', ''),
+                       'session_id': os.environ.get('HARNESS_SESSION_ID', ''),
+                       'reason': '%s: %s' % (type(exc).__name__, exc)}, ff, separators=(',', ':'))
+            ff.write('\n')
+    except Exception:
+        pass
+    if lk is not None:
+        ledger_unlock(lk)
+    sys.stderr.write('[evidence-ledger] APPEND FAILED at %s :: %s: %s\n' % (stage, type(exc).__name__, exc))
+    sys.exit(3)
+ts = now_utc()
 
 new_entry = {
     'index': next_idx,
@@ -129,16 +213,60 @@ canonical = dict(new_entry)
 canonical['entry_hash'] = ''
 h = hashlib.sha256(json.dumps(canonical, sort_keys=True, separators=(',',':')).encode()).hexdigest()
 new_entry['entry_hash'] = h
-with open(chain_file, 'a') as f:
-    json.dump(new_entry, f, separators=(',',':'))
-    f.write('\n')
+# U1 (parity with evidence-ledger.ps1): an append that throws is a SIDE-EFFECT
+# THAT HAPPENED WITH NO LINE RECORDING IT. The chain stays internally consistent
+# -- the next entry links to the last one that succeeded -- so verify is green
+# and the gap leaves no hole to find. This marker file is the only place the
+# loss becomes visible; harness doctor grades a non-empty one as FAIL.
+#
+# NOT written into chain.jsonl: a marker has no valid prev_hash, so putting it
+# in the chain would make verify report tampering -- trading a silent gap for a
+# loud false alarm. Own file, cheapest possible writer.
+try:
+    with open(chain_file, 'a') as f:
+        json.dump(new_entry, f, separators=(',',':'))
+        f.write('\n')
+except Exception as exc:
+    fail_file = os.path.join(os.path.dirname(chain_file), 'append-failures.jsonl')
+    marker = {
+        'ts': ts,
+        'type': 'append_failed',
+        'stage': 'write-chain',
+        'tool': (entry.get('action') or {}).get('tool', ''),
+        'session_id': os.environ.get('HARNESS_SESSION_ID', ''),
+        'reason': '%s: %s' % (type(exc).__name__, exc),
+    }
+    wrote = False
+    try:
+        with open(fail_file, 'a') as ff:
+            json.dump(marker, ff, separators=(',',':'))
+            ff.write('\n')
+        wrote = True
+    except Exception:
+        # Even the cheap path failed. Last resort: the hook error log, with the
+        # signature doctor grades FAIL.
+        try:
+            err_log = os.path.join(os.path.dirname(os.path.dirname(chain_file)),
+                                   'telemetry', 'hook-errors.log')
+            os.makedirs(os.path.dirname(err_log), exist_ok=True)
+            with open(err_log, 'a') as ef:
+                ef.write('%s LEDGER-APPEND-LOST tool=%s :: %s\n'
+                         % (ts, marker['tool'], marker['reason']))
+        except Exception:
+            pass
+    sys.stderr.write('[evidence-ledger] APPEND FAILED at write-chain for tool=%s :: %s%s\n'
+                     % (marker['tool'], marker['reason'],
+                        ' (recorded in append-failures.jsonl)' if wrote else ' (COULD NOT RECORD)'))
+    ledger_unlock(lk)
+    sys.exit(3)
+ledger_unlock(lk)
 print(f'Appended entry {next_idx}, hash={h}, prev={prev_hash}')
 "
         ;;
     verify)
-        python3 -c "
-import json, hashlib, sys
-with open('$CHAIN_FILE') as f:
+        CHAIN_FILE="$CHAIN_FILE" python3 -c "
+import json, hashlib, os, sys
+with open(os.environ['CHAIN_FILE']) as f:
     lines = [l.strip() for l in f if l.strip()]
 prev = 'GENESIS'
 valid = True
@@ -173,63 +301,52 @@ else:
             exit 0
         fi
         SEAL_REASON="${REASON_ARG:-segment sealed (no reason given)}"
-        NEXT_INDEX=$(get_next_index)
-        PREV_HASH=$(get_last_hash)
-        TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-        SEAL_HASH=$(NEXT_INDEX="$NEXT_INDEX" PREV_HASH="$PREV_HASH" TIMESTAMP="$TIMESTAMP" \
-            CHAIN_FILE="$CHAIN_FILE" SEAL_REASON="$SEAL_REASON" \
-            HOOK_USER="${HARNESS_USER:-}" HOOK_SESSION="${HARNESS_SESSION_ID:-}" python3 -c "
-import json, os, hashlib
-e = {
-    'index': int(os.environ['NEXT_INDEX']),
-    'prev_hash': os.environ['PREV_HASH'],
-    'entry_hash': '',
-    'timestamp': os.environ['TIMESTAMP'],
-    'actor': {'agent':'harness','user':os.environ.get('HOOK_USER',''),'session_id':os.environ.get('HOOK_SESSION',''),'role':'system'},
-    'action': {'type':'seal','tool':'evidence-ledger','description':os.environ['SEAL_REASON']},
-    'decision': {'result':'allow','reason':'segment sealed','risk_level':'none'},
-    'payload_ref': '', 'signature': ''
-}
-c = dict(e); c['entry_hash'] = ''
-h = hashlib.sha256(json.dumps(c, sort_keys=True, separators=(',',':')).encode()).hexdigest()
-e['entry_hash'] = h
-with open(os.environ['CHAIN_FILE'], 'a') as f:
-    json.dump(e, f, separators=(',',':')); f.write('\n')
-print(h)
-")
-        # Next free archive number -- never overwrite an existing archive.
-        N=1
-        for f in "$LEDGER_DIR"/chain-*.jsonl; do
-            [ -e "$f" ] || continue
-            num=$(basename "$f" | sed -n 's/^chain-\([0-9]*\)\.jsonl$/\1/p')
-            [ -n "$num" ] && [ "$((10#$num))" -ge "$N" ] && N=$((10#$num + 1))
-        done
-        ARCHIVE_NAME=$(printf 'chain-%03d.jsonl' "$N")
-        # Stage the new genesis BEFORE the rename so the no-chain window is one
-        # mv, not a build-then-write; a hook appending into that window would
-        # otherwise start its own unlinked chain.
-        STAGED="$LEDGER_DIR/.chain.genesis.tmp"
-        TIMESTAMP=$(date -u +%Y-%m-%dT%H:%M:%SZ) ARCHIVE_NAME="$ARCHIVE_NAME" SEAL_HASH="$SEAL_HASH" STAGED="$STAGED" python3 -c "
-import json, os, hashlib
-g = {
-    'index': 0, 'prev_hash': 'GENESIS', 'entry_hash': '',
-    'timestamp': os.environ['TIMESTAMP'],
-    'actor': {'agent':'harness','user':'system','session_id':'seal','role':'system'},
-    'action': {'type':'config_change','tool':'evidence-ledger','description':'Genesis block -- segment continues from ' + os.environ['ARCHIVE_NAME']},
-    'decision': {'result':'allow','reason':'segment rotation','risk_level':'none'},
-    'payload_ref': '', 'signature': '',
-    'prev_segment': os.environ['ARCHIVE_NAME'],
-    'prev_segment_head': os.environ['SEAL_HASH'],
-}
-c = dict(g); c['entry_hash'] = ''
-g['entry_hash'] = hashlib.sha256(json.dumps(c, sort_keys=True, separators=(',',':')).encode()).hexdigest()
-with open(os.environ['STAGED'], 'w') as f:
-    json.dump(g, f, separators=(',',':')); f.write('\n')
+        # One python process holds the lock from reading the head to the final
+        # rename: an append landing between the seal entry and the archive move
+        # would go into the archive after its seal, or start an unlinked chain.
+        CHAIN_FILE="$CHAIN_FILE" LEDGER_DIR="$LEDGER_DIR" SEAL_REASON="$SEAL_REASON" \
+            HOOK_USER="${HARNESS_USER:-}" HOOK_SESSION="${HARNESS_SESSION_ID:-}" python3 -c "$LEDGER_PY_PRELUDE
+chain_file = os.environ['CHAIN_FILE']
+ledger_dir = os.environ['LEDGER_DIR']
+lk = ledger_lock(ledger_dir)
+try:
+    prev_hash, next_idx = last_link(chain_file)
+    e = {'index': next_idx, 'prev_hash': prev_hash, 'entry_hash': '', 'timestamp': now_utc(),
+         'actor': {'agent': 'harness', 'user': os.environ.get('HOOK_USER', ''),
+                   'session_id': os.environ.get('HOOK_SESSION', ''), 'role': 'system'},
+         'action': {'type': 'seal', 'tool': 'evidence-ledger', 'description': os.environ['SEAL_REASON']},
+         'decision': {'result': 'allow', 'reason': 'segment sealed', 'risk_level': 'none'},
+         'payload_ref': '', 'signature': ''}
+    e['entry_hash'] = entry_hash(e)
+    with open(chain_file, 'a') as f:
+        json.dump(e, f, separators=(',', ':'))
+        f.write('\n')
+    # Next free archive number -- never overwrite an existing archive.
+    n = 1
+    for name in os.listdir(ledger_dir):
+        m = re.match(r'^chain-(\d+)\.jsonl$', name)
+        if m and int(m.group(1)) >= n:
+            n = int(m.group(1)) + 1
+    archive = 'chain-%03d.jsonl' % n
+    g = {'index': 0, 'prev_hash': 'GENESIS', 'entry_hash': '', 'timestamp': now_utc(),
+         'actor': {'agent': 'harness', 'user': 'system', 'session_id': 'seal', 'role': 'system'},
+         'action': {'type': 'config_change', 'tool': 'evidence-ledger',
+                    'description': 'Genesis block -- segment continues from ' + archive},
+         'decision': {'result': 'allow', 'reason': 'segment rotation', 'risk_level': 'none'},
+         'payload_ref': '', 'signature': '',
+         'prev_segment': archive, 'prev_segment_head': e['entry_hash']}
+    g['entry_hash'] = entry_hash(g)
+    staged = os.path.join(ledger_dir, '.chain.genesis.tmp')
+    with open(staged, 'w') as f:
+        json.dump(g, f, separators=(',', ':'))
+        f.write('\n')
+    os.rename(chain_file, os.path.join(ledger_dir, archive))
+    os.rename(staged, chain_file)
+    print('[evidence-ledger] Sealed segment -> %s (head %s)' % (archive, e['entry_hash']))
+    print('[evidence-ledger] New segment started; genesis links prev_segment_head for cross-file continuity')
+finally:
+    ledger_unlock(lk)
 "
-        mv "$CHAIN_FILE" "$LEDGER_DIR/$ARCHIVE_NAME"
-        mv "$STAGED" "$CHAIN_FILE"
-        echo "[evidence-ledger] Sealed segment -> $ARCHIVE_NAME (head $SEAL_HASH)"
-        echo "[evidence-ledger] New segment started; genesis links prev_segment_head for cross-file continuity"
         ;;
     bundle)
         # Generate an evidence bundle for a change (PS parity: evidence-ledger.ps1

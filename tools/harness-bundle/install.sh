@@ -44,12 +44,80 @@ fi
 PY="$(command -v python3 || command -v python || true)"
 [[ -n "$PY" ]] || { echo "python3 required" >&2; exit 3; }
 
+# Python helpers shared by every embedded python step below. They used to live in
+# the FIRST block only, so the guide-merge and the receipt re-stamp blocks called
+# `safe_dest` and died with NameError (the re-stamp one on EVERY run, which the
+# `|| echo WARNING` then hid). One definition, prepended to each block.
+emit_common_py() {
+cat <<'PYC'
+import hashlib, os, re, sys
+UNKNOWN = "unknown"     # receipt value for a hash that cannot honestly be stated
+
+
+def sha_hex(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def sha_or_unknown(data):
+    """sha256 of the bytes, or "unknown" for an empty file: the hash of nothing is
+    a real hash, and recording it makes every empty file look verified."""
+    return sha_hex(data) if len(data) else UNKNOWN
+
+
+def norm_eol(data):
+    """BOM and CRLF stripped -- what an EOL/BOM-only difference (core.autocrlf
+    checkout, a Windows editor) must not count as a change. install.ps1 and
+    harness-verify.* do exactly the same."""
+    if data[:3] == b"\xef\xbb\xbf":
+        data = data[3:]
+    return data.replace(b"\r\n", b"\n")
+
+
+def safe_dest(target, relpath):
+    """Resolve a bundle-declared path INSIDE target, or refuse.
+
+    Destinations were built with os.path.join(target, *path.split("/")) and the
+    path came from the bundle. os.path.join is not a containment operator: a
+    component of ".." walks out of the target, and an absolute component (or a
+    Windows drive letter) discards `target` altogether. A bundle declaring
+    "../../../etc/cron.d/harness" installed there.
+
+    The content hash does NOT cover this. It proves the bundle was not altered
+    after packing; it says nothing about whether what was packed is benign. A
+    bundle is executable governance content fetched from elsewhere, so its
+    paths are input, not fact.
+
+    Rejects rather than sanitises: silently rewriting a traversing path to
+    something "safe" installs a file the bundle author did not name, which is
+    its own surprise. A bundle that wants out of the target is broken or
+    hostile, and either way the operator should hear about it.
+    """
+    if not relpath or relpath.strip() != relpath:
+        sys.exit("Refusing bundle path (empty or padded): %r" % relpath)
+    if relpath.startswith("/") or relpath.startswith("\\"):
+        sys.exit("Refusing absolute bundle path: %r" % relpath)
+    if re.match(r"^[A-Za-z]:", relpath):
+        sys.exit("Refusing bundle path with a drive letter: %r" % relpath)
+    parts = relpath.replace("\\", "/").split("/")
+    if any(part in ("..", "") for part in parts):
+        sys.exit("Refusing bundle path that escapes the target: %r" % relpath)
+    dest = os.path.join(target, *parts)
+    root = os.path.realpath(target)
+    # realpath the PARENT: the file itself need not exist yet, and a symlink
+    # planted at the destination is exactly the trick this is guarding against.
+    parent = os.path.realpath(os.path.dirname(dest))
+    if parent != root and not parent.startswith(root + os.sep):
+        sys.exit("Refusing bundle path that resolves outside the target: %r -> %s" % (relpath, dest))
+    return dest
+PYC
+}
+
 # The installer's own copy of the ownership rules (see the union note inside the
 # python block). Resolved relative to this script; absent for a standalone copy
 # of the installer, which the python side treats as "bundle rules only".
 OWN_RULES="$(cd "$(dirname "$0")/../.." 2>/dev/null && pwd || true)/.harness/control/bundle-ownership.yaml"
 
-"$PY" - "$BUNDLE" "$TARGET" "$FORCE" "$DRY_RUN" "$OWN_RULES" <<'PY'
+{ emit_common_py; cat <<'PY'
 import json, base64, hashlib, os, re, sys, fnmatch
 bundle_path, target, force = sys.argv[1], sys.argv[2], sys.argv[3] == "1"
 dry_run = len(sys.argv) > 4 and sys.argv[4] == "1"
@@ -60,6 +128,8 @@ hi = "\n".join("%s:%s" % (f["path"], f["b64"]) for f in b["files"])
 comp = hashlib.sha256(hi.encode("utf-8")).hexdigest()
 if comp != b["content_hash"]:
     sys.exit("Bundle integrity check FAILED: computed %s != declared %s" % (comp, b["content_hash"]))
+
+
 print("[install] %s v%s (%d files) -> %s" % (b["name"], b["version"], b["file_count"], target))
 written = skipped = kept = merged = 0
 merges = []
@@ -146,18 +216,42 @@ if own_rules_path and os.path.isfile(own_rules_path):
 # Comparing it to disk answers what `preserve` never could: did the project
 # hand-edit a file the bundle owns? Overwriting that silently is how four
 # separate teams lost work.
-prev_hashes = {}
+prev_hashes = {}      # path -> last INSTALLED hash (the baseline a hand edit is measured against)
+prev_ship = {}        # path -> hash of the shipped bytes the last run carried
+prev_state = {}       # path -> state the last run recorded ("" for receipts older than states)
 _pr = os.path.join(target, ".harness", ".bundle-manifest.json")
 if os.path.exists(_pr):
     try:
         # Prefer installed_sha256 -- what the LAST install left on disk. Fall back
         # to sha256 (shipped bytes) only for receipts written before that field
-        # existed, where it is the best baseline available.
-        for e in (json.load(open(_pr, encoding="utf-8")).get("files") or []):
+        # existed, where it is the best baseline available. "unknown" is the
+        # receipt's way of saying "no honest hash" and is no baseline at all.
+        for e in (json.load(open(_pr, encoding="utf-8-sig")).get("files") or []):
             if e.get("path"):
-                prev_hashes[e["path"]] = e.get("installed_sha256") or e.get("sha256") or ""
+                h = e.get("installed_sha256") or e.get("sha256") or ""
+                prev_hashes[e["path"]] = "" if h == UNKNOWN else h
+                prev_ship[e["path"]] = "" if e.get("sha256") == UNKNOWN else (e.get("sha256") or "")
+                prev_state[e["path"]] = e.get("state") or ""
     except Exception:
         pass          # unreadable receipt just means "no baseline" -- never fatal
+
+# What each file ended as, for the receipt: path -> (state, carried baseline).
+# A receipt that only said "version X" while files were skipped, kept or left in
+# conflict made the project look fully on X (24hHotnewsAI: receipt 1.8.1, scripts
+# older). State is per file, and the hash of a file this run did NOT install is
+# never taken as the new baseline -- see the end of the script.
+outcome = {}
+unchanged = 0
+
+
+def clean_stale_new(dest, rel):
+    """A `<file>.new` is the installer's own marker for 'a shipped copy you have not
+    adopted'. Once the file matches the shipped copy it is stale, and leaving it
+    makes a resolved conflict look unresolved."""
+    if os.path.exists(dest + ".new"):
+        if not dry_run:
+            os.remove(dest + ".new")
+        print("  [CLEAN] %s.new (stale: the file now matches the shipped copy)" % rel)
 
 
 def owned_glob(path):
@@ -366,13 +460,17 @@ _posix = next((f for f in b["files"] if f["path"] == ".claude/settings.posix.jso
 posix_selected = False
 
 for f in b["files"]:
-    dest = os.path.join(target, *f["path"].split("/"))
+    dest = safe_dest(target, f["path"])
     if f["path"] == ".claude/settings.json" and _posix is not None:
         data = base64.b64decode(_posix["b64"])
         posix_selected = True
     else:
         data = base64.b64decode(f["b64"])
     exists = os.path.exists(dest)
+    ship_hash = sha_or_unknown(base64.b64decode(f["b64"]))   # what the receipt calls `sha256`
+    # What a file this run does NOT install carries into the receipt as its
+    # baseline: the LAST installed hash, never the hash of what is on disk now.
+    carry = prev_hashes.get(f["path"]) or UNKNOWN
 
     # 1) Project-owned, by exact path or convention glob.
     if exists and (f["path"] in preserve or owned_glob(f["path"])):
@@ -380,11 +478,14 @@ for f in b["files"]:
             same = fh.read() == data
         if same:
             print("  [KEEP]  %s (yours; identical to shipped)" % f["path"])
+            clean_stale_new(dest, f["path"])
+            outcome[f["path"]] = ("kept", ship_hash)
         else:
             if not dry_run:
                 with open(dest + ".new", "wb") as fh:
                     fh.write(data)
             print("  [KEEP]  %s (yours; shipped copy saved as %s.new)" % (f["path"], f["path"]))
+            outcome[f["path"]] = ("kept", carry)
         kept += 1
         continue
 
@@ -392,6 +493,20 @@ for f in b["files"]:
         with open(dest, "rb") as fh:
             disk = fh.read()
         disk_hash = hashlib.sha256(disk).hexdigest()
+        disk_norm = hashlib.sha256(norm_eol(disk)).hexdigest()
+
+        # 1b) Already what the bundle ships (byte-exact, or differing only in EOL/BOM
+        # -- a core.autocrlf checkout). Nothing to write, nothing to decide, and
+        # not a "skip": reporting it as skipped would make every re-run of a
+        # current project look partial.
+        if disk == data or norm_eol(disk) == norm_eol(data):
+            print("  [SAME]  %s" % f["path"])
+            clean_stale_new(dest, f["path"])
+            outcome[f["path"]] = ("installed", None)
+            unchanged += 1
+            if f["path"] == ".claude/settings.json" and _posix is not None:
+                posix_selected = True
+            continue
 
         # 2) A JSON object map the project may have EXTENDED -- extra FIELDS on
         # entries the bundle ships, and/or entries of its own. Overwriting the
@@ -426,6 +541,8 @@ for f in b["files"]:
                 merges.append("%s: %d project field(s) on %d entry(ies), %d project-only entry(ies) kept"
                               % (f["path"], st["fields"], st["entries"], len(st["yours"])))
                 merged += 1
+                clean_stale_new(dest, f["path"])
+                outcome[f["path"]] = ("installed", None)
                 continue
             # Unparseable on either side, or the shipped copy lost the map: never
             # write a half-merged governance file. Say so and keep theirs.
@@ -436,6 +553,7 @@ for f in b["files"]:
             print("  [CONFLICT] %s" % msg)
             print("             kept yours; shipped copy is %s.new" % f["path"])
             conflicts.append(msg); kept += 1
+            outcome[f["path"]] = ("conflict", carry)
             continue
 
         # 2b) Claude Code settings: hooks is {event: [matcher entries]}, a shape
@@ -473,6 +591,8 @@ for f in b["files"]:
                 merges.append("%s: %d project hook entry(ies) kept, %d extra top-level key(s) kept"
                               % (f["path"], len(st["yours"]), len(st["extra_top"])))
                 merged += 1
+                clean_stale_new(dest, f["path"])
+                outcome[f["path"]] = ("installed", None)
                 if f["path"] == ".claude/settings.json" and _posix is not None:
                     posix_selected = True
                 continue
@@ -486,6 +606,7 @@ for f in b["files"]:
             print("  [CONFLICT] %s" % msg)
             print("             kept yours; shipped copy is %s.new" % f["path"])
             conflicts.append(msg); kept += 1
+            outcome[f["path"]] = ("conflict", carry)
             continue
 
         # 3) A keyed list the project may have EXTENDED. Overwriting is right for
@@ -510,12 +631,24 @@ for f in b["files"]:
                 print("  [CONFLICT] %s" % msg)
                 print("             kept yours; shipped copy is %s.new -- carry those entries over by hand" % f["path"])
                 conflicts.append(msg); kept += 1
+                outcome[f["path"]] = ("conflict", carry)
                 continue
 
         # 4) A bundle-owned file the project hand-edited since the last install.
         # Only claimable when a baseline exists; with no receipt we cannot tell an
         # edit from a first install, and guessing would cry wolf or hide it.
-        if prev_hashes.get(f["path"]) and disk_hash != prev_hashes[f["path"]]:
+        base = prev_hashes.get(f["path"])
+        if base and disk_hash != base and disk_norm != base:
+            # Hand-edited. If the bundle has not moved on since the last run there is
+            # nothing to adopt: keep the edit, no .new, no conflict. (Not when the
+            # last run already left this file in conflict -- the receipt's shipped
+            # hash then names the copy that was REFUSED, so "unchanged" would be
+            # measured against the very bytes the edit is in conflict with.)
+            if prev_state.get(f["path"]) != "conflict" and prev_ship.get(f["path"]) == ship_hash:
+                print("  [KEEP]  %s (yours; edited since the last install, the bundle has not changed it)" % f["path"])
+                kept += 1
+                outcome[f["path"]] = ("kept", carry)
+                continue
             if not dry_run:
                 with open(dest + ".new", "wb") as fh:
                     fh.write(data)
@@ -523,10 +656,13 @@ for f in b["files"]:
             print("  [CONFLICT] %s" % msg)
             print("             kept yours; shipped copy is %s.new" % f["path"])
             conflicts.append(msg); kept += 1
+            outcome[f["path"]] = ("conflict", carry)
             continue
 
         if not force:
-            print("  [SKIP] %s (exists; use --force to overwrite)" % f["path"]); skipped += 1; continue
+            print("  [SKIP] %s (exists; use --force to overwrite)" % f["path"]); skipped += 1
+            outcome[f["path"]] = ("skipped", carry)
+            continue
 
     if not dry_run:
         os.makedirs(os.path.dirname(dest), exist_ok=True)
@@ -535,11 +671,13 @@ for f in b["files"]:
     if f["path"] == ".claude/settings.json" and _posix is not None:
         posix_selected = True
     print("  [WRITE] %s" % f["path"]); written += 1
+    clean_stale_new(dest, f["path"])
+    outcome[f["path"]] = ("installed", None)
 
 # Conflicts are listed again by NAME: a count alone reads as "all fine", and the
 # whole point of this pass is that some files were deliberately NOT updated.
 print("")
-print("[summary] written=%d  merged=%d  kept=%d  skipped=%d  conflicted=%d" % (written, merged, kept, skipped, len(conflicts)))
+print("[summary] written=%d  merged=%d  kept=%d  skipped=%d  conflicted=%d  unchanged=%d" % (written, merged, kept, skipped, len(conflicts), unchanged))
 if merges:
     print("[summary] merged in place -- your fields survived:")
     for m in merges:
@@ -552,25 +690,54 @@ if dry_run:
     print("[summary] DRY RUN -- nothing was written. Re-run without --dry-run to apply.")
     raise SystemExit(0)
 
-# Install receipt for the in-project uninstaller (path + original sha256).
+# Install receipt: what this run did to EACH file, not just which bundle it came
+# from. `version` and `content_hash` name the bundle this run was driven by; they
+# are not a claim that every file in it landed -- `status` and each file's `state`
+# are. (A receipt that said only "version X" while files were skipped or left in
+# conflict is how 24hHotnewsAI read 1.8.1 over scripts that were older.)
+#
+#   installed  the file on disk is what this run put there (written, merged, or
+#              already identical) -- `installed_sha256` is its hash
+#   kept       project-owned, or hand-edited while the bundle did not change it
+#   conflict   hand-edited AND the bundle changed it: yours kept, shipped copy in
+#              <file>.new
+#   skipped    exists and no --force
+# For every state but "installed", `installed_sha256` is the baseline CARRIED from
+# the previous receipt ("unknown" when there is none) -- never the hash of the
+# bytes on disk, which would turn the next run's "you edited this" into "you did
+# not". `sha256` keeps its meaning (the shipped bytes; the uninstaller reads it).
 import hashlib, datetime, json as _json
+entries = []
+counts = {"installed": 0, "kept": 0, "conflict": 0, "skipped": 0}
+for f in b["files"]:
+    st, base = outcome[f["path"]]
+    counts[st] += 1
+    if st == "installed":
+        with open(safe_dest(target, f["path"]), "rb") as fh:
+            base = sha_or_unknown(fh.read())
+    entries.append({"path": f["path"], "sha256": sha_or_unknown(base64.b64decode(f["b64"])),
+                    "installed_sha256": base, "state": st})
 receipt = {
     "name": b["name"], "version": b["version"], "content_hash": b["content_hash"],
     "installed_at": datetime.datetime.now().astimezone().isoformat(),
+    "status": "partial" if (counts["conflict"] or counts["skipped"]) else "complete",
+    "counts": counts,
     # Recorded so a maintainer can SEE which files this install treats as
     # project-owned, instead of having to read the installer to find out.
     "preserve": sorted(preserve),
-    "files": [{"path": f["path"],
-               "sha256": hashlib.sha256(base64.b64decode(f["b64"])).hexdigest()}
-              for f in b["files"]],
+    "files": entries,
 }
 rdir = os.path.join(target, ".harness"); os.makedirs(rdir, exist_ok=True)
 with open(os.path.join(rdir, ".bundle-manifest.json"), "w", encoding="utf-8") as fh:
     _json.dump(receipt, fh, indent=2)
+if receipt["status"] == "partial":
+    print("[summary] receipt status: PARTIAL -- %d conflict(s), %d skipped: the receipt records each file's state, "
+          "it does not claim v%s is fully applied." % (counts["conflict"], counts["skipped"], b["version"]))
 if posix_selected:
     print("[install] selected POSIX (bash) hooks for .claude/settings.json")
 print("[install] done: %d written, %d merged, %d skipped, %d kept (project-owned). Integrity OK (%s)." % (written, merged, skipped, kept, b["content_hash"]))
 PY
+} | "$PY" - "$BUNDLE" "$TARGET" "$FORCE" "$DRY_RUN" "$OWN_RULES"
 
 # A dry run has to stop HERE. Everything below scaffolds real files -- portal-sync
 # stubs, buglist.md, the context store, project identity, guide merging -- so
@@ -629,11 +796,10 @@ SYNC_JSON="$TARGET/.harness/portal-sync.json"
 if [[ ! -f "$SYNC_JSON" ]]; then
   cat > "$SYNC_JSON" <<'JSON'
 {
-  "_README": "Fill portal_url and project_id from your Control Portal (open the Project, then Settings, then Reveal ingest key). Next, paste the ingest key into portal-sync.key in THIS same .harness folder. Set pdp_enforce to true to make the PreToolUse hook consult the Portal PDP (H4 outbound allowlist, H5 approval, H3 release gate) -- leave false to keep it off. You may delete this _README line.",
+  "_README": "Fill portal_url and project_id from your Control Portal (open the Project, then Settings, then Reveal ingest key). Next, paste the ingest key into portal-sync.key in THIS same .harness folder. This file is shared by every clone and is meant to be committed: it holds NO per-person or per-machine field (your email goes in .harness/local/checkout.json via set-member-email). Set pdp_enforce to true to make the PreToolUse hook consult the Portal PDP (H4 outbound allowlist, H5 approval, H3 release gate) -- leave false to keep it off. You may delete this _README line.",
   "portal_url": "https://YOUR-PORTAL-DOMAIN",
   "project_id": "PASTE-PROJECT-ID-HERE",
-  "pdp_enforce": false,
-  "member_email": ""
+  "pdp_enforce": false
 }
 JSON
   echo "[scaffold] created .harness/portal-sync.json  -> EDIT portal_url + project_id"
@@ -743,12 +909,51 @@ if ! grep -qF ".harness/portal-sync.key" "$GI" 2>/dev/null; then
   echo "[scaffold] added portal-sync.key to .gitignore (C5)"
 fi
 
+# Portal v2 P1 1.7: per-machine state (checkout credential, member_email) lives in .harness/local/.
+# That folder must never reach git -- ignore it in the target project (idempotent).
+if ! grep -qE '^/?\.harness/local/?[[:space:]]*$' "$GI" 2>/dev/null; then
+  printf '\n# Harness per-machine state (checkout credential, member_email) -- never commit\n.harness/local/\n' >> "$GI"
+  echo "[scaffold] added .harness/local/ to .gitignore (machine-local state)"
+fi
+
 # The legacy-guide migration below writes a one-time '<file>.pre-migration.bak'.
 # That is a local safety net, not project content -- ignore it so it does not
 # show up as untracked noise in every project the migration touched.
 if ! grep -qF "*.pre-migration.bak" "$GI" 2>/dev/null; then
   printf '\n# One-time backup written when a legacy guide block is migrated\n*.pre-migration.bak\n' >> "$GI"
   echo "[scaffold] added *.pre-migration.bak to .gitignore"
+fi
+
+# The ledger's append lock (evidence-ledger: byte-range lock on this file) is
+# runtime state, like the chain itself -- never project content.
+if ! grep -qF ".harness/ledger/chain.lock" "$GI" 2>/dev/null; then
+  printf '\n# Harness ledger append lock - runtime state\n.harness/ledger/chain.lock\n' >> "$GI"
+  echo "[scaffold] added ledger chain.lock to .gitignore"
+fi
+
+# `<file>.new` is the installer's marker for "a shipped copy you have not adopted"
+# (a project-owned or conflicted file). It is a local to-do, not project content:
+# committing one ships the conflict to everybody and to the next checkout.
+if ! grep -qE '^\*\.new[[:space:]]*$' "$GI" 2>/dev/null; then
+  printf '\n# Shipped copies the installer leaves beside a file you own or edited - resolve, then delete\n*.new\n' >> "$GI"
+  echo "[scaffold] added *.new to .gitignore"
+fi
+
+# A project that runs Prettier over the repo reformats the bundle's own files (PS
+# parity: install.ps1). Only when the project uses Prettier; one marker line keeps
+# this idempotent.
+USES_PRETTIER=0
+for f in "$TARGET"/.prettierrc "$TARGET"/.prettierrc.* "$TARGET"/prettier.config.*; do
+  [ -e "$f" ] && USES_PRETTIER=1
+done
+[ "$USES_PRETTIER" = 0 ] && [ -f "$TARGET/package.json" ] && grep -q '"prettier"' "$TARGET/package.json" && USES_PRETTIER=1
+PI="$TARGET/.prettierignore"
+PI_MARKER="# harness-bundle: files owned by the governance bundle"
+if [ "$USES_PRETTIER" = 1 ] && ! grep -qF "$PI_MARKER" "$PI" 2>/dev/null; then
+  printf '\n%s\n%s\n' "$PI_MARKER" "# Reformatting them breaks the bundle integrity check and can change what they mean." >> "$PI"
+  printf '%s\n' .harness/ tools/harness-bundle/ contracts/ .claude/agents/ .claude/skills/ \
+    .claude/settings.json .claude/settings.posix.json CLAUDE.harness.md >> "$PI"
+  echo "[scaffold] project uses Prettier -- added the bundle's paths to .prettierignore"
 fi
 
 # --- H1 scaffold: build the context pointer store so a freshly-onboarded project
@@ -769,8 +974,7 @@ fi
 # ONE canonical text (CLAUDE.harness.md) -> every agent-guide file the project
 # uses, as a DELIMITED managed block, so re-installing refreshes only that block
 # and never touches what the project wrote around it.
-"$PY" - "$TARGET" "$MERGE_CLAUDE" "$PROJECT_NAME" "$PROJECT_DESC" "$FORCE_IDENTITY" <<'PY'
-import os, re, sys
+{ emit_common_py; cat <<'PY'
 target, do_guides = sys.argv[1], sys.argv[2] == "1"
 pname, pdesc, force_id = sys.argv[3], sys.argv[4], sys.argv[5] == "1"
 
@@ -850,7 +1054,7 @@ if do_guides:
             "install; put your own project rules OUTSIDE this block. -->")
     block = "%s\n%s\n\n%s\n\n%s" % (BEGIN, note, gov, END)
     for rel in targets:
-        p = os.path.join(target, *rel.split("/"))
+        p = safe_dest(target, rel)
         os.makedirs(os.path.dirname(p) or ".", exist_ok=True)
         if not os.path.exists(p):
             open(p, "w", encoding="utf-8", newline="\n").write(block + "\n")
@@ -880,6 +1084,7 @@ if do_guides:
             open(p, "w", encoding="utf-8", newline="\n").write(cur.rstrip() + "\n\n---\n\n" + block + "\n")
             print("[guides] appended governance to existing %s (your content untouched)" % rel)
 PY
+} | "$PY" - "$TARGET" "$MERGE_CLAUDE" "$PROJECT_NAME" "$PROJECT_DESC" "$FORCE_IDENTITY"
 
 # --- OS hook selection (macOS/Linux) now happens INSIDE the install loop: the
 # python step substitutes the settings.posix.json payload wherever it writes or
@@ -901,20 +1106,26 @@ PY
 # `sha256` keeps its original meaning (the shipped bytes) because the uninstaller
 # uses it to tell a pristine file from a user-edited one; `installed_sha256` is
 # added alongside, and the tamper check prefers it when present.
-"$PY" - "$TARGET" <<'PY' || echo "[receipt] WARNING: could not re-stamp installed hashes; next run may report false conflicts"
-import hashlib, json, os, sys
+{ emit_common_py; cat <<'PY'
+import json
 target = sys.argv[1]
 p = os.path.join(target, ".harness", ".bundle-manifest.json")
 if not os.path.exists(p):
     raise SystemExit(0)
-r = json.load(open(p, encoding="utf-8"))
+r = json.load(open(p, encoding="utf-8-sig"))
 for e in (r.get("files") or []):
-    fp = os.path.join(target, *e["path"].split("/"))
-    ih = ""
+    # Only a file this run INSTALLED has a hash worth re-reading. The others keep
+    # the baseline phase 1 carried over: re-hashing a conflicted or kept file here
+    # would make the hand edit the new baseline.
+    if e.get("state", "installed") != "installed":
+        continue
+    fp = safe_dest(target, e["path"])
+    ih = UNKNOWN
     if os.path.exists(fp):
         with open(fp, "rb") as fh:
-            ih = hashlib.sha256(fh.read()).hexdigest()
+            ih = sha_or_unknown(fh.read())
     e["installed_sha256"] = ih
 with open(p, "w", encoding="utf-8") as fh:
     json.dump(r, fh, indent=2)
 PY
+} | "$PY" - "$TARGET" || echo "[receipt] WARNING: could not re-stamp installed hashes; next run may report false conflicts"

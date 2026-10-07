@@ -33,6 +33,11 @@ if [ -f "$LEDGER" ] && [ -f "$CHAIN" ]; then
   bash "$LEDGER" append --entry-json "$SEAL" >/dev/null 2>&1 || true
 fi
 
+# Codex collection is NOT called here. It lives inside push-telemetry.sh, which
+# runs a few lines down, so it happens on this path anyway -- and on the fleet
+# driver's timer, which needs no Claude session. Two call sites would be a second
+# copy to keep in step (B-13/B-14).
+
 # Push telemetry to the Control Portal if configured (.harness/portal-sync.json)
 # — the sync path for checkouts the backend can't read. Best-effort.
 if [ -f "$HARNESS_ROOT/.harness/scripts/bash/push-telemetry.sh" ]; then

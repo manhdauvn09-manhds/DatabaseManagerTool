@@ -21,6 +21,7 @@ fi
 # excerpt the Portal can display.
 HARNESS_SCAN_INPUT="$INPUT_TEXT" \
 HARNESS_PATTERNS_FILE="$PATTERNS_FILE" \
+HARNESS_SECRET_PATTERNS_FILE="$HARNESS_ROOT/.harness/control/secret-patterns.json" \
 HARNESS_EVENTS_FILE="$HARNESS_ROOT/.harness/telemetry/security-events.jsonl" \
 HARNESS_SESSION="${HARNESS_SESSION_ID:-}" HARNESS_ACTOR="${HARNESS_USER:-${USER:-}}" \
 python3 - <<'PY'
@@ -31,6 +32,43 @@ with open(os.environ['HARNESS_PATTERNS_FILE'], encoding='utf-8-sig') as f:
 patterns = config if isinstance(config, list) else config.get('patterns', [])
 text = os.environ.get('HARNESS_SCAN_INPUT', '')
 
+# --- Redaction (parity with injection-scan.ps1) -----------------------------
+# `excerpt` is persisted to security-events.jsonl and shipped to the Portal by
+# push-telemetry. It embeds a 240-character window of the raw prompt, so a
+# prompt that mentioned a credential next to an injection phrase wrote that
+# credential into a durable, synced store -- the detector became the leak.
+#
+# Patterns come from .harness/control/secret-patterns.json (C2) so a shape
+# added for secret-scan protects this path too, plus generic high-entropy
+# shapes: a redactor that only knows vendor prefixes misses the value nobody
+# wrote a pattern for.
+_redactors = []
+try:
+    with open(os.environ['HARNESS_SECRET_PATTERNS_FILE'], encoding='utf-8-sig') as _f:
+        _sp = json.load(_f)
+    for _e in (_sp if isinstance(_sp, list) else _sp.get('patterns', [])):
+        _pat = _e.get('pattern') if isinstance(_e, dict) else None
+        if _pat:
+            try:
+                _redactors.append(re.compile(_pat))
+            except re.error:
+                pass
+except Exception:
+    pass
+for _generic in (
+    r'(?i)(secret|passwd|password|token|api[_\-]?key|bearer|authorization)\s*["\':=]+\s*\S+',
+    r'\b[A-Za-z0-9+/]{40,}={0,2}\b',
+    r'\b[0-9a-fA-F]{32,}\b',
+):
+    _redactors.append(re.compile(_generic))
+
+
+def _redact(value):
+    for _rx in _redactors:
+        value = _rx.sub('[REDACTED]', value)
+    return value
+
+
 findings = []
 for entry in patterns:
     try:
@@ -38,9 +76,12 @@ for entry in patterns:
     except re.error:
         continue
     for m in rx.finditer(text):
-        sig = m.group()[:80]
+        # Redact BOTH the window and the matched signature: an injection
+        # pattern can match text that itself contains a credential, so
+        # sanitising only the context would still log it via `sig`.
+        sig = _redact(m.group()[:80])
         start = max(0, m.start() - 60)
-        ctx = re.sub(r'\s+', ' ', text[start:m.end() + 120]).strip()[:240]
+        ctx = _redact(re.sub(r'\s+', ' ', text[start:m.end() + 120]).strip()[:240])
         findings.append({
             'severity': entry.get('severity', 'medium'),
             'category': entry.get('category', 'unknown'),

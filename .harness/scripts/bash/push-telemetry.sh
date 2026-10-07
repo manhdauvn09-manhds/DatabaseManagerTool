@@ -9,6 +9,26 @@ set -euo pipefail
 HARNESS_ROOT="${HARNESS_ROOT:-$(cd "$(dirname "$0")/../../.." && pwd)}"
 CONFIG="$HARNESS_ROOT/.harness/portal-sync.json"
 
+# Codex usage, collected HERE rather than only at Claude session end (B9b).
+#
+# Same reasoning as the self-healing resample below: capture usage even if the
+# hook never fired. For Codex that is the normal case, not an edge case -- Codex
+# has no hook at all, so its only trigger was a CLAUDE session ending in this
+# same project. A project worked on with Codex only would have reported nothing
+# forever, while the collector sat installed and looking fine.
+#
+# In the pusher, so every caller is covered at once: the session-end hook, the
+# fleet driver on its timer (needing no Claude), and a manual push (B-13/B-14:
+# repeated copies drift).
+#
+# BEFORE the config checks below, all of which exit 0 on an unconfigured
+# project: collecting is local work worth doing either way, so the data is
+# waiting the moment someone wires the project up rather than being lost.
+# `|| true` because `set -e` is on and a collector must never fail the push.
+if [ -f "$HARNESS_ROOT/.harness/scripts/bash/collect-codex.sh" ]; then
+    HARNESS_ROOT="$HARNESS_ROOT" bash "$HARNESS_ROOT/.harness/scripts/bash/collect-codex.sh" >/dev/null 2>&1 || true
+fi
+
 if [ ! -f "$CONFIG" ]; then
     echo "[push-telemetry] No .harness/portal-sync.json -- push sync not configured, skipping."
     exit 0
@@ -18,12 +38,15 @@ KEY="${HARNESS_PORTAL_INGEST_KEY:-}"
 if [ -z "$KEY" ] && [ -f "$HARNESS_ROOT/.harness/portal-sync.key" ]; then
     KEY="$(tr -d '[:space:]' < "$HARNESS_ROOT/.harness/portal-sync.key")"
 fi
-if [ -z "$KEY" ]; then
-    echo "[push-telemetry] No ingest key (env HARNESS_PORTAL_INGEST_KEY or .harness/portal-sync.key)" >&2
-    exit 0
-fi
+# No early exit on an empty key: a machine holding a CHECKOUT credential
+# (.harness/local/checkout.json, resolved in python -- a worktree uses its
+# parent's) needs no shared key. python decides and says what is missing.
 
-HARNESS_PUSH_KEY="$KEY" HARNESS_PUSH_ROOT="$HARNESS_ROOT" HARNESS_PUSH_CONFIG="$CONFIG" python3 - <<'PY' || true
+# --heartbeat: send only "this checkout is alive and what it looks like" (P1 1.3).
+HEARTBEAT=0
+if [ "${1:-}" = "--heartbeat" ]; then HEARTBEAT=1; fi
+
+HARNESS_PUSH_HEARTBEAT="$HEARTBEAT" HARNESS_PUSH_KEY="$KEY" HARNESS_PUSH_ROOT="$HARNESS_ROOT" HARNESS_PUSH_CONFIG="$CONFIG" python3 - <<'PY' || true
 import json, os, re, sys, time, glob, urllib.request, urllib.error
 from datetime import datetime, timezone
 
@@ -40,6 +63,60 @@ if not url or not pid:
 if "YOUR-PORTAL-DOMAIN" in url:
     print("[push-telemetry] portal_url is still the installer placeholder (%s) -- "
           "fill in .harness/portal-sync.json" % url, file=sys.stderr)
+    sys.exit(0)
+
+# Checkout identity (Portal v2 P1 1.3). One shared lib computes what this folder
+# can say about itself, so this script and push-telemetry.ps1 cannot drift on the
+# payload. Best-effort: no lib = no facts and the push goes out as before.
+facts = {}
+_fm = None
+try:
+    import importlib.util as _ilu0
+    _fp = os.path.join(root, ".harness", "scripts", "lib", "harness_checkout_facts.py")
+    if os.path.isfile(_fp):
+        _fs = _ilu0.spec_from_file_location("harness_checkout_facts", _fp)
+        _fm = _ilu0.module_from_spec(_fs); _fs.loader.exec_module(_fm)
+        facts = _fm.facts(root) or {}
+except Exception:
+    facts = {}
+auth = facts.pop("auth", None) or {}
+if auth.get("checkout_id") and auth.get("checkout_credential"):
+    # Bound push: the credential names the checkout; the legacy key is not sent.
+    auth_headers = {"X-Checkout-Id": auth["checkout_id"], "X-Checkout-Credential": auth["checkout_credential"]}
+elif os.environ.get("HARNESS_PUSH_KEY"):
+    auth_headers = {"X-Ingest-Key": os.environ["HARNESS_PUSH_KEY"]}
+    # Legacy path (no checkout enrolled on this machine): at most one line a day per machine
+    # via the shared stamp (C14), never per push. Names no key.
+    try:
+        _w = _fm.legacy_warning("push-telemetry") if _fm else ""
+        if _w:
+            print(_w, file=sys.stderr)
+    except Exception:
+        pass
+else:
+    print("[push-telemetry] No checkout credential (.harness/local/checkout.json) and no ingest key "
+          "(env HARNESS_PORTAL_INGEST_KEY or .harness/portal-sync.key)", file=sys.stderr)
+    sys.exit(0)
+# The claims a push makes about its machine. The server COMPARES them with what it
+# holds for the credential; it never uses them to pick the checkout.
+claims = {k: v for k, v in facts.items() if k in (
+    "checkout_id", "device_id", "path_hash", "receipt", "receipt_at_head", "disk_fingerprint",
+    "git_remote", "git_branch", "git_head", "git_dirty", "worktree")}
+
+if os.environ.get("HARNESS_PUSH_HEARTBEAT") == "1":
+    if "X-Checkout-Credential" not in auth_headers:
+        print("[push-telemetry] heartbeat needs a checkout credential (.harness/local/checkout.json) -- skipped.")
+        sys.exit(0)
+    _hb = urllib.request.Request(
+        f"{url}/api/ingest/{pid}/heartbeat", data=json.dumps(claims).encode("utf-8"),
+        headers={"Content-Type": "application/json; charset=utf-8", "User-Agent": "harness-push-telemetry/1.0",
+                 **auth_headers}, method="POST")
+    try:
+        with urllib.request.urlopen(_hb, timeout=30) as _r:
+            _h = json.loads(_r.read())
+        print("[push-telemetry] %s" % (_h.get("note") if _h.get("quarantined") else "heartbeat OK"))
+    except (urllib.error.URLError, OSError, ValueError) as e:
+        print("[push-telemetry] Heartbeat failed: %s" % e, file=sys.stderr)
     sys.exit(0)
 
 # Self-healing resample: rebuild agentops.log from this project's Claude Code
@@ -159,6 +236,11 @@ def _resample():
             "latency_ms": 0, "tool_calls": r["tools"],
             "start_time": r["first"] or now, "end_time": r["last"] or now,
             "active_account": active_account, "active_member": active_member,
+            # Stamped explicitly (B9a). This block reads CLAUDE CODE transcripts,
+            # so the value is a fact about the source, not a default. The ingest
+            # would infer the same from a missing field, but then the only rows
+            # in the file without a stamp are the ones this resample rebuilt.
+            "assistant": "claude-code",
         }
     with open(log_path, "w", encoding="utf-8") as out:
         for rec in merged.values():
@@ -285,6 +367,28 @@ def read_incremental(path, key):
     return text
 
 
+def _member_email():
+    """Portal v2 P1 1.7: member_email lives in .harness/local/checkout.json (git-ignored); the
+    shared reader falls back to the legacy portal-sync.json and says where the value came from
+    (C13) -- a legacy or missing value is a warning, never a silent pass."""
+    lib = os.path.join(root, ".harness", "scripts", "lib", "harness_local_state.py")
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("harness_local_state", lib)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        r = mod.read_member_email(root)
+        if r.get("warning"):
+            print("[push-telemetry] WARNING: " + r["warning"])
+        return str(r.get("value") or "")
+    except Exception:
+        v = str(cfg.get("member_email") or "")
+        if v:
+            print("[push-telemetry] WARNING: member_email read from the legacy .harness/portal-sync.json "
+                  "(harness_local_state.py unavailable)")
+        return v
+
+
 body = {
     "agentops": read(os.path.join(root, ".harness", "telemetry", "agentops.log")),
     "chain_jsonl": read_incremental(os.path.join(root, ".harness", "ledger", "chain.jsonl"), "chain.jsonl"),
@@ -297,7 +401,7 @@ body = {
     # incremental, so the server only sees a delta and cannot tell whether the
     # file behind it was rebuilt. Filled in below (best-effort, never blocking).
     "ledger_anchor": "",
-    "member_email": str(cfg.get("member_email") or ""),
+    "member_email": _member_email(),
     "buglist": read(os.path.join(root, "buglist.md")),
 }
 
@@ -405,12 +509,20 @@ if not any(body.values()):
     print("[push-telemetry] Nothing to push (no telemetry files yet).")
     sys.exit(0)
 
+# Claims are metadata: added only once there is something to push, so they cannot
+# turn "nothing new" into a push.
+body.update(claims)
+if claims.get("worktree"):
+    # A worktree pushes into its parent checkout but its chain is its own; the
+    # parent anchors the parent's chain.
+    body["ledger_anchor"] = ""
+
 req = urllib.request.Request(
     f"{url}/api/ingest/{pid}",
     data=json.dumps(body).encode("utf-8"),
     headers={
         "Content-Type": "application/json; charset=utf-8",
-        "X-Ingest-Key": os.environ["HARNESS_PUSH_KEY"],
+        **auth_headers,
         # Cloudflare's bot rules 403 the default Python-urllib UA; identify
         # ourselves as the harness client instead.
         "User-Agent": "harness-push-telemetry/1.0",
@@ -420,6 +532,13 @@ req = urllib.request.Request(
 try:
     with urllib.request.urlopen(req, timeout=30) as resp:
         r = json.loads(resp.read())
+    if r.get("quarantined"):
+        # Nothing was ingested: do NOT advance the cursors, or the lines in this
+        # push would be skipped forever once the cause is fixed.
+        print("[push-telemetry] QUARANTINED by the Portal -- %s" % r.get("note", ""), file=sys.stderr)
+        sys.exit(0)
+    for _w in r.get("warnings") or []:
+        print("[push-telemetry] %s" % _w, file=sys.stderr)
     print("[push-telemetry] OK: actions=%s incidents=%s usage=%s tool_calls=%s" % (
         r.get("action_log_ingested", 0), r.get("security_incidents_ingested", 0),
         r.get("usage_events_ingested", 0), r.get("tool_calls_ingested", 0)))

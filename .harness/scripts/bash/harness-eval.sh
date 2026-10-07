@@ -44,7 +44,9 @@ if [ -f "$POLICY" ]; then
       if [ "$indent" -le "$blockindent" ]; then inblock=0; continue; fi
       if printf '%s' "$line" | grep -qE '^[[:space:]]+[A-Za-z0-9_-]+:'; then
         name=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*([A-Za-z0-9_-]+):.*/\1/')
-        cmd=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*//; s/[[:space:]]*#.*$//; s/^"//; s/"$//')
+        # Either quote style: Prettier with singleQuote rewrites "..." to '...'
+        # (PS parity: harness-eval.ps1).
+        cmd=$(printf '%s' "$line" | sed -E 's/^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*//; s/[[:space:]]*#.*$//; s/^"//; s/"$//'" ; s/^'//; s/'\$//")
         if [ -n "$cmd" ]; then NAMES+=("$name"); CMDS+=("$cmd"); fi
       fi
     fi
@@ -81,6 +83,8 @@ for i in "${!NAMES[@]}"; do
     say "  > $name: passed=$p failed=$f skipped=$s"
   else
     say "  ~ $name: no parseable result -> skipped (no report written)"
+    first=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | head -2 | tr '\n' '|')
+    say "    output began: ${first:-(the command printed nothing)}"
   fi
 done
 say "[harness-eval] wrote $written report(s) -> $REPORT"
