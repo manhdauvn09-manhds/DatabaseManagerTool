@@ -42,3 +42,18 @@ __pycache__/
 .harness/tmp/
 .harness/telemetry/*.jsonl
 .harness/telemetry/*.bak
+
+# Harness ledger append lock - runtime state
+.harness/ledger/chain.lock
+
+# Shipped copies the installer leaves beside a file you own or edited - resolve, then delete
+*.new
+
+# Harness per-machine state (checkout credential, member_email) - never commit
+.harness/local/
+# Machine-local state (harness machine-state-paths.yaml) -- never commit
+.claude/settings.local.json
+.harness/telemetry/.push-cursor.json
+.harness/telemetry/.push-content.json
+.harness/telemetry/.sync-cursor.json
+.harness/context/
