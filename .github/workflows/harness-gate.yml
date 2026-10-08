@@ -28,6 +28,8 @@ jobs:
       - run: pip install pyyaml jsonschema
       # The positional root argument is required -- without it the script cannot
       # find .harness/ and reports a layout failure that looks like a real one.
+      - name: build H1 pointer store
+        run: bash .harness/scripts/bash/harness-context-build.sh
       - name: harness policy-ci
         run: python .harness/scripts/lib/harness_policy_check.py . --ci
 
@@ -50,8 +52,8 @@ jobs:
       # pre-push. What CI CAN honestly assert is the parts that live in git —
       # policy, schemas, golden cases, secrets — and those are the other jobs
       # in this workflow, which do gate the build.
-      - name: harness doctor (advisory — evidence lives outside the checkout)
-        run: python .harness/scripts/lib/harness_doctor.py .
+      - name: harness doctor
+        run: python .harness/scripts/lib/harness_doctor.py . --ci --strict
 
   secret-scan:
     name: Secret scan (C5)
