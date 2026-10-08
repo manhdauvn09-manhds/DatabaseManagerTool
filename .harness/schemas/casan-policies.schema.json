@@ -176,6 +176,19 @@
         }
       }
     },
+    "handoff": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "C15 Handoff after every task. Missing section = defaults; only enabled:false disables.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "path": { "type": "string", "minLength": 1 },
+        "remind_on_stop": { "type": "boolean" },
+        "max_age_days": { "type": "integer", "minimum": 1 },
+        "dated_glob": { "type": "string" },
+        "ignore_paths": { "type": "array", "items": { "type": "string" } }
+      }
+    },
     "agentops": {
       "type": "object",
       "additionalProperties": true,

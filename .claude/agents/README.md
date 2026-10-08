@@ -1,4 +1,4 @@
-# Agent fleet — 11 agents
+# Agent fleet — 15 agents
 
 `contracts/agent.yaml` is the SSOT: it owns each agent's model profile, authority,
 and its allowed/blocked tool lists. The `.md` files here hold the *instructions* an

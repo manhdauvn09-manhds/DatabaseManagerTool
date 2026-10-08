@@ -18,7 +18,9 @@
   automatically; safe to run by hand any time.
 #>
 param(
-    [string]$HarnessRoot = ""
+    [string]$HarnessRoot = "",
+    # Send only "this checkout is alive and this is what it looks like" (P1 1.3).
+    [switch]$Heartbeat
 )
 
 $ErrorActionPreference = "Stop"
@@ -27,6 +29,32 @@ if (-not $HarnessRoot) {
     $HarnessRoot = $env:HARNESS_ROOT
     if (-not $HarnessRoot) { $HarnessRoot = (Resolve-Path "$PSScriptRoot\..\..\..").Path }
 }
+
+# --- Codex usage, collected HERE rather than only at Claude session end (B9b) --
+#
+# Same reasoning as the self-healing resample further down: capture usage even
+# if the hook never fired. For Codex that is not an edge case but the normal
+# one -- Codex has no hook at all, so its only trigger was a CLAUDE session
+# ending in this same project. A project worked on with Codex only would have
+# reported nothing, forever, while the collector sat installed and looking fine.
+#
+# In the pusher, so every caller is covered at once: the session-end hook, the
+# fleet driver on its timer (which needs no Claude), and a manual push. One
+# place -- three copies of the release classifier drifting apart (B-13/B-14) is
+# the argument against repeating it per caller.
+#
+# BEFORE the config checks below, all of which `exit 0` on an unconfigured
+# project. Collecting is local work and worth doing regardless: this repo's own
+# umbrella root still carries the installer's placeholder portal_url, and it is
+# exactly the directory Codex records as its cwd. Collect there anyway and the
+# data is waiting the moment someone wires it up; collect only after the checks
+# and it is lost for good.
+#
+# Best-effort, and silent about the ordinary case: most machines run no Codex.
+try {
+    $CodexCollector = Join-Path $PSScriptRoot "collect-codex.ps1"
+    if (Test-Path $CodexCollector) { & $CodexCollector -HarnessRoot $HarnessRoot *>$null }
+} catch { }
 
 $ConfigFile = Join-Path $HarnessRoot ".harness\portal-sync.json"
 if (-not (Test-Path $ConfigFile)) {
@@ -48,14 +76,116 @@ if ("$($Config.portal_url)" -like "*YOUR-PORTAL-DOMAIN*") {
     exit 0
 }
 
+# Checkout identity (Portal v2 P1 1.3). One shared python lib computes what this
+# folder can say about itself -- who it claims to be, its receipt, the release its
+# files really match, git remote/branch/HEAD/dirty -- so this script and its bash
+# twin cannot drift on the payload. Best-effort: no python / no lib = no facts, and
+# the push goes out exactly as before.
+$Facts = $null
+try {
+    $FactsLib = Join-Path $HarnessRoot ".harness\scripts\lib\harness_checkout_facts.py"
+    if (Test-Path $FactsLib) {
+        $pyf = Get-Command python -ErrorAction SilentlyContinue
+        if (-not $pyf) { $pyf = Get-Command python3 -ErrorAction SilentlyContinue }
+        if ($pyf) {
+            $fj = (& $pyf.Source $FactsLib $HarnessRoot 2>$null) -join ""
+            if ($fj) { $Facts = $fj | ConvertFrom-Json }
+        }
+    }
+} catch { $Facts = $null }
+
+# member_email (Portal v2 P1 1.7): names one PERSON, so it lives in the git-ignored
+# .harness/local/checkout.json, not in the committable portal-sync.json. The shared reader
+# falls back to the old place and says where the value came from (C13): a legacy or missing
+# value is a warning here, never a silent pass.
+$MemberEmail = ""
+$MemberFromLib = $false
+try {
+    $StateLib = Join-Path $HarnessRoot ".harness\scripts\lib\harness_local_state.py"
+    if (Test-Path $StateLib) {
+        $pym = Get-Command python -ErrorAction SilentlyContinue
+        if (-not $pym) { $pym = Get-Command python3 -ErrorAction SilentlyContinue }
+        if ($pym) {
+            $mj = (& $pym.Source $StateLib member-email $HarnessRoot 2>$null) -join ""
+            if ($mj) {
+                $Me = $mj | ConvertFrom-Json
+                $MemberEmail = "$($Me.value)"; $MemberFromLib = $true
+                if ($Me.warning) { Write-Warning "[push-telemetry] $($Me.warning)" }
+            }
+        }
+    }
+} catch { }
+if (-not $MemberFromLib -and $Config.member_email) {
+    $MemberEmail = "$($Config.member_email)"
+    Write-Warning "[push-telemetry] member_email read from the legacy .harness/portal-sync.json (harness_local_state.py unavailable -- no python or no lib)"
+}
+
+# The checkout credential (git-ignored .harness/local/checkout.json, or env) is
+# sent as headers when this machine holds one; otherwise the legacy shared key.
+$CheckoutId = ""; $CheckoutCred = ""
+if ($Facts -and $Facts.auth) {
+    $CheckoutId = "$($Facts.auth.checkout_id)"
+    $CheckoutCred = "$($Facts.auth.checkout_credential)"
+}
+
 # Ingest key: env wins, then git-ignored key file (C5: never in the repo).
 $IngestKey = $env:HARNESS_PORTAL_INGEST_KEY
 if (-not $IngestKey) {
     $KeyFile = Join-Path $HarnessRoot ".harness\portal-sync.key"
     if (Test-Path $KeyFile) { $IngestKey = (Get-Content -Path $KeyFile -Raw).Trim() }
 }
-if (-not $IngestKey) {
-    Write-Warning "[push-telemetry] No ingest key (env HARNESS_PORTAL_INGEST_KEY or .harness/portal-sync.key)"
+if (-not $IngestKey -and -not $CheckoutCred) {
+    Write-Warning "[push-telemetry] No checkout credential (.harness/local/checkout.json) and no ingest key (env HARNESS_PORTAL_INGEST_KEY or .harness/portal-sync.key)"
+    exit 0
+}
+if ($CheckoutCred) {
+    $AuthHeaders = @{ "X-Checkout-Id" = $CheckoutId; "X-Checkout-Credential" = $CheckoutCred }
+} else {
+    $AuthHeaders = @{ "X-Ingest-Key" = $IngestKey }
+    # Legacy path (no checkout enrolled on this machine): say so at most once a day, per
+    # machine, via the shared stamp (C14) -- never per push. Names no key.
+    try {
+        $LegacyLib = Join-Path $HarnessRoot ".harness\scripts\lib\harness_checkout_facts.py"
+        $pyw = Get-Command python -ErrorAction SilentlyContinue
+        if (-not $pyw) { $pyw = Get-Command python3 -ErrorAction SilentlyContinue }
+        if ($pyw -and (Test-Path $LegacyLib)) {
+            $lw = (& $pyw.Source $LegacyLib --legacy-warning push-telemetry 2>$null) -join ""
+            if ($lw) { Write-Warning $lw }
+        }
+    } catch { }
+}
+
+function Add-CheckoutFacts([hashtable]$Target) {
+    <#  The claims a push makes about its machine. The server COMPARES these with
+        what it holds for the credential; it never uses them to pick the checkout. #>
+    if (-not $Facts) { return }
+    foreach ($k in 'checkout_id', 'device_id', 'path_hash', 'receipt', 'receipt_at_head',
+                   'git_remote', 'git_branch', 'git_head') {
+        if ($Facts.$k) { $Target[$k] = "$($Facts.$k)" }
+    }
+    if ($null -ne $Facts.git_dirty) { $Target['git_dirty'] = [bool]$Facts.git_dirty }
+    if ($Facts.disk_fingerprint) { $Target['disk_fingerprint'] = $Facts.disk_fingerprint }
+    if ($Facts.worktree) { $Target['worktree'] = $true }
+}
+
+if ($Heartbeat) {
+    if (-not $CheckoutCred) {
+        Write-Output "[push-telemetry] heartbeat needs a checkout credential (.harness/local/checkout.json) -- skipped."
+        exit 0
+    }
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+        $hb = @{}
+        Add-CheckoutFacts $hb
+        $HbUrl = "$($Config.portal_url.TrimEnd('/'))/api/ingest/$($Config.project_id)/heartbeat"
+        $HbResp = Invoke-RestMethod -Uri $HbUrl -Method Post -ContentType "application/json; charset=utf-8" `
+            -Headers $AuthHeaders -UserAgent "harness-push-telemetry/1.0" `
+            -Body ([System.Text.Encoding]::UTF8.GetBytes(($hb | ConvertTo-Json -Depth 6 -Compress))) -TimeoutSec 30
+        if ($HbResp.quarantined) { Write-Warning "[push-telemetry] $($HbResp.note)" }
+        else { Write-Output "[push-telemetry] heartbeat OK" }
+    } catch {
+        Write-Warning "[push-telemetry] Heartbeat failed: $($_.Exception.Message)"
+    }
     exit 0
 }
 
@@ -326,6 +456,14 @@ if os.path.isdir(proot):
                 "latency_ms": 0, "tool_calls": r["tools"],
                 "start_time": r["first"] or now, "end_time": r["last"] or now,
                 "active_account": active_account, "active_member": active_member,
+                # Stamped explicitly (B9a). This block reads CLAUDE CODE
+                # transcripts, so the value is a fact about the source, not a
+                # default. The ingest would infer the same thing from a missing
+                # field, but a writer that knows the answer should say it --
+                # otherwise the only rows in the file without the stamp are the
+                # ones this resample rebuilt, and the next person to read the
+                # file has to work out why.
+                "assistant": "claude-code",
             }
         with open(log_path, "w", encoding="utf-8") as out:
             for rec in merged.values():
@@ -361,7 +499,7 @@ $Body = @{
             } else { "" }
         } catch { "" }
     )
-    member_email    = "$($Config.member_email)"
+    member_email    = $MemberEmail
     buglist         = Read-IfExists (Join-Path $HarnessRoot "buglist.md")
     # S-1: evidence-pipeline self-check, computed at push time. Without it the
     # Portal knows a project's SCORE but not whether its pipeline is alive --
@@ -477,6 +615,15 @@ if (-not $HasContent) {
     exit 0
 }
 
+# Claims about this machine ride along only once we know there is something to
+# push: they are metadata, and must not turn "nothing new" into a push.
+Add-CheckoutFacts $Body
+if ($Body.ContainsKey('worktree')) {
+    # A worktree pushes into its parent checkout but its chain is its own; the
+    # parent anchors the parent's chain.
+    $Body.ledger_anchor = ""
+}
+
 $Url = "$($Config.portal_url.TrimEnd('/'))/api/ingest/$($Config.project_id)"
 try {
     # TLS 1.2 for PS 5.1 boxes that still default to 1.0
@@ -489,8 +636,15 @@ try {
     $Json = $Body | ConvertTo-Json -Depth 6 -Compress
     # Cloudflare's bot rules 403 generic client UAs; identify as the harness client.
     $Resp = Invoke-RestMethod -Uri $Url -Method Post -ContentType "application/json; charset=utf-8" `
-        -Headers @{ "X-Ingest-Key" = $IngestKey } -UserAgent "harness-push-telemetry/1.0" `
+        -Headers $AuthHeaders -UserAgent "harness-push-telemetry/1.0" `
         -Body ([System.Text.Encoding]::UTF8.GetBytes($Json)) -TimeoutSec 30
+    if ($Resp.quarantined) {
+        # Nothing was ingested: do NOT advance the cursors, or the lines in this
+        # push would be skipped forever once the cause is fixed.
+        Write-Warning "[push-telemetry] QUARANTINED by the Portal -- $($Resp.note)"
+        exit 0
+    }
+    foreach ($w in @($Resp.warnings)) { if ($w) { Write-Warning "[push-telemetry] $w" } }
     Write-Output ("[push-telemetry] OK: actions={0} incidents={1} usage={2} tool_calls={3}" -f `
         $Resp.action_log_ingested, $Resp.security_incidents_ingested, $Resp.usage_events_ingested, $Resp.tool_calls_ingested)
 

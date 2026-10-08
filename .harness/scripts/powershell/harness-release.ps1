@@ -110,17 +110,65 @@ $decision = "allow"; $reason = "(gate not consulted)"
 $cfgFile = "$HarnessRoot\.harness\portal-sync.json"
 if ((Test-Path $cfgFile)) {
     $cfg = Get-Content $cfgFile -Raw -Encoding utf8 | ConvertFrom-Json
-    $key = $env:HARNESS_PORTAL_INGEST_KEY
-    if (-not $key -and (Test-Path "$HarnessRoot\.harness\portal-sync.key")) { $key = (Get-Content "$HarnessRoot\.harness\portal-sync.key" -Raw).Trim() }
-    if ($cfg.portal_url -and $cfg.project_id -and $key) {
+    # Portal v2 P1 1.2b: the CHECKOUT credential (X-Checkout-Id + X-Checkout-Credential)
+    # when this machine holds one -- read by the shared reader, headers only (C5) -- else the
+    # legacy shared key (X-Ingest-Key), with a once-a-day notice. Never both.
+    $AuthHeaders = $null; $AuthSource = ""
+    $AuthLib = Join-Path $PSScriptRoot "..\lib\harness_checkout_facts.py"
+    $pyc = Get-Command python -ErrorAction SilentlyContinue
+    if (-not $pyc) { $pyc = Get-Command python3 -ErrorAction SilentlyContinue }
+    if ($pyc -and (Test-Path $AuthLib)) {
+        try {
+            $aj = (& $pyc.Source $AuthLib --auth $HarnessRoot 2>$null) -join ""
+            if ($aj) {
+                $Au = $aj | ConvertFrom-Json
+                if ($Au.checkout_id -and $Au.checkout_credential) {
+                    $AuthHeaders = @{ "X-Checkout-Id" = "$($Au.checkout_id)"; "X-Checkout-Credential" = "$($Au.checkout_credential)" }
+                    $AuthSource = "checkout"
+                }
+            }
+        } catch { }
+    }
+    if (-not $AuthHeaders) {
+        $key = $env:HARNESS_PORTAL_INGEST_KEY
+        if (-not $key -and (Test-Path "$HarnessRoot\.harness\portal-sync.key")) { $key = (Get-Content "$HarnessRoot\.harness\portal-sync.key" -Raw).Trim() }
+        if ($key) {
+            $AuthHeaders = @{ "X-Ingest-Key" = $key }; $AuthSource = "legacy-key"
+            if ($pyc -and (Test-Path $AuthLib)) {
+                try { $lw = (& $pyc.Source $AuthLib --legacy-warning harness-release 2>$null) -join ""; if ($lw) { Write-Warning $lw } } catch { }
+            }
+        }
+    }
+    if ($cfg.portal_url -and $cfg.project_id -and $AuthHeaders) {
         try {
             [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
-            $b = @{ tool = "deploy"; command = "release"; actor = "harness-release" } | ConvertTo-Json -Compress
+            # The REAL requester: HARNESS_USER, else git user.email. With neither, actor stays
+            # empty and the server uses the member bound to the credential. The script's own name
+            # is never an actor -- it travels as requested_via.
+            $actor = "$env:HARNESS_USER"
+            if (-not $actor) { try { $actor = ((& git -C $HarnessRoot config user.email 2>$null) -join "").Trim() } catch { $actor = "" } }
+            $b = @{ tool = "deploy"; command = "release"; actor = "$actor"; requested_via = "harness-release" } | ConvertTo-Json -Compress
             $r = Invoke-RestMethod -Uri "$($cfg.portal_url.TrimEnd('/'))/api/pdp/$($cfg.project_id)/decide" -Method Post `
-                -ContentType "application/json; charset=utf-8" -Headers @{ "X-Ingest-Key" = $key } `
+                -ContentType "application/json; charset=utf-8" -Headers $AuthHeaders `
                 -UserAgent "harness-release/1.0" -Body ([System.Text.Encoding]::UTF8.GetBytes($b)) -TimeoutSec 15
             $decision = $r.decision; $reason = $r.reason
-        } catch { Write-Warning "[release] PDP not reachable ($($_.Exception.Message)) -- using local suite result"; $decision = if ($allGreen) { "allow" } else { "deny" }; $reason = "local suites $(if($allGreen){'green'}else{'red'})" }
+        } catch {
+            # Tell "the PDP answered no" from "the PDP could not be reached". An explicit 403 is a
+            # server refusal and must never fall back to allow; 401 and network errors keep the
+            # local-suite fallback (documented design, C10) but are named for what they are.
+            $RejCode = 0
+            try { $RejCode = [int]$_.Exception.Response.StatusCode } catch { $RejCode = 0 }
+            if ($RejCode -eq 403) {
+                Write-Warning "[release] PDP rejected this credential (HTTP 403: revoked / disabled / not permitted) -- release refused"
+                $decision = "deny"; $reason = "PDP rejected this credential (HTTP 403)"
+            } elseif ($RejCode -eq 401) {
+                Write-Warning "[release] PDP rejected this credential (HTTP 401: revoked / expired) -- server-side enforcement is NOT active; using local suite result"
+                $decision = if ($allGreen) { "allow" } else { "deny" }; $reason = "local suites $(if($allGreen){'green'}else{'red'})"
+            } else {
+                Write-Warning "[release] PDP not reachable ($($_.Exception.Message)) -- using local suite result"
+                $decision = if ($allGreen) { "allow" } else { "deny" }; $reason = "local suites $(if($allGreen){'green'}else{'red'})"
+            }
+        }
     }
 }
 

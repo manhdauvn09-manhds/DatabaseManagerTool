@@ -17,17 +17,17 @@
           "description": { "type": "string" },
           "primary": {
             "type": "string",
-            "enum": ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"]
+            "enum": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001", "claude-haiku-4-5"]
           },
           "fallback": {
             "type": "string",
-            "enum": ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"]
+            "enum": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001", "claude-haiku-4-5"]
           },
           "power_map": {
             "type": "object",
             "additionalProperties": {
               "type": "string",
-              "enum": ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"]
+              "enum": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001", "claude-haiku-4-5"]
             }
           }
         }

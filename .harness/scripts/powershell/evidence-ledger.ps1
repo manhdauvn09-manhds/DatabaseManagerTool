@@ -89,6 +89,107 @@ function Add-Utf8NoBom {
     [System.IO.File]::AppendAllText($Path, $Value, $Utf8NoBom)
 }
 
+# --- U1: record the appends that DID NOT HAPPEN -------------------------------
+#
+# C9 says every side-effect appends one line. So an append that throws is a
+# side-effect that HAPPENED WITH NO LINE RECORDING IT. The chain stays
+# internally consistent and `verify` stays green, because a missing entry leaves
+# no hole to find -- the next entry links to the last one that succeeded. There
+# is no way to discover the gap from the chain itself.
+#
+# Measured on this machine: `ledger append threw for tool=Edit ::
+# System.OutOfMemoryException`. Get-LastEntry reads a 4 MB tail, and this box
+# routinely runs under 1 GB free, so the failure lands exactly when the most is
+# happening.
+#
+# THIS FILE IS NOT THE CHAIN. A marker line has no valid prev_hash, so writing it
+# into chain.jsonl would make `verify` report a break -- trading a silent gap for
+# a loud false alarm about tampering. It goes to its own file, and `harness
+# doctor` grades a non-empty one as FAIL.
+#
+# The writer is deliberately the cheapest thing that can still write: string
+# concatenation and one AppendAllText. No Get-LastEntry, no ConvertTo-Json, no
+# hashing -- a fallback that repeats whatever exhausted memory is not a fallback.
+$AppendFailFile = "$LedgerDir\append-failures.jsonl"
+
+function ConvertTo-JsonStringLiteral {
+    param([string]$Text)
+    if ($null -eq $Text) { return "" }
+    # Only what JSON forbids raw. Keep it small; this runs while memory is short.
+    $t = $Text.Replace('\', '\\').Replace('"', '\"')
+    $t = $t -replace "[`r`n`t]", ' '
+    if ($t.Length -gt 400) { $t = $t.Substring(0, 400) }
+    return $t
+}
+
+function Write-AppendFailure {
+    param([string]$Tool, [string]$Reason, [string]$Stage)
+    try {
+        $line = '{"ts":"' + (Get-Date -Format 'o') +
+                '","type":"append_failed","stage":"' + (ConvertTo-JsonStringLiteral $Stage) +
+                '","tool":"' + (ConvertTo-JsonStringLiteral $Tool) +
+                '","session_id":"' + (ConvertTo-JsonStringLiteral $env:HARNESS_SESSION_ID) +
+                '","reason":"' + (ConvertTo-JsonStringLiteral $Reason) + '"}'
+        [System.IO.File]::AppendAllText($AppendFailFile, $line + "`n", $Utf8NoBom)
+        return $true
+    } catch {
+        # Even the cheap path failed (disk full, permissions, memory gone).
+        # Last resort: the hook error log, with a signature doctor grades FAIL.
+        try {
+            $errLog = "$HarnessRoot\.harness\telemetry\hook-errors.log"
+            $dir = Split-Path -Parent $errLog
+            if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
+            [System.IO.File]::AppendAllText($errLog,
+                ("{0} LEDGER-APPEND-LOST tool={1} :: {2}`n" -f (Get-Date -Format 'o'), $Tool, $Reason),
+                $Utf8NoBom)
+        } catch { }
+        return $false
+    }
+}
+
+# --- Append lock -------------------------------------------------------------
+#
+# "Read the last entry_hash, then append a line linking to it" is two steps. With
+# no lock, two hooks running at once (parallel tool calls, subagents, a second
+# session) both read the same last entry and both link to it: the chain FORKS.
+# Measured 2026-09-29 on this repo: 974 of 8,953 entries linked to an older entry
+# than the line above them, and doctor still said OK. After that, one genuine
+# rewrite hides among hundreds of harmless forks (C9 + C14).
+#
+# The lock is a byte-range lock on byte 0 of chain.lock, NOT an exclusive open.
+# It is the same OS primitive Python's msvcrt.locking / fcntl.lockf use, so the
+# bash twin (whose writer is Python) and this script exclude each other when both
+# run on one machine. An OS lock dies with its process: a hook killed on timeout
+# cannot leave the ledger locked forever, which a lock FILE or directory would.
+$LedgerLockFile = "$LedgerDir\chain.lock"
+$LedgerLockTimeoutMs = 10000
+
+function Enter-LedgerLock {
+    $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    while ($true) {
+        $fs = $null
+        try {
+            $fs = [System.IO.File]::Open($LedgerLockFile, 'OpenOrCreate', 'ReadWrite', 'ReadWrite')
+            $fs.Lock(0, 1)
+            return $fs
+        } catch [System.IO.IOException] {
+            if ($fs) { $fs.Dispose() }
+            if ($sw.ElapsedMilliseconds -ge $LedgerLockTimeoutMs) {
+                throw "ledger lock not acquired within $LedgerLockTimeoutMs ms (another append is holding it)"
+            }
+            Start-Sleep -Milliseconds (Get-Random -Minimum 10 -Maximum 50)
+        }
+    }
+}
+
+function Exit-LedgerLock {
+    param($Handle)
+    if ($Handle) {
+        try { $Handle.Unlock(0, 1) } catch { }
+        $Handle.Dispose()
+    }
+}
+
 # --- Helper: SHA-256 hash ---
 function Get-EntryHash {
     param([string]$Json)
@@ -216,7 +317,17 @@ function Get-ChainLength {
 
 switch ($Command) {
     "init" {
-        # Create genesis block
+        # Two sessions starting together both see "no chain" and both call init;
+        # without the lock the second genesis overwrote the first chain's entries.
+        # And init never overwrites a chain that already has entries: starting over
+        # on top of history is what left 24hHotnewsAI's live chain with no link to
+        # its sealed segment (15.09). Closing a segment is `seal`, which keeps it.
+        $Lock = Enter-LedgerLock
+        try {
+        if ((Test-Path $ChainFile) -and (Get-Item $ChainFile).Length -gt 0) {
+            Write-Output "[evidence-ledger] chain.jsonl already has entries -- not overwriting. To start a new segment use: evidence-ledger seal -Reason '<why>'"
+            break
+        }
         $Genesis = @{
             index = 0
             prev_hash = "GENESIS"
@@ -250,6 +361,7 @@ switch ($Command) {
         Write-Output "[evidence-ledger] Genesis block created at index 0"
         Write-Output "[evidence-ledger] Hash: $($Genesis.entry_hash)"
         Write-Output "[evidence-ledger] Chain file: $ChainFile"
+        } finally { Exit-LedgerLock $Lock }
         break
     }
 
@@ -266,6 +378,19 @@ switch ($Command) {
             Write-Error "[evidence-ledger] Invalid input JSON: $_"
             exit 1
         }
+
+        # U1: from here to the append itself, EVERY failure must leave a trace.
+        # The tool name is pulled out first so the marker can name it even when
+        # the rest of the entry never gets built.
+        $FailTool = ""
+        try { if ($Entry.action.tool) { $FailTool = "$($Entry.action.tool)" } } catch { }
+        $FailStage = "lock"
+        $Lock = $null
+        try {
+        $Lock = Enter-LedgerLock
+        # Everything from reading the last entry to writing the new line happens
+        # under the lock -- the timestamp too, so file order and time order agree.
+        $FailStage = "read-last-entry"
 
         $LastEntry = Get-LastEntry
         # Second line of defence, independent of Get-LastEntry: coerce to a scalar
@@ -328,15 +453,35 @@ switch ($Command) {
             signature = if ($Entry.signature) { $Entry.signature } else { "" }
         }
 
+        $FailStage = "serialize-and-hash"
         $JsonWithoutHash = $NewEntry | ConvertTo-Json -Depth 10 -Compress
         $NewEntry.entry_hash = Get-EntryHash $JsonWithoutHash
 
         $OutEntryJson = $NewEntry | ConvertTo-Json -Depth 10 -Compress
+        $FailStage = "write-chain"
         Add-Utf8NoBom -Path $ChainFile -Value "$OutEntryJson`n"
 
         Write-Output "[evidence-ledger] Appended entry $NextIndex"
         Write-Output "[evidence-ledger] Hash: $($NewEntry.entry_hash) | Prev: $PrevHash"
         Write-Output $OutEntryJson
+
+        } catch {
+            # The side-effect already happened; only its record failed. Say so
+            # somewhere durable, then exit non-zero so a caller that DOES check
+            # can react. Callers today redirect output to $null and ignore the
+            # code -- which is exactly why the marker file exists rather than a
+            # message.
+            $reason = "$($_.Exception.GetType().Name): $($_.Exception.Message)"
+            $wrote = Write-AppendFailure -Tool $FailTool -Reason $reason -Stage $FailStage
+            Write-Warning ("[evidence-ledger] APPEND FAILED at {0} for tool={1} :: {2}{3}" -f `
+                $FailStage, $FailTool, $reason,
+                $(if ($wrote) { " (recorded in append-failures.jsonl)" } else { " (COULD NOT RECORD)" }))
+            Exit-LedgerLock $Lock
+            exit 3
+        } finally {
+            Exit-LedgerLock $Lock
+            $Lock = $null
+        }
         break
     }
 
@@ -400,6 +545,11 @@ switch ($Command) {
 
         $SealReason = if ($Reason) { $Reason } else { "segment sealed (no reason given)" }
 
+        # Held from reading the head to the final rename: an append landing between
+        # the seal entry and the archive move would go into the archived file after
+        # its seal, or start an unlinked chain.
+        $Lock = Enter-LedgerLock
+        try {
         # Same index/prev resolution as append -- including the corruption
         # fallbacks, since sealing a poisoned chain is this command's whole job.
         $LastEntry = Get-LastEntry
@@ -465,6 +615,7 @@ switch ($Command) {
 
         Write-Output "[evidence-ledger] Sealed segment -> $ArchiveName (head $($SealEntry.entry_hash))"
         Write-Output "[evidence-ledger] New segment started; genesis links prev_segment_head for cross-file continuity"
+        } finally { Exit-LedgerLock $Lock }
         break
     }
 

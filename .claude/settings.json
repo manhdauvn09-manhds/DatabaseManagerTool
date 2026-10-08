@@ -169,6 +169,22 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "powershell",
+            "args": [
+              "-NoProfile",
+              "-File",
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/powershell/harness-handoff-check.ps1"
+            ]
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "matcher": "",

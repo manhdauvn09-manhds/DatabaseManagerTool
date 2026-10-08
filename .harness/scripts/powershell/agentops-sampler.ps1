@@ -191,6 +191,14 @@ $Record = @{
     end_time = $EndTime
     active_account = $ActiveAccount
     active_member = $ActiveMember
+    # WHICH assistant produced this line (B9a). A literal, not config: this
+    # script IS the Claude Code sampler -- it runs from a Claude Code hook and
+    # reads a Claude Code transcript, so the value is a fact about the writer,
+    # not a rule to be looked up (C2 governs policy, not self-identification).
+    # A collector for another assistant stamps its own value; the ingest
+    # defaults a MISSING stamp to claude-code, so an un-upgraded machine still
+    # lands in the right bucket.
+    assistant = "claude-code"
 }
 
 # Append to agentops log

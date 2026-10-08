@@ -157,10 +157,10 @@ agentops:
 orchestration:
   enforced_at: workflow_engine
   model_fallback:                           # primary -> fallback per profile (C4 ladder)
-    planning:      ["claude-fable-5", "claude-opus-4-8"]
-    coding:        ["claude-opus-4-8", "claude-sonnet-5"]
-    review:        ["claude-opus-4-8", "claude-haiku-4-5-20251001"]
-    summarization: ["claude-haiku-4-5-20251001"]
+    planning:      ["claude-opus-5-5", "claude-sonnet-5-5"]
+    coding:        ["claude-sonnet-5-5", "claude-opus-5-5"]
+    review:        ["claude-sonnet-5-5", "claude-opus-5-5"]
+    summarization: ["claude-haiku-4-5-20251001", "claude-sonnet-5-5"]
   retry:
     max_attempts: 3
     backoff: "exponential"

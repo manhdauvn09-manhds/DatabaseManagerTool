@@ -27,9 +27,15 @@ Emitted, and why each one is needed:
 Prints nothing when there is no chain. An absent anchor is a gap the Portal can
 see; a fabricated one would be the failure this whole mechanism exists to catch.
 """
+import collections
 import json
 import os
 import sys
+
+# P1 1.5: how many of the newest entry hashes ride along. The Portal looks the
+# head it anchored LAST time up in this window, so "ok" means "grew from where it
+# was" and not merely "has more lines". 500 x 64 hex chars is ~32 KB per push.
+RECENT_WINDOW = 500
 
 
 def anchor(root):
@@ -40,6 +46,7 @@ def anchor(root):
     count = 0
     first = None
     last = None
+    recent = collections.deque(maxlen=RECENT_WINDOW)
     try:
         # utf-8-sig: some chains predate the BOM fix and still carry one.
         with open(chain, encoding="utf-8-sig") as f:
@@ -54,11 +61,13 @@ def anchor(root):
                     # Skipping it silently would let a tamperer shrink the chain
                     # by corrupting lines instead of deleting them.
                     count += 1
+                    recent.append("")       # keeps the window aligned with chain positions
                     continue
                 count += 1
                 if first is None:
                     first = rec
                 last = rec
+                recent.append(str((rec or {}).get("entry_hash") or "") if isinstance(rec, dict) else "")
     except OSError:
         return None
 
@@ -71,6 +80,9 @@ def anchor(root):
         "genesis_hash": str((first or {}).get("entry_hash") or ""),
         # Present only when this segment was started by a seal.
         "prev_segment_head": str((first or {}).get("prev_segment_head") or ""),
+        # Oldest first; the last element is head_hash, so recent_hashes[i] is chain
+        # position entry_count - len(recent_hashes) + i.
+        "recent_hashes": list(recent),
     }
 
 

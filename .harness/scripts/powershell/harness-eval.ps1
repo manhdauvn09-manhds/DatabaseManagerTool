@@ -85,8 +85,13 @@ if (Test-Path $Policy) {
             # sibling keys under `evaluation:` from being picked up as suites and
             # executed as shell commands.
             if ($indent -le $blockIndent) { $inBlock = $false; continue }
-            if ($line -match '^\s+([A-Za-z0-9_\-]+):\s*"?([^"#]*?)"?\s*(#.*)?$') {
-                $name = $matches[1]; $cmd = $matches[2].Trim()
+            # Either quote style. A project whose Prettier runs with singleQuote
+            # rewrote every command to 'python ...' (ScreenRecord, 2026-09-30); the
+            # quotes then reached cmd.exe, which ran nothing, and all three suites
+            # were skipped without a word about why.
+            if ($line -match '^\s+([A-Za-z0-9_\-]+):\s*(?:"([^"]*)"|''([^'']*)''|([^#]*?))\s*(#.*)?$') {
+                $name = $matches[1]
+                $cmd = ("" + $matches[2] + $matches[3] + $matches[4]).Trim()
                 if ($cmd) { $suites += [pscustomobject]@{ name = $name; cmd = $cmd } }
             }
         }
@@ -124,7 +129,14 @@ foreach ($suite in $suites) {
     Pop-Location
     $counts = Parse-Counts $out
     if ($null -eq $counts) {
-        if (-not $Quiet) { Write-Host ("  ~ {0}: no parseable result -> skipped (no report written)" -f $suite.name) -ForegroundColor Yellow }
+        if (-not $Quiet) {
+            Write-Host ("  ~ {0}: no parseable result -> skipped (no report written)" -f $suite.name) -ForegroundColor Yellow
+            # Say what the suite actually printed. "no parseable result" alone hid
+            # "'python' is not recognized" behind a line that reads like a quiet suite.
+            $first = @($out -split "`r?`n" | Where-Object { $_.Trim() } | Select-Object -First 2)
+            if ($first.Count) { Write-Host ("    output began: {0}" -f ($first -join ' | ')) -ForegroundColor DarkYellow }
+            else { Write-Host "    (the command printed nothing)" -ForegroundColor DarkYellow }
+        }
         continue
     }
     $rec = [ordered]@{

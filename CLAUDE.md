@@ -50,7 +50,7 @@ docs/DEVELOPER_GUIDE.html
 ---
 
 <!-- BEGIN harness-governance -->
-<!-- standard-governance v1.6.18 - MANAGED BLOCK. Edits inside are replaced on the next install; put your own project rules OUTSIDE this block. -->
+<!-- standard-governance v1.8.11 - MANAGED BLOCK. Edits inside are replaced on the next install; put your own project rules OUTSIDE this block. -->
 
 <!--
   Harness AI Toolkit — Common Governance Reference
@@ -117,7 +117,7 @@ what is inside it. Run the installer with `-MergeGuides` / `--merge-guides`.
 - **C3 — Registered side-effects:** every side-effect-capable tool has an entry
   in the tool registry; unknown tools are denied by default.
 - **C4 — Explicit model ladder:** pin the exact models you allow (e.g. the
-  Claude family: Fable 5 / Opus 4.8 / Sonnet 5 / Haiku 4.5). Any on-prem/OSS
+  Claude family: Opus 5.5 / Sonnet 5.5 / Haiku 4.5). Any on-prem/OSS
   tier is a separate ladder and must not be mislabeled as the vendor's model.
 - **C5 — No hardcoded secrets:** never commit secrets/API keys; source them from
   env or a vault (file-based `*_FILE` secrets for containers).
@@ -190,6 +190,19 @@ what is inside it. Run the installer with `-MergeGuides` / `--merge-guides`.
   genuine diagnostics to quiet a noisy file trades a cosmetic problem for a
   blind spot. Corollary: a screen that renders "no data" as green is the same
   bug in another medium.
+- **C15 — Every task ends with a handoff.** Before declaring a task done,
+  update the project's `Handoff.md` so the next session (any assistant, any
+  person) can start without re-deriving state: what is true NOW (dated, with
+  measured numbers and where they came from), what comes NEXT, what is OPEN
+  (each item with an `until:` condition that retires it) and what to AVOID.
+  Dated handoff notes (`docs/HANDOFF-*.md`) that a newer one supersedes are
+  **merged, then deleted**: copy every still-live OPEN/AVOID item into
+  `Handoff.md` first, then delete the old file — git keeps its history.
+  Never delete evidence (`docs/_parts/`, logs, XML reports): a handoff
+  summarises evidence, it does not replace it. Claude Code reminds you once at
+  `Stop` when files changed this session but `Handoff.md` did not, and
+  `harness doctor` warns when it falls behind the latest commit
+  (`casan-policies.yaml` → `handoff`).
 
 ## Plane separation — what these policies do NOT govern
 
@@ -221,12 +234,12 @@ provider. policy-ci asserts the separation; keep the two apart on purpose.
 
 ## Model Reference (adjust to your licensed models)
 
-| Profile       | Fable 5    | Opus 4.8    | Sonnet 5    | Haiku 4.5   |
-|---------------|------------|-------------|-------------|-------------|
-| planning      | Primary    | Fallback    | —           | —           |
-| coding        | —          | Primary     | Fallback    | —           |
-| review        | —          | Primary     | —           | Fallback    |
-| summarization | —          | —           | —           | Primary     |
+| Profile       | Opus 5.5    | Sonnet 5.5  | Haiku 4.5   |
+|---------------|-------------|-------------|-------------|
+| planning      | Primary     | Fallback    | —           |
+| coding        | Fallback    | Primary     | —           |
+| review        | Fallback    | Primary     | —           |
+| summarization | —           | Fallback    | Primary     |
 
 ---
 

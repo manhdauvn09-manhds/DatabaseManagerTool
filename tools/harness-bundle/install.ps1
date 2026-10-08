@@ -51,6 +51,43 @@ function Sha256HexOf([byte[]]$Bytes) {
     return ([BitConverter]::ToString($s.ComputeHash($Bytes)) -replace '-', '').ToLower()
 }
 
+# A receipt hash that cannot honestly be stated. The hash of an EMPTY file is a real
+# hash (of nothing) and recording it makes every empty file look verified.
+$Unknown = "unknown"
+function Get-HashOrUnknown([byte[]]$Bytes) {
+    if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return $Unknown }
+    return (Sha256HexOf $Bytes)
+}
+
+# BOM and CRLF stripped -- what an EOL/BOM-only difference (core.autocrlf checkout,
+# a Windows editor) must not count as a change. install.sh and harness-verify.* do
+# exactly the same. Latin-1 maps bytes 1:1, so the round trip is byte-exact.
+function ConvertTo-NormBytes([byte[]]$Bytes) {
+    if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return ,([byte[]]@()) }
+    $start = 0
+    if ($Bytes.Length -ge 3 -and $Bytes[0] -eq 0xEF -and $Bytes[1] -eq 0xBB -and $Bytes[2] -eq 0xBF) { $start = 3 }
+    $lat = [System.Text.Encoding]::GetEncoding(28591)
+    $text = $lat.GetString($Bytes, $start, $Bytes.Length - $start)
+    return ,($lat.GetBytes($text.Replace("`r`n", "`n")))
+}
+
+# CRLF -> LF only, BOM KEPT. The receipt hashes the SHIPPED bytes: LF, and for most
+# .ps1 WITH a UTF-8 BOM. A CRLF checkout of such a file (core.autocrlf, or the managed
+# .gitattributes `*.ps1 text eol=crlf`) is BOM+CRLF, and ConvertTo-NormBytes turns it
+# into a form the receipt never held. Before 1.8.11 only that form was compared, so an
+# update called every such file hand-edited and left a .new beside it (B-77).
+function ConvertTo-LfBytes([byte[]]$Bytes) {
+    if ($null -eq $Bytes -or $Bytes.Length -eq 0) { return ,([byte[]]@()) }
+    $lat = [System.Text.Encoding]::GetEncoding(28591)
+    return ,($lat.GetBytes($lat.GetString($Bytes).Replace("`r`n", "`n")))
+}
+
+function Test-BytesEqual([byte[]]$A, [byte[]]$B) {
+    if ($null -eq $A) { $A = [byte[]]@() }
+    if ($null -eq $B) { $B = [byte[]]@() }
+    return [System.Linq.Enumerable]::SequenceEqual($A, $B)
+}
+
 # --- Auto-find newest bundle if not specified ---
 if (-not $BundleFile) {
     $found = Get-ChildItem -Recurse -Filter "*.bundle.json" -ErrorAction SilentlyContinue |
@@ -156,21 +193,48 @@ if ($installerRules -and (Test-Path $installerRules)) {
 # records a sha256 per shipped file. Comparing it to what is on disk now answers
 # the question `preserve` never could -- "did the project hand-edit a file the
 # bundle owns?" Overwriting that silently is how four separate teams lost work.
-$prevHashes = @{}
+$prevHashes = @{}     # path -> last INSTALLED hash (the baseline a hand edit is measured against)
+$prevShip   = @{}     # path -> hash of the shipped bytes the last run carried
+$prevState  = @{}     # path -> state the last run recorded ("" for receipts older than states)
 $prevReceipt = Join-Path $TargetDir ".harness\.bundle-manifest.json"
 if (Test-Path $prevReceipt) {
     try {
         $pr = Get-Content -Path $prevReceipt -Raw -Encoding utf8 | ConvertFrom-Json
         # Prefer installed_sha256 -- what the LAST install left on disk. Fall back
         # to sha256 (shipped bytes) only for receipts written before that field
-        # existed, where it is the best baseline available.
+        # existed, where it is the best baseline available. "unknown" is the
+        # receipt's way of saying "no honest hash" and is no baseline at all.
         foreach ($e in @($pr.files)) {
             if ($e.path) {
                 $h = if ($e.PSObject.Properties.Name -contains 'installed_sha256' -and $e.installed_sha256) { "$($e.installed_sha256)" } else { "$($e.sha256)" }
+                if ($h -eq $Unknown) { $h = "" }
                 $prevHashes[$e.path] = $h
+                $sh = "$($e.sha256)"; if ($sh -eq $Unknown) { $sh = "" }
+                $prevShip[$e.path] = $sh
+                $prevState[$e.path] = if ($e.PSObject.Properties.Name -contains 'state' -and $e.state) { "$($e.state)" } else { "" }
             }
         }
     } catch { }   # unreadable receipt just means "no baseline" -- never fatal
+}
+
+# What each file ended as, for the receipt: path -> @{ State; Base }. A receipt that
+# only said "version X" while files were skipped, kept or left in conflict made the
+# project look fully on X (24hHotnewsAI: receipt 1.8.1, scripts older). State is
+# per file, and the hash of a file this run did NOT install is never taken as the
+# new baseline -- see the receipt below.
+$outcome = @{}
+$unchanged = 0
+
+# A `<file>.new` is the installer's own marker for "a shipped copy you have not
+# adopted". Once the file matches the shipped copy it is stale, and leaving it
+# makes a resolved conflict look unresolved.
+function Remove-StaleNew([string]$Dest, [string]$Rel) {
+    if (Test-Path "$Dest.new") {
+        if (-not $DryRun) { Remove-Item -LiteralPath "$Dest.new" -Force }
+        # Write-Host, not Write-Output: inside a function Write-Output joins the
+        # return value of whoever calls it (policy-ci ps:no-write-output-in-function).
+        Write-Host "  [CLEAN] $Rel.new (stale: the file now matches the shipped copy)"
+    }
 }
 
 # The branch a generated workflow should trigger on: the REMOTE's default, asked
@@ -181,8 +245,8 @@ if (Test-Path $prevReceipt) {
 # is gone. A dead gate reads as coverage, which is worse than no gate at all.
 function Get-DefaultBranch([string]$Root) {
     # A namespaced name is a feature branch, not a default. refs/remotes/*/HEAD is
-    # a LOCAL CACHE written at clone time -- shadowing-app's pointed at
-    # claude/exciting-ritchie-ieuNZ while its real default was main -- so a
+    # a LOCAL CACHE written at clone time -- one repo's pointed at a temporary
+    # `claude/<generated-name>` branch while its real default was main -- so a
     # cached answer that looks like a feature branch is rejected outright.
     # Trusting it would pin CI to a branch that gets deleted, and a gate that
     # stops firing looks exactly like a gate that passes.
@@ -511,21 +575,80 @@ function Merge-HookSettings {
     }
 }
 
+function Resolve-BundleDest {
+    <#
+      Resolve a bundle-declared relative path INSIDE $TargetDir, or refuse.
+
+      Destinations were built as `Join-Path $TargetDir ($f.path -replace '/','\')`
+      with $f.path taken from the bundle. Join-Path does not contain anything:
+      a '..' component walks out of the target, and an absolute path or a drive
+      letter discards $TargetDir entirely. A bundle declaring
+      "../../../Windows/System32/Tasks/harness" installed there.
+
+      The content hash does not cover this. It proves the bundle was not
+      altered after packing; it says nothing about whether what was packed is
+      benign. A bundle is governance content fetched from elsewhere, so its
+      paths are input, not fact.
+
+      Throws rather than sanitising: quietly rewriting a traversing path
+      installs a file the bundle author did not name, which is its own
+      surprise. A bundle reaching outside the target is broken or hostile, and
+      the operator should hear about it either way.
+    #>
+    param(
+        [Parameter(Mandatory = $true)][string]$Root,
+        [Parameter(Mandatory = $true)][AllowEmptyString()][string]$RelPath
+    )
+    if ([string]::IsNullOrWhiteSpace($RelPath)) {
+        throw "Refusing bundle path (empty): '$RelPath'"
+    }
+    if ($RelPath -ne $RelPath.Trim()) {
+        throw "Refusing bundle path (leading/trailing whitespace): '$RelPath'"
+    }
+    if ($RelPath -match '^[\\/]' -or $RelPath -match '^[A-Za-z]:') {
+        throw "Refusing absolute bundle path: '$RelPath'"
+    }
+    $parts = $RelPath -split '[\\/]'
+    foreach ($part in $parts) {
+        if ($part -eq '..' -or $part -eq '') {
+            throw "Refusing bundle path that escapes the target: '$RelPath'"
+        }
+    }
+    $dest = Join-Path $Root ($parts -join '\')
+
+    # Compare the resolved PARENT: the file need not exist yet, and a symlink
+    # or junction planted at the destination is the trick being guarded against.
+    $rootFull = [System.IO.Path]::GetFullPath($Root.TrimEnd('\') + '\')
+    $parentDir = [System.IO.Path]::GetDirectoryName($dest)
+    $parentFull = [System.IO.Path]::GetFullPath($parentDir.TrimEnd('\') + '\')
+    if (-not $parentFull.StartsWith($rootFull, [StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing bundle path that resolves outside the target: '$RelPath' -> $dest"
+    }
+    return $dest
+}
+
 $written = 0; $skipped = 0; $kept = 0; $merged = 0; $conflicts = @(); $merges = @()
 foreach ($f in $bundle.files) {
-    $dest = Join-Path $TargetDir ($f.path -replace '/', '\')
+    $dest = Resolve-BundleDest -Root $TargetDir -RelPath $f.path
     $bytes = [Convert]::FromBase64String($f.b64)
     $exists = Test-Path $dest
+    $shipHash = Get-HashOrUnknown $bytes      # what the receipt calls `sha256`
+    # What a file this run does NOT install carries into the receipt as its
+    # baseline: the LAST installed hash, never the hash of what is on disk now.
+    $carry = if ($prevHashes[$f.path]) { "$($prevHashes[$f.path])" } else { $Unknown }
 
     # 1) Project-owned, by exact path or by convention glob.
     if ($exists -and (($preserve -contains $f.path) -or (Test-OwnedGlob $f.path $ownGlobs))) {
         $same = $false
-        try { $same = [System.Linq.Enumerable]::SequenceEqual([byte[]](Get-Content -Path $dest -Encoding Byte -Raw), $bytes) } catch { }
+        try { $same = Test-BytesEqual ([System.IO.File]::ReadAllBytes($dest)) $bytes } catch { }
         if (-not $same) {
             if (-not $DryRun) { [System.IO.File]::WriteAllBytes("$dest.new", $bytes) }
             Write-Output "  [KEEP]  $($f.path) (yours; shipped copy saved as $($f.path).new)"
+            $outcome[$f.path] = @{ State = "kept"; Base = $carry }
         } else {
             Write-Output "  [KEEP]  $($f.path) (yours; identical to shipped)"
+            Remove-StaleNew $dest $f.path
+            $outcome[$f.path] = @{ State = "kept"; Base = $shipHash }
         }
         $kept++
         continue
@@ -533,8 +656,23 @@ foreach ($f in $bundle.files) {
 
     if ($exists) {
         $diskBytes = $null
-        try { $diskBytes = [byte[]](Get-Content -Path $dest -Encoding Byte -Raw) } catch { }
-        $diskHash = if ($diskBytes) { Sha256HexOf $diskBytes } else { "" }
+        try { $diskBytes = [System.IO.File]::ReadAllBytes($dest) } catch { }
+        $diskHash = if ($null -ne $diskBytes -and $diskBytes.Length -gt 0) { Sha256HexOf $diskBytes } else { "" }
+        $diskNorm = if ($null -ne $diskBytes -and $diskBytes.Length -gt 0) { Sha256HexOf (ConvertTo-NormBytes $diskBytes) } else { "" }
+        $diskLf = if ($null -ne $diskBytes -and $diskBytes.Length -gt 0) { Sha256HexOf (ConvertTo-LfBytes $diskBytes) } else { "" }
+
+        # 1b) Already what the bundle ships (byte-exact, or differing only in EOL/BOM
+        # -- a core.autocrlf checkout). Nothing to write, nothing to decide, and
+        # not a "skip": reporting it as skipped would make every re-run of a
+        # current project look partial.
+        if ($null -ne $diskBytes -and ((Test-BytesEqual $diskBytes $bytes) -or
+                (Test-BytesEqual (ConvertTo-NormBytes $diskBytes) (ConvertTo-NormBytes $bytes)))) {
+            Write-Output "  [SAME]  $($f.path)"
+            Remove-StaleNew $dest $f.path
+            $outcome[$f.path] = @{ State = "installed"; Base = $null }
+            $unchanged++
+            continue
+        }
 
         # 2) A JSON object map the project may have EXTENDED -- extra FIELDS on
         # entries the bundle ships, and/or entries of its own. Overwriting the
@@ -561,6 +699,8 @@ foreach ($f in $bundle.files) {
                 if (@($res.Overrides).Count -gt 0)  { Write-Output "             bundle value wins on $(@($res.Overrides).Count) field(s) you had changed: $(@($res.Overrides) -join ', ')" }
                 $merges += "$($f.path): $($res.Fields) project field(s) on $($res.Entries) entry(ies), $(@($res.Yours).Count) project-only entry(ies) kept"
                 $merged++
+                Remove-StaleNew $dest $f.path
+                $outcome[$f.path] = @{ State = "installed"; Base = $null }
                 continue
             }
             # Unparseable on either side, or the shipped copy lost the map: never
@@ -571,6 +711,7 @@ foreach ($f in $bundle.files) {
             Write-Output "             kept yours; shipped copy is $($f.path).new"
             $conflicts += $msg
             $kept++
+            $outcome[$f.path] = @{ State = "conflict"; Base = $carry }
             continue
         }
 
@@ -599,6 +740,8 @@ foreach ($f in $bundle.files) {
                 if (@($res.TopWins).Count -gt 0)  { Write-Output "             bundle value wins on top-level key(s) you had changed: $(@($res.TopWins) -join ', ') (hold local overrides in .claude/settings.local.json)" }
                 $merges += "$($f.path): $(@($res.Yours).Count) project hook entry(ies) kept, $(@($res.ExtraTop).Count) extra top-level key(s) kept"
                 $merged++
+                Remove-StaleNew $dest $f.path
+                $outcome[$f.path] = @{ State = "installed"; Base = $null }
                 continue
             }
             # Unparseable, or the shipped copy lost its hooks object: never
@@ -610,6 +753,7 @@ foreach ($f in $bundle.files) {
             Write-Output "             kept yours; shipped copy is $($f.path).new"
             $conflicts += $msg
             $kept++
+            $outcome[$f.path] = @{ State = "conflict"; Base = $carry }
             continue
         }
 
@@ -632,6 +776,7 @@ foreach ($f in $bundle.files) {
                 Write-Output "             kept yours; shipped copy is $($f.path).new -- carry those entries over by hand"
                 $conflicts += $msg
                 $kept++
+                $outcome[$f.path] = @{ State = "conflict"; Base = $carry }
                 continue
             }
         }
@@ -639,20 +784,34 @@ foreach ($f in $bundle.files) {
         # 4) A bundle-owned file the project hand-edited since the last install.
         # Only claimable when a baseline exists; with no receipt we cannot tell an
         # edit from a first install, and guessing would either cry wolf or hide it.
-        if ($prevHashes.ContainsKey($f.path) -and $diskHash -and
-            $prevHashes[$f.path] -and $diskHash -ne $prevHashes[$f.path]) {
+        if ($prevHashes.ContainsKey($f.path) -and $diskHash -and $prevHashes[$f.path] -and
+            $diskHash -ne $prevHashes[$f.path] -and $diskNorm -ne $prevHashes[$f.path] -and
+            $diskLf -ne $prevHashes[$f.path]) {
+            # Hand-edited. If the bundle has not moved on since the last run there is
+            # nothing to adopt: keep the edit, no .new, no conflict. (Not when the
+            # last run already left this file in conflict -- the receipt's shipped
+            # hash then names the copy that was REFUSED, so "unchanged" would be
+            # measured against the very bytes the edit is in conflict with.)
+            if ($prevState[$f.path] -ne "conflict" -and $prevShip[$f.path] -and $prevShip[$f.path] -eq $shipHash) {
+                Write-Output "  [KEEP]  $($f.path) (yours; edited since the last install, the bundle has not changed it)"
+                $kept++
+                $outcome[$f.path] = @{ State = "kept"; Base = $carry }
+                continue
+            }
             if (-not $DryRun) { [System.IO.File]::WriteAllBytes("$dest.new", $bytes) }
             $msg = "$($f.path): edited by hand since the last install (sha differs from the recorded baseline)"
             Write-Output "  [CONFLICT] $msg"
             Write-Output "             kept yours; shipped copy is $($f.path).new"
             $conflicts += $msg
             $kept++
+            $outcome[$f.path] = @{ State = "conflict"; Base = $carry }
             continue
         }
 
         if (-not $Force) {
             Write-Output "  [SKIP] $($f.path) (exists; use -Force to overwrite)"
             $skipped++
+            $outcome[$f.path] = @{ State = "skipped"; Base = $carry }
             continue
         }
     }
@@ -664,14 +823,16 @@ foreach ($f in $bundle.files) {
         if (-not (Test-Path $destDir)) { New-Item -ItemType Directory -Path $destDir -Force | Out-Null }
         [System.IO.File]::WriteAllBytes($dest, $bytes)
         Write-Output "  [WRITE] $($f.path)"
+        Remove-StaleNew $dest $f.path
     }
+    $outcome[$f.path] = @{ State = "installed"; Base = $null }
     $written++
 }
 
 # --- Summary. Conflicts are listed again, by name: a count alone reads as "all
 # fine" and the whole point of this pass is that some files were NOT updated.
 Write-Output ""
-Write-Output "[summary] written=$written  merged=$merged  kept=$kept  skipped=$skipped  conflicted=$($conflicts.Count)"
+Write-Output "[summary] written=$written  merged=$merged  kept=$kept  skipped=$skipped  conflicted=$($conflicts.Count)  unchanged=$unchanged"
 if ($merges.Count -gt 0) {
     Write-Output "[summary] merged in place -- your fields survived:"
     foreach ($m in $merges) { Write-Output "  - $m" }
@@ -686,13 +847,35 @@ if ($DryRun) {
     exit 0
 }
 
-# --- Install receipt: lets the in-project uninstaller know exactly what this
-# bundle placed (path + original sha256), so uninstall works without the
-# original .bundle.json and can tell pristine files from user-edited ones. ---
+# --- Install receipt: what this run did to EACH file, not just which bundle it came
+# from. `version` and `content_hash` name the bundle this run was driven by; they
+# are not a claim that every file in it landed -- `status` and each file's `state`
+# are. (A receipt that said only "version X" while files were skipped or left in
+# conflict is how 24hHotnewsAI read 1.8.1 over scripts that were older.)
+#
+#   installed  the file on disk is what this run put there (written, merged, or
+#              already identical) -- `installed_sha256` is its hash
+#   kept       project-owned, or hand-edited while the bundle did not change it
+#   conflict   hand-edited AND the bundle changed it: yours kept, shipped copy in
+#              <file>.new
+#   skipped    exists and no -Force
+# For every state but "installed", `installed_sha256` is the baseline CARRIED from
+# the previous receipt ("unknown" when there is none) -- never the hash of the
+# bytes on disk, which would turn the next run's "you edited this" into "you did
+# not". `sha256` keeps its meaning (the shipped bytes; the uninstaller reads it).
+$counts = [ordered]@{ installed = 0; kept = 0; conflict = 0; skipped = 0 }
 $manifestFiles = foreach ($f in $bundle.files) {
     $bytes = [Convert]::FromBase64String($f.b64)
-    [ordered]@{ path = $f.path; sha256 = (Sha256HexOf $bytes) }
+    $o = $outcome[$f.path]
+    $counts[$o.State] = [int]$counts[$o.State] + 1
+    $base = $o.Base
+    if ($o.State -eq "installed") {
+        $dst = Resolve-BundleDest -Root $TargetDir -RelPath $f.path
+        $base = Get-HashOrUnknown ([System.IO.File]::ReadAllBytes($dst))
+    }
+    [ordered]@{ path = $f.path; sha256 = (Get-HashOrUnknown $bytes); installed_sha256 = "$base"; state = $o.State }
 }
+$receiptStatus = if ($counts["conflict"] -gt 0 -or $counts["skipped"] -gt 0) { "partial" } else { "complete" }
 $receiptDir = Join-Path $TargetDir ".harness"
 if (-not (Test-Path $receiptDir)) { New-Item -ItemType Directory -Path $receiptDir -Force | Out-Null }
 $receipt = [ordered]@{
@@ -700,12 +883,17 @@ $receipt = [ordered]@{
     version      = $bundle.version
     content_hash = $bundle.content_hash
     installed_at = (Get-Date -Format 'o')
+    status       = $receiptStatus
+    counts       = $counts
     # Recorded so a maintainer can SEE which files this install treats as
     # project-owned, instead of having to read the installer to find out.
     preserve     = @($preserve)
     files        = @($manifestFiles)
 } | ConvertTo-Json -Depth 5
 [System.IO.File]::WriteAllText((Join-Path $receiptDir ".bundle-manifest.json"), $receipt, $Utf8NoBom)
+if ($receiptStatus -eq "partial") {
+    Write-Output "[summary] receipt status: PARTIAL -- $($counts['conflict']) conflict(s), $($counts['skipped']) skipped: the receipt records each file's state, it does not claim v$($bundle.version) is fully applied."
+}
 
 Write-Output "[install] done: $written written, $merged merged, $skipped skipped, $kept kept (project-owned). Integrity OK ($($bundle.content_hash))."
 
@@ -760,11 +948,10 @@ $syncJson = Join-Path $syncDir "portal-sync.json"
 if (-not (Test-Path $syncJson)) {
     $syncTmpl = @"
 {
-  "_README": "Fill portal_url and project_id from your Control Portal (open the Project, then Settings, then Reveal ingest key). Next, paste the ingest key into portal-sync.key in THIS same .harness folder. Set pdp_enforce to true to make the PreToolUse hook consult the Portal PDP (H4 outbound allowlist, H5 approval, H3 release gate) -- leave false to keep it off. You may delete this _README line.",
+  "_README": "Fill portal_url and project_id from your Control Portal (open the Project, then Settings, then Reveal ingest key). Next, paste the ingest key into portal-sync.key in THIS same .harness folder. This file is shared by every clone and is meant to be committed: it holds NO per-person or per-machine field (your email goes in .harness/local/checkout.json via set-member-email). Set pdp_enforce to true to make the PreToolUse hook consult the Portal PDP (H4 outbound allowlist, H5 approval, H3 release gate) -- leave false to keep it off. You may delete this _README line.",
   "portal_url": "https://YOUR-PORTAL-DOMAIN",
   "project_id": "PASTE-PROJECT-ID-HERE",
-  "pdp_enforce": false,
-  "member_email": ""
+  "pdp_enforce": false
 }
 "@
     [System.IO.File]::WriteAllText($syncJson, $syncTmpl, $Utf8NoBom)
@@ -892,9 +1079,9 @@ if ($WithCiGates) {
                 # Monorepo: the runner does not live at the repo root. Find the
                 # directory that actually holds the manifest and run there.
                 # Without this the workflow does `npm ci` at a root with no
-                # package.json and dies on step one -- three projects
-                # (AllIn1Site -> web/, DatabaseManager -> SecureConnect/,
-                # CodeProvider -> apps/backend/) are laid out that way.
+                # package.json and dies on step one -- three projects in this
+                # fleet keep their manifest in a subdirectory (web/, a
+                # product-named folder, and apps/backend/).
                 $workDir = ""
                 if ($full -match '^(npx |npm )' -and -not (Test-Path (Join-Path $TargetDir "package.json"))) {
                     # An explicit `--prefix <dir>` names the directory outright.
@@ -906,7 +1093,7 @@ if ($WithCiGates) {
                         $full = ($full -replace '\s*--prefix\s+\S+', '').Trim()
                     } else {
                         # Otherwise pick the workspace that actually HAS tests.
-                        # Depth alone is not enough: CodeProvider has
+                        # Depth alone is not enough: one repo has
                         # apps/frontend and apps/backend at the same depth, both
                         # with a test script, and the shallowest-wins rule took
                         # frontend -- which has no tests -- so the whole workflow
@@ -951,7 +1138,7 @@ if ($WithCiGates) {
                 } elseif ($full -match 'pytest|python -m') {
                     $pyInstall = $null
                     # Test dependencies commonly live in a *-test/-dev file rather
-                    # than requirements.txt; 24hHotnewsAI has only
+                    # than requirements.txt; one project here has only
                     # requirements-test.txt, and missing it produced a TODO for a
                     # project whose deps were declared all along.
                     foreach ($rf in @("requirements.txt", "requirements-test.txt", "requirements-dev.txt", "dev-requirements.txt")) {
@@ -991,15 +1178,15 @@ if ($WithCiGates) {
                 # The REMOTE's default branch, not whatever this checkout happens
                 # to be sitting on. An install run from a feature branch would
                 # otherwise pin CI to it -- firing once, then silently never again
-                # after the branch is deleted (CodeProvider was on
-                # claude/optimistic-faraday-r8aGk). Same dead-gate failure as
-                # hardcoding `main`, reached from the other side.
+                # after the branch is deleted (one install was run from a
+                # temporary `claude/<generated-name>` branch). Same dead-gate
+                # failure as hardcoding `main`, reached from the other side.
                 $branch = Get-DefaultBranch $TargetDir
 
                 # A repo with no tests must not get a test workflow. Running a
                 # runner against zero tests either errors or reports a vacuous
                 # pass, and a green badge that tested nothing is a lie the whole
-                # gate exists to prevent (claude-code-anyllm has no test files).
+                # gate exists to prevent (one project here has no test files).
                 $hasTests = @(Get-ChildItem -Path $runRoot -Recurse -Depth 4 -File -ErrorAction SilentlyContinue |
                     Where-Object { $_.FullName -notmatch '\\node_modules\\|\\\.claude\\|\\\.harness\\' -and
                                    ($_.Name -match '\.(test|spec)\.[jt]sx?$' -or $_.Name -match '^test_.*\.py$' -or $_.Name -match 'Test\.php$') }).Count
@@ -1090,6 +1277,15 @@ if (-not $giHas) {
     Write-Output "[scaffold] added portal-sync.key to .gitignore (C5)"
 }
 
+# Portal v2 P1 1.7: per-machine state (checkout credential, member_email) lives in .harness/local/.
+# That folder must never reach git -- ignore it in the target project (idempotent).
+$localLine = ".harness/local/"
+$localHas = (Test-Path $giPath) -and (Select-String -Path $giPath -Pattern '^/?\.harness/local/?\s*$' -Quiet)
+if (-not $localHas) {
+    Add-Content -Path $giPath -Value "`n# Harness per-machine state (checkout credential, member_email) - never commit`n$localLine" -Encoding utf8
+    Write-Output "[scaffold] added .harness/local/ to .gitignore (machine-local state)"
+}
+
 # The legacy-guide migration below writes a one-time '<file>.pre-migration.bak'.
 # That is a local safety net, not project content -- ignore it so it does not
 # show up as untracked noise in every project the migration touched.
@@ -1098,6 +1294,46 @@ $bakHas = (Test-Path $giPath) -and (Select-String -Path $giPath -SimpleMatch $ba
 if (-not $bakHas) {
     Add-Content -Path $giPath -Value "`n# One-time backup written when a legacy guide block is migrated`n$bakLine" -Encoding utf8
     Write-Output "[scaffold] added *.pre-migration.bak to .gitignore"
+}
+
+# The ledger's append lock (evidence-ledger: byte-range lock on this file) is
+# runtime state, like the chain itself -- never project content.
+$lockLine = ".harness/ledger/chain.lock"
+$lockHas = (Test-Path $giPath) -and (Select-String -Path $giPath -SimpleMatch $lockLine -Quiet)
+if (-not $lockHas) {
+    Add-Content -Path $giPath -Value "`n# Harness ledger append lock - runtime state`n$lockLine" -Encoding utf8
+    Write-Output "[scaffold] added ledger chain.lock to .gitignore"
+}
+
+# `<file>.new` is the installer's marker for "a shipped copy you have not adopted"
+# (a project-owned or conflicted file). It is a local to-do, not project content:
+# committing one ships the conflict to everybody and to the next checkout.
+$newHas = (Test-Path $giPath) -and (Select-String -Path $giPath -Pattern '^\*\.new\s*$' -Quiet)
+if (-not $newHas) {
+    Add-Content -Path $giPath -Value "`n# Shipped copies the installer leaves beside a file you own or edited - resolve, then delete`n*.new" -Encoding utf8
+    Write-Output "[scaffold] added *.new to .gitignore"
+}
+
+# A project that runs Prettier over the repo (`prettier --write .`, lint-staged)
+# reformats the bundle's own files: in ScreenRecord (2026-09-30) it rewrote 71 of
+# them, including casan-policies.yaml, whose suite commands turned into
+# 'python ...' -- cmd.exe then ran nothing and harness-eval skipped every suite.
+# Only when the project uses Prettier; one marker line keeps this idempotent.
+$usesPrettier = @(Get-ChildItem -Path $TargetDir -Force -ErrorAction SilentlyContinue |
+    Where-Object { $_.Name -match '^(\.prettierrc(\..+)?|prettier\.config\..+)$' }).Count -gt 0
+$pkgJson = Join-Path $TargetDir "package.json"
+if (-not $usesPrettier -and (Test-Path $pkgJson)) { $usesPrettier = (Get-Content $pkgJson -Raw) -match '"prettier"' }
+if ($usesPrettier) {
+    $piPath = Join-Path $TargetDir ".prettierignore"
+    $piMarker = "# harness-bundle: files owned by the governance bundle"
+    if (-not ((Test-Path $piPath) -and (Select-String -Path $piPath -SimpleMatch $piMarker -Quiet))) {
+        $piLines = @($piMarker,
+            "# Reformatting them breaks the bundle integrity check and can change what they mean.",
+            ".harness/", "tools/harness-bundle/", "contracts/", ".claude/agents/", ".claude/skills/",
+            ".claude/settings.json", ".claude/settings.posix.json", "CLAUDE.harness.md")
+        Add-Content -Path $piPath -Value ("`n" + ($piLines -join "`n")) -Encoding utf8
+        Write-Output "[scaffold] project uses Prettier -- added the bundle's paths to .prettierignore"
+    }
 }
 
 # --- H1 scaffold: build the context pointer store so a freshly-onboarded project
@@ -1202,7 +1438,7 @@ if ($MergeGuides) {
         $block = "$begin`n$note`n`n$govText`n`n$end"
 
         foreach ($rel in $targets) {
-            $p = Join-Path $TargetDir ($rel -replace '/', '\')
+            $p = Resolve-BundleDest -Root $TargetDir -RelPath $rel
             $dir = Split-Path -Parent $p
             if ($dir -and -not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
             if (-not (Test-Path $p)) {
@@ -1259,16 +1495,23 @@ try {
     if (Test-Path $rPath) {
         $r = Get-Content -Path $rPath -Raw -Encoding utf8 | ConvertFrom-Json
         $out = foreach ($e in @($r.files)) {
-            $p = Join-Path $TargetDir ($e.path -replace '/', '\')
-            $ih = ""
-            if (Test-Path $p) {
-                try { $ih = Sha256HexOf ([byte[]](Get-Content -Path $p -Encoding Byte -Raw)) } catch { }
+            $ih = "$($e.installed_sha256)"
+            # Only a file this run INSTALLED has a hash worth re-reading. The others
+            # keep the baseline the receipt above carried over: re-hashing a
+            # conflicted or kept file here would make the hand edit the new baseline.
+            if (-not $e.state -or $e.state -eq "installed") {
+                $p = Resolve-BundleDest -Root $TargetDir -RelPath $e.path
+                $ih = $Unknown
+                if (Test-Path $p) {
+                    try { $ih = Get-HashOrUnknown ([System.IO.File]::ReadAllBytes($p)) } catch { }
+                }
             }
-            [ordered]@{ path = $e.path; sha256 = "$($e.sha256)"; installed_sha256 = $ih }
+            [ordered]@{ path = $e.path; sha256 = "$($e.sha256)"; installed_sha256 = $ih; state = "$($e.state)" }
         }
         $r2 = [ordered]@{
             name = $r.name; version = $r.version; content_hash = $r.content_hash
-            installed_at = $r.installed_at; preserve = @($r.preserve); files = @($out)
+            installed_at = $r.installed_at; status = $r.status; counts = $r.counts
+            preserve = @($r.preserve); files = @($out)
         } | ConvertTo-Json -Depth 5
         [System.IO.File]::WriteAllText($rPath, $r2, $Utf8NoBom)
     }

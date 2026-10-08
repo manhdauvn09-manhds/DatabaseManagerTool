@@ -119,6 +119,14 @@ def run(root):
 
 
 if __name__ == "__main__":
+    # Consuming projects run on Windows consoles whose codepage (cp932, cp1252,
+    # ...) cannot encode an em-dash; one such glyph in a SKIP/WARN line raised
+    # UnicodeEncodeError AFTER the counts printed, so harness-eval recorded a
+    # clean run as failed (AllIn1Site, 2026-10-06). Same guard as harness_doctor.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     run(sys.argv[1] if len(sys.argv) > 1 else ".")
     print("Passed : %d" % len(PASSED))
     print("Failed : %d" % len(FAILED))

@@ -129,6 +129,21 @@
       "minimum": 0,
       "description": "How many pushed evidence snapshots app/api/ingest.py keeps per project; only the newest is ever read. 0 disables pruning."
     },
+    "doctor_report_retention_per_project": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many pushed `harness doctor` reports app/api/ingest.py keeps per project. Unlike the CASAN snapshot, doctor is recomputed and pushed on every sync, so without a cap a frequently-synced project accumulates rows forever. 0 disables pruning."
+    },
+    "snapshot_retention_per_checkout": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many pushed evidence snapshots app/api/ingest.py keeps per (project, checkout) group; the group of rows with no checkout is its own group. Wins over snapshot_retention_per_project when both are set. 0 disables pruning."
+    },
+    "doctor_report_retention_per_checkout": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many pushed `harness doctor` reports app/api/ingest.py keeps per (project, checkout) group; the group of rows with no checkout is its own group. Wins over doctor_report_retention_per_project when both are set. 0 disables pruning."
+    },
     "workflow_min_stages": {
       "type": "integer",
       "minimum": 2,

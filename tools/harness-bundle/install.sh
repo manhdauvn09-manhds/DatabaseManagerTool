@@ -73,6 +73,19 @@ def norm_eol(data):
     return data.replace(b"\r\n", b"\n")
 
 
+def eol_hashes(data):
+    """Every sha256 the receipt may hold for these bytes if only EOL/BOM moved.
+
+    The receipt hashes the SHIPPED bytes: LF, and for most .ps1 WITH a UTF-8 BOM.
+    A CRLF checkout of such a file (core.autocrlf, or the managed .gitattributes
+    `*.ps1 text eol=crlf`) is BOM+CRLF; stripping BOM and CRLF together gives a
+    form the receipt never held, so the LF form is tried with the BOM kept too.
+    Before 1.8.11 it was not, and an update called every such file hand-edited
+    (B-77). install.ps1, harness-verify.* and harness_doctor.py do the same."""
+    lf = data.replace(b"\r\n", b"\n")
+    return {sha_hex(data), sha_hex(lf), sha_hex(norm_eol(data))}
+
+
 def safe_dest(target, relpath):
     """Resolve a bundle-declared path INSIDE target, or refuse.
 
@@ -493,7 +506,7 @@ for f in b["files"]:
         with open(dest, "rb") as fh:
             disk = fh.read()
         disk_hash = hashlib.sha256(disk).hexdigest()
-        disk_norm = hashlib.sha256(norm_eol(disk)).hexdigest()
+        disk_forms = eol_hashes(disk)
 
         # 1b) Already what the bundle ships (byte-exact, or differing only in EOL/BOM
         # -- a core.autocrlf checkout). Nothing to write, nothing to decide, and
@@ -638,7 +651,7 @@ for f in b["files"]:
         # Only claimable when a baseline exists; with no receipt we cannot tell an
         # edit from a first install, and guessing would cry wolf or hide it.
         base = prev_hashes.get(f["path"])
-        if base and disk_hash != base and disk_norm != base:
+        if base and base not in disk_forms:
             # Hand-edited. If the bundle has not moved on since the last run there is
             # nothing to adopt: keep the edit, no .new, no conflict. (Not when the
             # last run already left this file in conflict -- the receipt's shipped

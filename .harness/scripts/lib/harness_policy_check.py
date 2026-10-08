@@ -370,12 +370,278 @@ def ps_write_output_in_function(text):
 
 
 ALLOWED_MODELS = {
-    "claude-fable-5", "claude-opus-4-8", "claude-sonnet-5",
+    "claude-opus-5-5", "claude-sonnet-5-5",
     "claude-haiku-4-5-20251001", "claude-haiku-4-5",
 }
+# The ladder before 1.8.3. casan-policies.yaml is on the bundle's preserve list,
+# so every fleet project still carries these after updating: that is a WARN
+# (true, worth fixing, breaks nothing yet), not a FAIL that reddens the whole
+# fleet over a file the update is not allowed to touch.
+RETIRED_MODELS = {"claude-fable-5", "claude-opus-4-8", "claude-sonnet-5"}
+# What Claude Code itself accepts in an agent's `model:` besides a full id.
+_AGENT_MODEL_ALIASES = {"opus", "sonnet", "haiku", "inherit"}
 
 H_LAYERS = ("context", "tool", "evaluation", "security",
             "governance", "agentops", "orchestration")
+
+
+# Tools Claude Code itself provides; `Agent(a, b)` is the bounded subagent form.
+_BUILTIN_AGENT_TOOLS = {
+    "Read", "Write", "Edit", "MultiEdit", "Glob", "Grep", "Bash", "PowerShell", "Skill",
+    "WebFetch", "WebSearch", "TodoWrite", "NotebookEdit", "Agent", "Task",
+}
+
+
+def _split_tools(value):
+    """`tools:` as Claude Code reads it: a comma list (commas inside Agent(...) kept) or a YAML list."""
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [str(t).strip() for t in value if str(t).strip()]
+    out, depth, cur = [], 0, ""
+    for ch in str(value):
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == "," and depth == 0:
+            out.append(cur.strip())
+            cur = ""
+        else:
+            cur += ch
+    if cur.strip():
+        out.append(cur.strip())
+    return out
+
+
+def check_agents(root):
+    """agents:definitions -- each .claude/agents/*.md must be an agent Claude Code can load.
+
+    2026-09-30: all 15 shipped agents opened `---` and never closed it, so the whole
+    file was YAML with the prompt in an `instructions:` key, and Claude Code loaded
+    none of them. boss.md also named three unresolvable tools and an unbounded Agent.
+    Nothing checked it; every gate was green over agents that did not exist."""
+    adir = os.path.join(root, ".claude", "agents")
+    files = sorted(glob.glob(os.path.join(adir, "*.md")))
+    files = [f for f in files if os.path.basename(f).lower() != "readme.md"]
+    if not files:
+        skip("agents:definitions", "no .claude/agents/*.md in this repo")
+        return
+    registry = set()
+    reg_path = os.path.join(root, ".harness", "control", "tool-registry.json")
+    try:
+        with open(reg_path, encoding="utf-8-sig") as fh:
+            reg = json.load(fh)
+        tools = reg.get("tools", reg)
+        registry = set(tools.keys() if isinstance(tools, dict) else (t.get("name") for t in tools))
+    except (OSError, ValueError, AttributeError):
+        pass
+    problems = []
+    for f in files:
+        name = os.path.basename(f)
+        with open(f, encoding="utf-8-sig", errors="replace") as fh:
+            lines = fh.read().replace("\r\n", "\n").split("\n")
+        if not lines or lines[0].strip() != "---":
+            problems.append("%s: does not start with a `---` frontmatter line" % name)
+            continue
+        close = next((i for i in range(1, len(lines)) if lines[i].strip() == "---"), None)
+        if close is None:
+            problems.append("%s: frontmatter opened with `---` and never closed -- Claude Code "
+                            "cannot load it (the prompt must be the body, not an `instructions:` key)" % name)
+            continue
+        fm_text, body = "\n".join(lines[1:close]), "\n".join(lines[close + 1:])
+        try:
+            import yaml  # noqa: PLC0415 -- optional, like load()
+            fm = yaml.safe_load(fm_text) or {}
+        except ImportError:
+            fm = {}
+            for ln in fm_text.split("\n"):
+                m = re.match(r"^(\w+):\s*(.*)$", ln)
+                if m:
+                    fm[m.group(1)] = m.group(2).strip().strip('"')
+        except Exception as e:  # noqa: BLE001
+            problems.append("%s: frontmatter is not valid YAML (%s)" % (name, str(e).split("\n")[0]))
+            continue
+        if not isinstance(fm, dict) or not fm.get("name") or not fm.get("description"):
+            problems.append("%s: frontmatter needs `name` and `description`" % name)
+        if not body.strip():
+            problems.append("%s: empty body -- the agent would run with no instructions" % name)
+        model = str(fm.get("model") or "").strip() if isinstance(fm, dict) else ""
+        if model and model not in ALLOWED_MODELS and model not in _AGENT_MODEL_ALIASES:
+            problems.append("%s: model `%s` is not on the C4 ladder (%s) nor a Claude Code alias"
+                            % (name, model, ", ".join(sorted(ALLOWED_MODELS))))
+        for t in _split_tools(fm.get("tools") if isinstance(fm, dict) else None):
+            base = t.split("(", 1)[0].strip()
+            if base in _BUILTIN_AGENT_TOOLS or base in registry:
+                continue
+            m = re.match(r"^mcp__(.+?)__(.+)$", base)
+            if m and "%s.%s" % (m.group(1), m.group(2)) in registry:
+                continue
+            problems.append("%s: tool `%s` is neither built-in nor in tool-registry.json" % (name, t))
+    if problems:
+        fail("agents:definitions", "%d problem(s): %s" % (len(problems), evidence(problems)))
+    else:
+        ok("agents:definitions")
+
+
+def check_local_state(root):
+    """Portal v2 P1 1.7: machine-local state must not be tracked by git.
+
+    The list lives in .harness/control/machine-state-paths.yaml (C2/C8); the matching is
+    harness_local_state's, shared with the repair script so the check and the fix cannot
+    disagree about scope.
+
+    Grades: a TRACKED machine-local file is a FAIL (a key, a cursor or a live chain handed to
+    every clone; it only gets worse). Not being able to look -- no list, no git -- is a SKIP,
+    never a pass (C12). A committed config that still names a person (member_email) is a WARN:
+    a migration debt that leaks no secret, and failing every fleet project over it would get
+    the rule switched off (C14)."""
+    spec_path = os.path.join(root, ".harness", "control", "machine-state-paths.yaml")
+    names = ("local-state:machine-files-not-tracked", "local-state:committed-config-clean")
+    if not os.path.isfile(spec_path):
+        for n in names:
+            skip(n, "no .harness/control/machine-state-paths.yaml -- this project predates the split "
+                    "of machine-local state (update the bundle)")
+        return
+    try:
+        import importlib.util
+        lib = os.path.join(os.path.dirname(os.path.abspath(__file__)), "harness_local_state.py")
+        sp = importlib.util.spec_from_file_location("harness_local_state", lib)
+        hls = importlib.util.module_from_spec(sp)
+        sp.loader.exec_module(hls)
+    except Exception as e:  # noqa: BLE001
+        for n in names:
+            skip(n, "harness_local_state.py cannot be loaded (%s)" % type(e).__name__)
+        return
+    files, err = hls.tracked_machine_files(root)
+    if files is None:
+        for n in names:
+            skip(n, "cannot tell what git tracks: %s -- unproven, not green" % err)
+        return
+    guarded = hls.guarded_machine_files(root, files)
+    hard = [f for f in files if f not in guarded]
+    if hard:
+        fail(names[0], "git TRACKS %d machine-local file(s); untrack them with "
+             "tools/harness-bundle/fix-untrack-machine-state (git rm --cached, files stay on disk): %s%s"
+             % (len(files), evidence(files),
+                "" if not guarded else " -- the ledger paths among them need the explicit -IncludeLedger flag"))
+    elif files:
+        # Only the live ledger: the default repair refuses it (other clones lose their copy when
+        # they pull), so a FAIL here could never be cleared by it (C14). WARN, naming the flag.
+        warn(names[0], "git tracks the live ledger (%d file(s)): %s -- the repair skips it by default "
+             "(a clone that pulls the untracking commit has its tracked copy DELETED, C9); run "
+             "tools/harness-bundle/fix-untrack-machine-state with -IncludeLedger in every clone "
+             "BEFORE it pulls, or archive the chain first" % (len(files), evidence(files)))
+    else:
+        ok(names[0])
+    leaks = hls.committed_field_leaks(root)
+    if leaks:
+        warn(names[1], "committed %s" % evidence(
+            ["%s carries '%s' (belongs in %s)" % (x["file"], x["field"], x["moved_to"]) for x in leaks]))
+    else:
+        ok(names[1])
+
+
+def check_tool_defaults(root):
+    """C6: risk-policy's tool_deny_defaults must not contradict tool-registry.json.
+
+    The guard decides from the registry; nothing reads tool_deny_defaults. It
+    still reads like policy -- on 30-09 it said run_command and http_fetch were
+    "ask" while the enforced registry said "deny". WARN, not FAIL: it misleads
+    a reader but opens no hole, and risk-policy.yaml is project-owned
+    (preserve), so a FAIL would redden every project over a file an update
+    cannot touch."""
+    rp = os.path.join(root, ".harness", "control", "risk-policy.yaml")
+    rg = os.path.join(root, ".harness", "control", "tool-registry.json")
+    if not (os.path.isfile(rp) and os.path.isfile(rg)):
+        skip("C6:tool-defaults-match-registry", "risk-policy.yaml or tool-registry.json absent")
+        return
+    try:
+        defaults = (load(rp) or {}).get("tool_deny_defaults") or {}
+        reg = load(rg)
+        tools = reg.get("tools", reg) if isinstance(reg, dict) else {}
+    except Exception as e:  # noqa: BLE001
+        skip("C6:tool-defaults-match-registry", "cannot read the two files (%s)" % str(e).split("\n")[0])
+        return
+    if not defaults:
+        skip("C6:tool-defaults-match-registry", "risk-policy.yaml declares no tool_deny_defaults")
+        return
+    problems = []
+    for name, d in sorted(defaults.items()):
+        entries = [(k, v) for k, v in tools.items()
+                   if isinstance(v, dict) and (k == name or k.endswith("." + name))]
+        if not entries:
+            problems.append("%s: not in tool-registry.json (the guard does not know it)" % name)
+            continue
+        for key, v in entries:
+            want = (v.get("default_action"), v.get("risk_level"))
+            have = ((d or {}).get("action"), (d or {}).get("risk"))
+            if want != have:
+                problems.append("%s: risk-policy says %s/%s, registry %s says %s/%s"
+                                % (name, have[1], have[0], key, want[1], want[0]))
+    if problems:
+        warn("C6:tool-defaults-match-registry",
+             "tool_deny_defaults contradicts tool-registry.json, which is what the guard enforces -- "
+             "fix risk-policy.yaml (it is only a copy): %s" % evidence(problems))
+    else:
+        ok("C6:tool-defaults-match-registry")
+
+
+def check_baseline_denies_covered(root):
+    """B-75: a shipped baseline deny case the project's own deny policy misses.
+
+    baseline-guard-cases.jsonl is bundle-managed and replaced on update;
+    risk-policy.yaml is project-owned (preserve) and is not. When a release
+    ships a new pattern together with the cases that test it, the project gets
+    the cases without the pattern and golden goes red with only "expect deny,
+    got allow" to go on (AllIn1Site after 4bfb4c53: 4 failures). Golden staying
+    red is right -- the guard really does not block those commands -- so this
+    is a WARN that names the case and the shipped pattern to copy over, never a
+    FAIL, and it never edits the preserved file."""
+    name = "golden:baseline-denies-covered"
+    try:
+        import harness_golden as G
+    except Exception as e:  # noqa: BLE001
+        skip(name, "harness_golden.py not importable (%s)" % e)
+        return
+    base = os.path.join(root, G._dataset_dir(root).replace("/", os.sep), "baseline-guard-cases.jsonl")
+    rp = os.path.join(root, ".harness", "control", "risk-policy.yaml")
+    if not (os.path.isfile(base) and os.path.isfile(rp)):
+        skip(name, "baseline-guard-cases.jsonl or risk-policy.yaml absent")
+        return
+
+    def compiled(pats):
+        out = []
+        for p in pats:
+            try:
+                out.append((p, re.compile(p)))
+            except re.error:
+                continue  # same fail-open as the guard and the golden runner
+        return out
+
+    have = compiled(G._load_deny_patterns(root))
+    shipped_p = rp + ".new"
+    shipped = compiled(G._load_deny_patterns(root, shipped_p)) if os.path.isfile(shipped_p) else []
+    missing = []
+    for line in open(base, encoding="utf-8-sig"):
+        try:
+            c = json.loads(line)
+        except ValueError:
+            continue
+        inp = c.get("input", "")
+        if c.get("expect") != "deny" or any(rx.search(inp) for _, rx in have):
+            continue
+        fix = [p for p, rx in shipped if rx.search(inp)]
+        if fix:
+            missing.append("%s -> copy pattern %s from risk-policy.yaml.new" % (c.get("id"), fix[0]))
+        else:
+            missing.append("%s (no risk-policy.yaml.new pattern blocks it either)" % c.get("id"))
+    if missing:
+        warn(name, "%d shipped baseline deny case(s) your risk-policy.yaml does not block, so golden fails "
+             "on them. risk-policy.yaml is yours (preserve) and updates do not change it: %s"
+             % (len(missing), evidence(missing)))
+    else:
+        ok(name)
 
 
 def run(root):
@@ -389,6 +655,11 @@ def run(root):
     else:
         fail("layout", "missing .harness/control, .harness/schemas, or policy files")
         return  # nothing below is meaningful
+
+    check_agents(root)
+    check_tool_defaults(root)
+    check_baseline_denies_covered(root)
+    check_local_state(root)
 
     # ---- every policy parses --------------------------------------------
     parsed = {}
@@ -446,9 +717,15 @@ def run(root):
             named = set()
             for chain in ladder.values():
                 named.update(chain if isinstance(chain, list) else [chain])
-            stray = sorted(m for m in named if m not in ALLOWED_MODELS)
+            stray = sorted(m for m in named if m not in ALLOWED_MODELS | RETIRED_MODELS)
+            retired = sorted(m for m in named if m in RETIRED_MODELS)
             if stray:
                 fail("C4:model-ladder", "unlicensed model IDs: %s" % stray)
+            elif retired:
+                warn("C4:model-ladder", "orchestration.model_fallback still names retired model(s) %s. "
+                     "The ladder since 1.8.3 is %s. casan-policies.yaml is project-owned (preserve), "
+                     "so the bundle update did not change it -- edit model_fallback by hand."
+                     % (retired, sorted(ALLOWED_MODELS - {"claude-haiku-4-5"})))
             else:
                 ok("C4:model-ladder")
 
@@ -910,8 +1187,68 @@ def run(root):
         elif over is not None:
             ok("ledger:no-oversized-entry")
 
+    # ---- U3: the manifest must describe a bundle that actually exists --------
+    #
+    # `version:` in bundle.yaml is the identity every install receipt records.
+    # Editing the manifest without bumping it, or bumping it without packing,
+    # both leave the same state: the manifest describes something no artifact
+    # matches. Consequences are quiet and land later --
+    #
+    #   - reinstalling the declared version uses the OLD manifest, so a `preserve`
+    #     entry added since is not honoured and a project's own file gets
+    #     overwritten (this repo added baseline-w0.json to preserve in exactly
+    #     that window);
+    #   - the fleet reports "everyone on 1.8.0" against an artifact that was
+    #     packed from different rules.
+    #
+    # Only runs where bundles/ is authored. A consuming project has no manifest
+    # and must SKIP, not pass -- passing would claim a check ran that could not.
+    manifests = sorted(glob.glob(os.path.join(root, "bundles", "*", "bundle.yaml")))
+    if not manifests:
+        skip("bundle:manifest-has-packed-artifact",
+             "no bundles/*/bundle.yaml under %s — this project consumes bundles, it does not author them" % root)
+    else:
+        problems = []
+        for man in manifests:
+            bdir = os.path.dirname(man)
+            bname = os.path.basename(bdir)
+            ver = ""
+            try:
+                with open(man, encoding="utf-8-sig", errors="replace") as fh:
+                    for line in fh:
+                        m = re.match(r'^version:\s*"?([0-9][^"\s]*)"?', line)
+                        if m:
+                            ver = m.group(1)
+                            break
+            except OSError as e:
+                problems.append("%s: cannot read manifest (%s)" % (bname, e))
+                continue
+            if not ver:
+                problems.append("%s: manifest declares no version:" % bname)
+                continue
+            art = os.path.join(bdir, "%s-%s.bundle.json" % (bname, ver))
+            if not os.path.exists(art):
+                packed = sorted(os.path.basename(p) for p in glob.glob(os.path.join(bdir, "*.bundle.json")))
+                problems.append(
+                    "%s: manifest declares v%s but %s does not exist (packed: %s)"
+                    % (bname, ver, os.path.basename(art), ", ".join(packed[-3:]) or "none"))
+        if problems:
+            fail("bundle:manifest-has-packed-artifact",
+                 "a manifest describes a bundle nobody can install; pack it, or put the version "
+                 "back to one that is packed: " + evidence(problems))
+        else:
+            ok("bundle:manifest-has-packed-artifact")
+
 
 if __name__ == "__main__":
+    # Consuming projects run on Windows consoles whose codepage (cp932, cp1252,
+    # ...) cannot encode an em-dash; one such glyph in a SKIP/WARN line raised
+    # UnicodeEncodeError AFTER the counts printed, so harness-eval recorded a
+    # clean run as failed (AllIn1Site, 2026-10-06). Same guard as harness_doctor.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     run(sys.argv[1] if len(sys.argv) > 1 else ".")
     print("Passed : %d" % len(PASSED))
     print("Failed : %d" % len(FAILED))

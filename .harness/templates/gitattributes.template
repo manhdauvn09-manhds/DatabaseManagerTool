@@ -62,6 +62,13 @@ Dockerfile.*    text eol=lf
 # its own newline -- and the NEXT LINE OF CODE disappears from the parsed
 # script while it still exits 0. Save .ps1 as "UTF-8 with BOM"; git cannot do
 # it for you, which is why policy-ci checks it separately.
+#
+# This rule also applies to the harness's own .ps1 under .harness/ and
+# tools/harness-bundle/, which the bundle ships as LF and the install receipt
+# hashes as LF. That is fine: doctor, harness-verify and the installer compare
+# EOL-insensitively, with the BOM kept as well as stripped (since 1.8.11; before
+# it a BOM'd .ps1 checked out as CRLF read as drift -- B-77). A project-side
+# `.harness/**/*.ps1 text eol=lf` override is harmless but no longer needed.
 *.ps1           text eol=crlf
 *.psm1          text eol=crlf
 *.psd1          text eol=crlf

@@ -26,6 +26,11 @@ jobs:
         with:
           python-version: '3.11'
       - run: pip install pyyaml jsonschema
+      # .harness/context/ is machine-local (machine-state-paths.yaml), so a fresh
+      # checkout has none, and H1:pointer-store reads it. It is derived data: build
+      # it here exactly as session-start does on a workstation (B-78).
+      - name: build H1 pointer store
+        run: bash .harness/scripts/bash/harness-context-build.sh
       # The positional root argument is required -- without it the script cannot
       # find .harness/ and reports a layout failure that looks like a real one.
       - name: harness policy-ci
@@ -39,10 +44,14 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      # --strict makes a FAIL line fail the build. Drop --strict to keep it
-      # advisory while a project is still filling in its context/config.
+      # --strict makes a FAIL line fail the build. --ci (B-78): the ledger chain,
+      # telemetry and context are machine-local (machine-state-paths.yaml) and
+      # never committed, so on a fresh runner the checks that read them are
+      # reported as "not checkable here" (INFO -- unproven, not passing) instead of
+      # failing every run. Bundle integrity and the repo-level checks stay graded.
+      # Run doctor WITHOUT --ci on a workstation for the evidence-pipeline lines.
       - name: harness doctor
-        run: python .harness/scripts/lib/harness_doctor.py . --strict
+        run: python .harness/scripts/lib/harness_doctor.py . --ci --strict
 
   secret-scan:
     name: Secret scan (C5)

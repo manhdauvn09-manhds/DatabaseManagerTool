@@ -1,7 +1,11 @@
 # LLM-as-Judge Rubric — H3 Evaluation
 
 ## Overview
-Judge model band: **CRITICAL / Opus 4.8** (or configured via `agent.yaml` model_profile: `review`).
+Judge model band: **CRITICAL / Opus 5.5** — the `review` profile at power 8–10 in
+`contracts/agent.yaml` (its primary, Sonnet 5.5, is for ordinary review, not for judging).
+Not Sonnet 5.5 on purpose: most code here is written by Sonnet 5.5 (the `coding` primary),
+and a judge from the same model grades its own habits kindly. The release gate reads this
+verdict, so it gets the strongest model on the ladder — the same choice as `qa-reviewer`.
 Judge evaluates pipeline output against the golden dataset and rubric dimensions.
 
 ## Dimensions

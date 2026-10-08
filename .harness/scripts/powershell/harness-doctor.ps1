@@ -6,11 +6,14 @@
   Thin wrapper over .harness/scripts/lib/harness_doctor.py so PowerShell and bash
   emit identical output (C7). Read-only diagnostic; prints OK/WARN/FAIL per check.
 .USAGE
-  pwsh -File .harness/scripts/powershell/harness-doctor.ps1 [-Root <dir>] [-Strict]
+  pwsh -File .harness/scripts/powershell/harness-doctor.ps1 [-Root <dir>] [-Strict] [-Ci]
+  -Ci: on a CI runner, report machine-local checks (ledger, telemetry, context)
+       as not checkable instead of FAIL; bundle integrity stays graded (B-78).
 #>
 param(
     [string]$Root = "",
-    [switch]$Strict
+    [switch]$Strict,
+    [switch]$Ci
 )
 
 # Resolve the project root the same worktree-aware way the hooks do, so doctor
@@ -35,5 +38,6 @@ if (-not $py) { Write-Error "python required for harness doctor"; exit 3 }
 $Lib = Join-Path $PSScriptRoot "..\lib\harness_doctor.py"
 $args = @($Lib, $Root)
 if ($Strict) { $args += "--strict" }
+if ($Ci) { $args += "--ci" }
 & $py.Source @args
 exit $LASTEXITCODE

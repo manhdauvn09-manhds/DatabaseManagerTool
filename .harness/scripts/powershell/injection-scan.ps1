@@ -60,6 +60,43 @@ if (-not (Test-Path $InjectionPatternsPath)) {
     }
 }
 
+# --- Redaction (C2: patterns come from config, not from this script) --------
+# The excerpt below is written verbatim into the security-event log, which
+# push-telemetry ships to the Portal. It carries a 240-character window of the
+# raw prompt, so a prompt that mentioned an API key next to an injection
+# phrase exfiltrated that key into a durable, synced store -- the injection
+# detector became the leak. Redact secret shapes before anything is recorded.
+#
+# Reuses .harness/control/secret-patterns.json so a pattern added for
+# secret-scan protects this path too, instead of two lists drifting apart.
+$RedactPatterns = @()
+$SecretPatternsPath = Join-Path $HarnessRoot ".harness\control\secret-patterns.json"
+if (Test-Path $SecretPatternsPath) {
+    try {
+        $sp = Get-Content -Path $SecretPatternsPath -Raw -Encoding utf8 | ConvertFrom-Json
+        foreach ($e in @($sp.patterns)) {
+            if ($e.pattern) { $RedactPatterns += [string]$e.pattern }
+        }
+    } catch {
+        # Fall through to the generic shapes below.
+    }
+}
+# Generic high-entropy shapes, applied in ADDITION to the configured ones. A
+# redactor that only removes known vendor prefixes is not much of a redactor:
+# the value most worth hiding is usually the one nobody wrote a pattern for.
+$RedactPatterns += '(?i)(secret|passwd|password|token|api[_\-]?key|bearer|authorization)\s*["'':=]+\s*\S+'
+$RedactPatterns += '\b[A-Za-z0-9+/]{40,}={0,2}\b'
+$RedactPatterns += '\b[0-9a-fA-F]{32,}\b'
+
+function Protect-Excerpt {
+    param([string]$Text)
+    if (-not $Text) { return $Text }
+    foreach ($rp in $RedactPatterns) {
+        try { $Text = [regex]::Replace($Text, $rp, '[REDACTED]') } catch { continue }
+    }
+    return $Text
+}
+
 # --- Scan ---
 $Findings = @()
 foreach ($entry in $Patterns) {
@@ -73,6 +110,11 @@ foreach ($entry in $Patterns) {
         $len = [Math]::Min($InputText.Length - $start, $match.Length + 120)
         $ctx = $InputText.Substring($start, $len).Trim() -replace '\s+', ' '
         $ctx = $ctx.Substring(0, [Math]::Min($ctx.Length, 240))
+        # Redact BOTH the surrounding window and the matched signature itself.
+        # An injection pattern can match text that contains a credential, so
+        # sanitising only the context would still log the secret via $sig.
+        $sig = Protect-Excerpt $sig
+        $ctx = Protect-Excerpt $ctx
         $Findings += [PSCustomObject]@{
             Severity = $entry.severity
             Category = $entry.category

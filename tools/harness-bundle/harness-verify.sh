@@ -40,6 +40,12 @@ def norm_eol(b):
     if b[:3] == b"\xef\xbb\xbf": b = b[3:]
     return b.replace(b"\r\n", b"\n")
 
+def eol_hashes(b):
+    """Raw, LF with the BOM kept, LF with it stripped: the receipt hashes the
+    shipped bytes (LF, BOM on most .ps1), so a BOM'd .ps1 checked out as CRLF
+    matches only the middle form (B-77)."""
+    return {sha(b), sha(b.replace(b"\r\n", b"\n")), sha(norm_eol(b))}
+
 ok = 0; missing = []; modified = []; unverifiable = []
 by_state = {"conflict": [], "skipped": [], "kept": []}
 for f in r["files"]:
@@ -54,7 +60,7 @@ for f in r["files"]:
     want = {h for h in (f.get("sha256"), f.get("installed_sha256")) if h and h != "unknown"}
     if not want: unverifiable.append(f["path"]); continue
     data = open(dest, "rb").read()
-    if sha(data) in want or sha(norm_eol(data)) in want: ok += 1
+    if want & eol_hashes(data): ok += 1
     else: modified.append(f["path"])
 print("  files: %d OK / %d modified / %d missing  (of %d)" % (ok, len(modified), len(missing), len(r["files"])))
 if r.get("status") == "partial":

@@ -49,6 +49,12 @@ try {
     }
 } catch { }
 
+# Codex collection is NOT called here. It lives inside push-telemetry.ps1, which
+# this block invokes a few lines down, so it runs on this path anyway -- and on
+# the fleet driver's timer, which needs no Claude session at all. Calling it in
+# both places would be a second copy to keep in step, which is how three copies
+# of the release classifier ended up disagreeing (B-13/B-14).
+
 # Push telemetry to the Control Portal if this checkout is configured for it
 # (.harness/portal-sync.json) — the sync path for machines the backend can't
 # read (e.g. Windows checkouts). Best-effort, never fails the hook.
@@ -70,6 +76,25 @@ $SessionTemp = "$HarnessRoot\.harness\tmp\$SessionId"
 if (Test-Path $SessionTemp) {
     Remove-Item -Recurse -Force $SessionTemp -ErrorAction SilentlyContinue
 }
+
+# F4 - nhac ghi cong suc nguoi neu hom nay chua co dong nao.
+# CHI IN, khong hoi: hook chay phi tuong tac, mot lenh doc stdin se treo.
+# Best-effort tuyet doi - mot loi o day khong duoc lam hong session-end.
+try {
+    $HumanLog = "$HarnessRoot\.harness\telemetry\human-effort.jsonl"
+    $Today    = Get-Date -Format 'yyyy-MM-dd'
+    $HasToday = $false
+    if (Test-Path $HumanLog) {
+        # -Tail: chi doc duoi file, khong nap ca file vao RAM khi no lon dan.
+        foreach ($l in (Get-Content $HumanLog -Tail 50 -ErrorAction SilentlyContinue)) {
+            if ($l -like "*`"date`": `"$Today`"*") { $HasToday = $true; break }
+        }
+    }
+    if (-not $HasToday) {
+        Write-Output "[harness] F4: chua ghi cong suc nguoi cho $Today. Gio that + so lan ban sua AI la hai so khong may nao do ho duoc:"
+        Write-Output "[harness]   powershell -File `"$PSScriptRoot\log-human.ps1`" -Minutes <phut> -Edits <so lan sua> -Task `"<viec>`""
+    }
+} catch { }
 
 Write-Output "[harness] Session $SessionId ended at $(Get-Date -Format 'o')"
 exit 0

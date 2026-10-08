@@ -61,14 +61,14 @@
     },
     "9": {
       "description": "Strategic — cross-project orchestration, policy design, governance decisions",
-      "max_model_tier": "fable",
+      "max_model_tier": "opus",
       "allowed_profiles": ["planning"],
       "max_tokens_per_call": 524288,
       "max_cost_per_call_usd": 5.00
     },
     "10": {
       "description": "Maximum — full orchestration, multi-agent coordination, critical decisions",
-      "max_model_tier": "fable",
+      "max_model_tier": "opus",
       "allowed_profiles": ["planning"],
       "max_tokens_per_call": 1048576,
       "max_cost_per_call_usd": 10.00
@@ -86,16 +86,14 @@
     "writer": 2
   },
   "model_tier_map": {
-    "haiku": ["claude-haiku-4-5"],
-    "sonnet": ["claude-sonnet-5", "claude-haiku-4-5"],
-    "opus": ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
-    "fable": ["claude-fable-5", "claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"]
+    "haiku": ["claude-haiku-4-5-20251001"],
+    "sonnet": ["claude-sonnet-5-5", "claude-haiku-4-5-20251001"],
+    "opus": ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-4-5-20251001"]
   },
   "fallback_chain": {
-    "claude-fable-5": ["claude-opus-4-8", "claude-sonnet-5", "claude-haiku-4-5"],
-    "claude-opus-4-8": ["claude-sonnet-5", "claude-haiku-4-5"],
-    "claude-sonnet-5": ["claude-haiku-4-5"],
-    "claude-haiku-4-5": []
+    "claude-opus-5-5": ["claude-sonnet-5-5", "claude-haiku-4-5-20251001"],
+    "claude-sonnet-5-5": ["claude-haiku-4-5-20251001"],
+    "claude-haiku-4-5-20251001": []
   },
   "local_tier": {
     "enabled": false,

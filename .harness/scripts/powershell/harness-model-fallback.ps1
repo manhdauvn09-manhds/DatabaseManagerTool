@@ -11,7 +11,7 @@
 
   Usage:
     harness-model-fallback.ps1 -Profile coding
-    harness-model-fallback.ps1 -Profile coding -Failed claude-opus-4-8
+    harness-model-fallback.ps1 -Profile coding -Failed claude-sonnet-5-5
 .OUTPUTS
   The chosen model id on stdout (empty string if none left).
 #>

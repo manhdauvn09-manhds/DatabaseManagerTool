@@ -8,16 +8,31 @@ being recorded?* Prints an OK / WARN / FAIL line per check and a one-line verdic
 Read-only. Exit code is always 0 by default (it is a diagnostic, not a gate);
 pass --strict to exit 1 when any FAIL is present, for use in CI.
 
+--ci (B-78): on a fresh CI runner the ledger chain, the telemetry and the H1
+pointer store do not exist BY DESIGN -- machine-state-paths.yaml declares them
+machine-local, never committed -- so the checks that read them FAILed on every
+run and the template's `--strict` made harness-gate red forever. With --ci, a
+check whose evidence lives only under a machine_local path from that YAML is
+reported as INFO "not checkable on a CI runner" (unproven, never OK -- C12);
+everything else, bundle integrity included, is graded exactly as on a
+workstation. The skip list is read from the YAML (C2); without it nothing is
+skipped. Explicit flag only: GITHUB_ACTIONS is not read to switch it on, since
+the toolkit's own CI runs doctor tests that expect the workstation grading.
+
 Shared core so the PowerShell and bash wrappers emit identical output (C7): the
 two harness-doctor.* scripts are thin shells that call this.
 """
+import glob
 import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import time
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 OK, WARN, FAIL, INFO = "OK", "WARN", "FAIL", "INFO"
 
@@ -66,6 +81,62 @@ def _git(root, *args):
         return out.stdout.strip() if out.returncode == 0 else ""
     except Exception:
         return ""
+
+
+def _ci_last_run(root):
+    """-> (state, detail). state ∈ pass | fail | none | unknown.
+
+    Asks `gh` for the most recent workflow run. Four outcomes, kept apart
+    because three of them get confused constantly:
+
+      pass     a run completed successfully — the gate is proven to work
+      fail     runs happen and the latest FAILED — proven, and bad
+      none     gh reached the repo and there are no runs — never fired
+      unknown  gh is missing, logged out, or pointed at an account that cannot
+               see this repo
+
+    `none` and `unknown` are the pair that matters. A wrong active account
+    answers "nothing found" in the same words a genuinely idle repo does, and
+    reading that as "no CI configured" is how a red or absent gate passes for a
+    quiet one. This happened during development: the gh account flipped and
+    every query came back 404 while the repo was fine.
+
+    Never raises and never blocks: a 6-second cap, and any failure degrades to
+    `unknown` with the reason attached (C13 — carry where the value came from).
+    """
+    gh = shutil.which("gh")
+    if not gh:
+        return "unknown", "gh is not installed"
+    try:
+        p = subprocess.run(
+            [gh, "run", "list", "--limit", "1",
+             "--json", "conclusion,status,name,createdAt,headBranch"],
+            cwd=root, capture_output=True, text=True, timeout=6,
+        )
+    except Exception as e:
+        return "unknown", "gh call failed (%s)" % e
+    if p.returncode != 0:
+        err = (p.stderr or "").strip().splitlines()
+        msg = err[-1] if err else "exit %d" % p.returncode
+        # Name the most common cause rather than echoing a bare 404: the fix is
+        # `gh auth switch`, and a reader who is not told that goes looking at CI.
+        if "404" in msg or "Could not resolve" in msg or "not found" in msg.lower():
+            msg += " — often the wrong `gh` account is active for this repo (gh auth status)"
+        return "unknown", msg
+    try:
+        runs = json.loads(p.stdout or "[]")
+    except ValueError:
+        return "unknown", "gh returned output that is not JSON"
+    if not runs:
+        return "none", "no workflow runs"
+    r = runs[0]
+    when = (r.get("createdAt") or "")[:16]
+    who = "%s on %s" % (r.get("name") or "?", r.get("headBranch") or "?")
+    if r.get("status") != "completed":
+        return "unknown", "latest run (%s, %s) is still %s" % (who, when, r.get("status"))
+    if r.get("conclusion") == "success":
+        return "pass", "latest run %s succeeded (%s)" % (who, when)
+    return "fail", "latest run %s concluded '%s' (%s)" % (who, r.get("conclusion"), when)
 
 
 def _default_branch(root):
@@ -123,29 +194,247 @@ def _default_branch(root):
     return "", "none"
 
 
-def run(root):
+def _ledger_links(chain):
+    """Walk chain.jsonl and check each entry's prev_hash against the entry above.
+
+    Streams the file: this repo's chain is tens of MB, with pre-b730629 lines of
+    ~2 MB each. Returns one (status, "ledger", detail) tuple.
+    """
+    n = 0
+    first = None
+    above = None           # entry_hash of the line directly above
+    seen = set()
+    breaks = {"fork": 0, "missing parent": 0, "genesis mid-file": 0, "unreadable link": 0}
+    first_bad = None
+    with open(chain, encoding="utf-8-sig") as f:
+        for raw in f:
+            if not raw.strip():
+                continue
+            n += 1
+            try:
+                e = json.loads(raw)
+                h, p = e.get("entry_hash"), e.get("prev_hash")
+            except ValueError:
+                e, h, p = {}, None, None
+            # Pre-b730629 entries can carry a list (or other non-string) here --
+            # SynthGora's chain does. Such a link is unreadable, not a crash: a
+            # TypeError here surfaced as "chain.jsonl unreadable", hiding the counts.
+            if not isinstance(h, str):
+                h = None
+            if not isinstance(p, str):
+                p = None if p is None else ""
+            if n == 1:
+                first = e
+            elif p != above or p is None:
+                if p == "GENESIS":
+                    kind = "genesis mid-file"
+                elif p in (None, "", "UNREADABLE"):
+                    kind = "unreadable link"
+                elif p in seen:
+                    kind = "fork"          # links to an older entry: concurrent append
+                else:
+                    kind = "missing parent"
+                breaks[kind] += 1
+                if first_bad is None:
+                    first_bad = n
+            if h:
+                seen.add(h)
+            above = h
+
+    if n == 0:
+        return FAIL, "ledger", "chain.jsonl is empty — no genesis."
+    bad = sum(breaks.values())
+    if bad:
+        parts = ", ".join("%d %s(s)" % (c, k) for k, c in breaks.items() if c)
+        return (FAIL, "ledger",
+                "%d entries, %d broken link(s): %s (first at line %d). The chain cannot "
+                "prove it is unaltered while these stand. Forks come from appends that "
+                "raced each other; once appends are locked, close this segment with "
+                "`evidence-ledger seal` -- never edit the file." % (n, bad, parts, first_bad))
+    if (first or {}).get("prev_hash") != "GENESIS":
+        return WARN, "ledger", "%d entries but first is not GENESIS — chain cannot prove it is intact from the start." % n
+    if n <= 1:
+        return WARN, "ledger", "genesis only (1 entry) — no side-effect has been recorded yet."
+    seg = first.get("prev_segment")
+    return (OK, "ledger", "%d entries, every link intact from genesis%s, last write %s ago."
+            % (n, " (segment continues from %s)" % seg if seg else "", _age(chain)))
+
+
+def _c15_handoff(root):
+    """C15: is the project's Handoff.md kept current? WARN at worst, never FAIL.
+
+    Settings come from casan-policies.yaml `handoff:` with the hook's defaults
+    when the section is absent (only `enabled: false` turns it off). C12/C14:
+    when git history cannot be read the answer is `unknown`, never OK.
+    """
+    label = "handoff (C15)"
+    try:
+        import harness_handoff as HH
+    except Exception as e:
+        yield INFO, label, "unknown: cannot load harness_handoff (%s)" % e
+        return
+    cfg = HH.effective_config(root)
+    if cfg.get("enabled") is False:
+        yield INFO, label, "disabled in casan-policies.yaml (handoff.enabled: false)."
+        return
+    rel = str(cfg.get("path") or "Handoff.md").replace("\\", "/")
+    try:
+        max_age = int(cfg.get("max_age_days") or 14)
+    except (TypeError, ValueError):
+        max_age = 14
+    if not os.path.isfile(os.path.join(root, rel.replace("/", os.sep))):
+        yield WARN, label, ("%s is missing -- the next assistant starts with no NOW/NEXT/OPEN/AVOID. "
+                            "Create it (C15)." % rel)
+        return
+    head = _git(root, "log", "-1", "--format=%ct")
+    last = _git(root, "log", "-1", "--format=%ct", "--", rel)
+    if not head.isdigit():
+        yield INFO, label, "unknown: git history unreadable (no HEAD commit) -- freshness of %s not checked." % rel
+        return
+    if not last.isdigit():
+        yield WARN, label, "%s exists but has never been committed -- its freshness cannot be shown." % rel
+        return
+    lag = (int(head) - int(last)) / 86400.0
+    if lag > max_age:
+        yield WARN, label, ("%s last committed %.0f day(s) before HEAD (limit %d) -- the work since is "
+                            "not handed off (C15)." % (rel, lag, max_age))
+    else:
+        yield OK, label, "%s committed within %d day(s) of HEAD (%.0f)." % (rel, max_age, lag)
+
+
+def _machine_local_matcher(root):
+    """-> (callable(rel) -> bool, None) from machine-state-paths.yaml, or (None, why)."""
+    try:
+        import harness_local_state as hls
+    except Exception as e:  # noqa: BLE001
+        return None, "harness_local_state.py unavailable (%s)" % type(e).__name__
+    spec, err = hls.load_spec(root)
+    if not spec:
+        return None, "%s %s" % (hls.SPEC_REL, err or "empty")
+    pats = [hls._glob_to_re(e["path"]) for e in (spec.get("machine_local") or [])
+            if isinstance(e, dict) and e.get("path")]
+    if not pats:
+        return None, "%s lists no machine_local path" % hls.SPEC_REL
+    return (lambda rel: any(p.match(rel) for p in pats)), None
+
+
+def _ci_preamble(root):
+    """-> (local_only(rel) -> bool, [lines to yield]) for --ci mode."""
+    match, why = _machine_local_matcher(root)
+    lines = []
+    if match is None:
+        # C13: no authoritative list -> skip nothing rather than guess one.
+        lines.append((WARN, "ci mode", (
+            "--ci asked, but the machine-local path list could not be read (%s), so NOTHING is "
+            "skipped: the workstation-only checks below are graded as on a workstation." % why)))
+        return (lambda rel: False), lines
+    env = [k for k in ("GITHUB_ACTIONS", "CI") if (os.environ.get(k) or "").lower() == "true"]
+    if env:
+        lines.append((INFO, "ci mode", (
+            "--ci on a CI runner (%s=true): checks whose evidence lives only under a machine_local "
+            "path of .harness/control/machine-state-paths.yaml are reported as not checkable here; "
+            "bundle integrity and every repo-level check are graded as usual." % env[0])))
+    else:
+        # Not a refusal -- a local dry run of the CI job is legitimate -- but a
+        # workstation that passes --ci hides its own ledger/context, so say so.
+        lines.append((WARN, "ci mode", (
+            "--ci given but neither GITHUB_ACTIONS nor CI is 'true': this looks like a workstation, "
+            "and --ci has just skipped its ledger, telemetry and context checks. Run without --ci "
+            "here.")))
+    return match, lines
+
+
+def _not_here(label, rel):
+    return INFO, label, (
+        "not checkable on a CI runner: %s is machine-local (machine-state-paths.yaml), never "
+        "committed, so a fresh checkout cannot hold it. Unproven here, not passing -- run "
+        "harness doctor on a workstation for this line." % rel)
+
+
+def run(root, ci=False):
     """Yield (status, label, detail) tuples."""
     H = os.path.join(root, ".harness")
     tel = os.path.join(H, "telemetry")
+    local_only = lambda rel: False  # noqa: E731
+    if ci:
+        local_only, lines = _ci_preamble(root)
+        for line in lines:
+            yield line
 
-    # 1) Ledger — genesis present and chain non-trivial?
+    # 1) Ledger — genesis present, and every entry links to the one above it?
+    #
+    # This used to stop at "first line is GENESIS and the file has lines", and
+    # printed OK over a chain in which 974 of 8,953 entries linked to an OLDER
+    # entry than their predecessor (concurrent appends, measured 2026-09-29). A
+    # tamper-evident log whose health check cannot see a broken link is the C14
+    # defect itself: one real rewrite hides among hundreds of harmless forks, and
+    # the green line says there is nothing to look for. Links only, not content
+    # hashes -- PowerShell and bash serialise entries differently, so recomputing
+    # a hash here would disagree with one writer or the other; `evidence-ledger
+    # verify` does that per shell.
     chain = os.path.join(H, "ledger", "chain.jsonl")
-    if not os.path.exists(chain):
+    if local_only(".harness/ledger/chain.jsonl"):
+        yield _not_here("ledger", ".harness/ledger/chain.jsonl")
+    elif not os.path.exists(chain):
         yield FAIL, "ledger", "chain.jsonl missing — no genesis. Run a session (session-start writes it) or `evidence-ledger init`."
     else:
         try:
-            lines = [l for l in open(chain, encoding="utf-8-sig") if l.strip()]
-            first = json.loads(lines[0]) if lines else {}
-            genesis = first.get("prev_hash") == "GENESIS"
-            n = len(lines)
-            if not genesis:
-                yield WARN, "ledger", "%d entries but first is not GENESIS — chain cannot prove it is intact from the start." % n
-            elif n <= 1:
-                yield WARN, "ledger", "genesis only (1 entry) — no side-effect has been recorded yet."
-            else:
-                yield OK, "ledger", "%d entries, genesis present, last write %s ago." % (n, _age(chain))
+            yield _ledger_links(chain)
         except Exception as e:
             yield FAIL, "ledger", "chain.jsonl unreadable: %s" % e
+
+    # 1b) Appends that never made it into the chain (U1).
+    #
+    # This is a FAIL of its own, not a line in the general "hook errors" WARN,
+    # and the distinction is the whole point. Every other hook error means a
+    # diagnostic misfired. This one means a SIDE-EFFECT HAPPENED AND NOTHING
+    # RECORDED IT — C9's one-line-per-side-effect guarantee was broken for that
+    # action. The chain stays internally consistent afterwards, because the next
+    # entry links to the last one that succeeded, so `verify` is green and the
+    # gap leaves no hole to find. This file is the only place the loss is
+    # visible; grading it WARN would put the one unrecoverable failure in the
+    # same bucket as a noisy log line.
+    fails = os.path.join(H, "ledger", "append-failures.jsonl")
+    if os.path.exists(fails):
+        try:
+            rows = [json.loads(l) for l in open(fails, encoding="utf-8-sig") if l.strip()]
+        except Exception as e:
+            rows = []
+            yield FAIL, "ledger append", "append-failures.jsonl exists but cannot be read (%s) — treat as lost appends until proven otherwise." % e
+        if rows:
+            last = rows[-1]
+            stages = {}
+            for r in rows:
+                s = r.get("stage") or "?"
+                stages[s] = stages.get(s, 0) + 1
+            where = ", ".join("%s×%d" % (k, v) for k, v in sorted(stages.items(), key=lambda kv: -kv[1]))
+            yield FAIL, "ledger append", (
+                "%d side-effect(s) happened with NO ledger entry (%s). Most recent: tool=%s :: %s. "
+                "The chain still verifies — a missing entry leaves no hole — so this file is the only "
+                "record that they are gone. Investigate the cause, then move the file aside once "
+                "handled; deleting it to clear the FAIL discards the only evidence of the gap."
+                % (len(rows), where, last.get("tool") or "?", (last.get("reason") or "")[:120])
+            )
+    # Absent file = nothing lost. Deliberately silent: a line saying "no lost
+    # appends" on every healthy run is noise, and this check must stay something
+    # people react to.
+
+    # The last-resort path, used when even append-failures.jsonl could not be
+    # written. Kept separate because it means BOTH the record and its fallback
+    # failed, which points at the disk or permissions rather than at memory.
+    _hook_err = os.path.join(tel, "hook-errors.log")
+    if os.path.exists(_hook_err):
+        try:
+            lost = [l for l in open(_hook_err, encoding="utf-8-sig", errors="replace")
+                    if "LEDGER-APPEND-LOST" in l]
+        except Exception:
+            lost = []
+        if lost:
+            yield FAIL, "ledger append (fallback)", (
+                "%d append(s) failed AND could not be recorded in append-failures.jsonl — see "
+                "LEDGER-APPEND-LOST in hook-errors.log. Both the record and its fallback failed, "
+                "which usually means the disk or the permissions, not memory." % len(lost)
+            )
 
     # 2) Telemetry files — present and fresh?
     for name, label in [("tool-calls.log", "audit (tool-calls)"),
@@ -153,7 +442,9 @@ def run(root):
                         ("test-reports.jsonl", "test reports")]:
         p = os.path.join(tel, name)
         a = _age(p)
-        if a is None:
+        if local_only(".harness/telemetry/" + name):
+            yield _not_here(label, ".harness/telemetry/" + name)
+        elif a is None:
             yield WARN, label, "%s absent — no evidence of this kind has been produced." % name
         else:
             yield OK, label, "%s, last write %s ago." % (name, a)
@@ -210,7 +501,9 @@ def run(root):
     # 4) pipeline-context — exists, and tech_stack not the poison value "unknown"?
     ctx = os.path.join(H, "context", "pipeline-context.yaml")
     txt = _read(ctx)
-    if not txt:
+    if local_only(".harness/context/pipeline-context.yaml"):
+        yield _not_here("context (H1)", ".harness/context/pipeline-context.yaml")
+    elif not txt:
         yield FAIL, "context (H1)", "pipeline-context.yaml missing — H1 criteria read it. session-start builds it."
     else:
         # Line-scan rather than a YAML dep: doctor must run with stdlib only.
@@ -229,6 +522,10 @@ def run(root):
         yield FAIL, "policies", "casan-policies.yaml missing — H3/H5/H6/H7 criteria read it."
     else:
         yield OK, "policies", "casan-policies.yaml present."
+
+    # 5b) C15 handoff freshness.
+    for item in _c15_handoff(root):
+        yield item
 
     # 6) Hook wiring — is anything actually invoking the harness on tool use?
     settings = _read(os.path.join(root, ".claude", "settings.json"))
@@ -279,11 +576,43 @@ def run(root):
     # feature branch. None produced an error anywhere. A dead gate is worse than
     # an absent one -- absence is visible, death reads as coverage -- so this
     # check exists to make that specific failure loud.
+    # Which workflows are HARNESS gates? Identified by what they RUN, not by
+    # what they are called. The old list was two hardcoded filenames --
+    # tests.yml and harness-gate.yml, the two the installer happens to write --
+    # so this repo's own policy-ci.yml, eight jobs running the harness suites,
+    # was reported as "no harness workflows installed". A check that only
+    # recognises its own installer's output tells every hand-written gate it
+    # does not exist, which is the cry-wolf failure C14 names.
     wf = os.path.join(root, ".github", "workflows")
-    harness_wf = [f for f in ("tests.yml", "harness-gate.yml")
-                  if os.path.isfile(os.path.join(wf, f))]
+    # Two signals, either one counts. The installer's own filenames stay
+    # recognised so nothing that used to be seen stops being seen; content
+    # matching is what finds a gate somebody wrote themselves. Recognising only
+    # the first is what made this repo's policy-ci.yml -- eight jobs running the
+    # harness suites -- report as "no harness workflows installed".
+    HARNESS_FILENAMES = ("tests.yml", "harness-gate.yml")
+    HARNESS_MARKERS = ("harness_policy_check", "harness_doctor", "harness_redteam",
+                       "harness-eval", "harness_golden", "tests/doctor", "tests/policy",
+                       ".harness/scripts")
+    harness_wf = []
+    if os.path.isdir(wf):
+        for f in sorted(os.listdir(wf)):
+            if not f.endswith((".yml", ".yaml")):
+                continue
+            if f in HARNESS_FILENAMES:
+                harness_wf.append(f)
+                continue
+            try:
+                with open(os.path.join(wf, f), encoding="utf-8-sig", errors="replace") as fh:
+                    body = fh.read()
+            except OSError:
+                continue
+            if any(m in body for m in HARNESS_MARKERS):
+                harness_wf.append(f)
     if not harness_wf:
-        yield INFO, "ci gates", "no harness workflows installed (run the installer with -WithCiGates to add them)."
+        yield INFO, "ci gates", (
+            "no workflow in .github/workflows runs a harness suite (looked for %s in every "
+            ".yml/.yaml, not just the installer's own filenames). Run the installer with "
+            "-WithCiGates to add one." % ", ".join(HARNESS_MARKERS[:3]))
     else:
         # Does the workflow even PARSE?
         #
@@ -322,10 +651,13 @@ def run(root):
                     if not nxt.strip():
                         continue
                     if len(nxt) - len(nxt.lstrip()) <= key_col:
-                        # A sibling key or the next list item ends the block
-                        # legitimately. Anything else at or left of the key is
-                        # the malformed case.
-                        if not re.match(r"^\s*[-\w]+:", nxt) and not nxt.lstrip().startswith("- "):
+                        # A sibling key, the next list item or a comment ends the
+                        # block legitimately (a less-indented line closes a block
+                        # scalar; this repo's policy-ci.yml has a comment between
+                        # jobs and runs green). Anything else at or left of the
+                        # key is the malformed case.
+                        if (not re.match(r"^\s*[-\w]+:", nxt) and not nxt.lstrip().startswith("- ")
+                                and not nxt.lstrip().startswith("#")):
                             broken.append("%s line %d: a block-scalar line is indented level with its `run:` — "
                                           "GitHub rejects the file and the workflow never runs" % (f, j + 1))
                         break
@@ -391,6 +723,11 @@ def run(root):
     # "I cannot check this from here" is the C12-compliant answer; saying OK
     # would be the exact failure the rule exists to stop.
     proven, unproven = [], []
+    # --ci: the workstation gates prove themselves only through the ledger and
+    # test-reports.jsonl, both machine-local; and the CI gate's proof is the very
+    # run doing this check. Nothing here can be proven OR disproven -- say so.
+    gate_proof_here = not (local_only(".harness/ledger/chain.jsonl")
+                           and local_only(".harness/telemetry/test-reports.jsonl"))
 
     # Hooks prove themselves by what they write: a ledger longer than genesis
     # means the PostToolUse hook ran and the guard let a call through.
@@ -434,13 +771,48 @@ def run(root):
         else:
             unproven.append("eval:%s (no report ever written)" % suite)
 
-    if harness_wf:
-        # Present and pointed at the right branch is the most this machine can
-        # establish. Whether GitHub ever ran it is a server-side fact.
-        unproven.append("ci (%s installed; a local check cannot see whether a run "
-                        "ever happened — confirm on the repo's Actions tab)" % ", ".join(harness_wf))
+    # Not under --ci: on a runner the "last run" is this run itself (or the red one
+    # it is meant to replace), so asking GitHub would grade the gate by its own past.
+    if harness_wf and gate_proof_here:
+        # U7: ASK, instead of declaring it unknowable.
+        #
+        # This used to append "a local check cannot see whether a run ever
+        # happened". True of the filesystem, false of the machine: `gh` is
+        # authenticated here and the answer is one call away. And the answer
+        # mattered — the first time this was actually asked, CI had been RED for
+        # over a day across six consecutive runs, while doctor reported the
+        # comfortable "cannot verify from here". Unproven and failing look the
+        # same from a distance, which is precisely why C12 forbids resting there
+        # when the fact is obtainable.
+        state, detail = _ci_last_run(root)
+        if state == "pass":
+            proven.append("ci (%s)" % detail)
+        elif state == "fail":
+            # Not merely unproven — proven BAD. Its own FAIL, because burying a
+            # red build inside a C12 summary is how it stayed red for a day.
+            yield FAIL, "ci runs", (
+                "the CI gate is installed, fires, and is FAILING: %s. A red gate protects nothing, "
+                "and it reads identically to an unproven one on any screen that only tracks "
+                "'evidence present'." % detail)
+            unproven.append("ci (installed and running, but failing — see the 'ci runs' line)")
+        elif state == "none":
+            unproven.append("ci (%s installed; gh reached the repo and it has NO runs at all — "
+                            "the workflow has never fired)" % ", ".join(harness_wf))
+        else:
+            # "unknown": gh missing, not logged in, or pointed at an account that
+            # cannot see this repo. Kept apart from "no runs" on purpose -- the
+            # wrong active account answers "nothing here" in a voice that sounds
+            # exactly like a healthy-but-idle repo. Hit live while building this:
+            # the account flipped mid-session and every query returned 404.
+            unproven.append("ci (%s installed; could not ask GitHub: %s)"
+                            % (", ".join(harness_wf), detail))
 
-    if not unproven:
+    if not gate_proof_here:
+        yield INFO, "gate proof (C12)", (
+            "not checkable on a CI runner: gate evidence is the ledger and test-reports.jsonl, both "
+            "machine-local (machine-state-paths.yaml). This CI run is itself the CI gate's trace; "
+            "the workstation gates are proven by harness doctor on a workstation.")
+    elif not unproven:
         yield OK, "gate proof (C12)", "every gate has left execution evidence: %s." % "; ".join(proven)
     elif not proven:
         yield FAIL, "gate proof (C12)", (
@@ -720,70 +1092,201 @@ def run(root):
     # eval/ hold files a project is SUPPOSED to edit (its own policies, its own
     # golden cases -- see the bundle's `preserve` list), so drift there is
     # normal and flagging it would be the cry-wolf failure C14 forbids.
+    # The repo that AUTHORS the bundle is the one place drift is not a finding.
+    # Its .harness/scripts/ IS the source: every edit there is the work, and its
+    # receipt is whatever version was last installed INTO it -- 12 releases stale
+    # on this repo, because update-all-projects deliberately skips the toolkit.
+    # Comparing authored files against that receipt reported 11 drifted scripts
+    # as a FAIL, which is the check firing hardest exactly where it knows least.
+    # Detected by bundles/*/bundle.yaml, the same signal policy-ci already uses
+    # to decide a repo is the packer rather than a consumer.
+    is_bundle_source = bool(glob.glob(os.path.join(root, "bundles", "*", "bundle.yaml")))
+
     receipt_path = os.path.join(H, ".bundle-manifest.json")
-    if not os.path.exists(receipt_path):
-        yield INFO, "bundle integrity", "no .bundle-manifest.json — this project was not installed from a bundle."
+    if is_bundle_source:
+        src_ver = ""
+        for by in sorted(glob.glob(os.path.join(root, "bundles", "*", "bundle.yaml"))):
+            try:
+                with open(by, encoding="utf-8-sig", errors="replace") as fh:
+                    for line in fh:
+                        m = re.match(r'^version:\s*"?([0-9][^"\s]*)"?', line)
+                        if m:
+                            src_ver = m.group(1)
+                            break
+            except OSError:
+                pass
+            if src_ver:
+                break
+        yield INFO, "bundle integrity", (
+            "this repo AUTHORS the bundle (bundles/*/bundle.yaml present%s), so .harness/scripts/ "
+            "is the source rather than an installed copy and differing from the receipt is the "
+            "work, not drift. The check runs where it means something: the consuming projects."
+            % (", source at v%s" % src_ver if src_ver else ""))
+    elif not os.path.exists(receipt_path):
+        # U2: "no receipt" is TWO different states and this used to report both
+        # as the harmless one.
+        #
+        #   never installed        -> INFO. Nothing is wrong.
+        #   installed, receipt gone -> FAIL. The updater can no longer tell what
+        #                              version this project runs, so every fleet
+        #                              report counts it as missing while the
+        #                              project itself looks fine from inside.
+        #
+        # Measured: 24hHotnewsAI lost its receipt AND its portal-sync.json after
+        # a commit that stopped tracking .harness. Telemetry stopped flowing —
+        # push-telemetry prints "push sync not configured, skipping" and exits 0
+        # — and nothing anywhere said so. It was the fleet's largest project.
+        #
+        # Told apart by files only the installer writes. A directory tree alone
+        # is not enough: .harness/telemetry/ gets created by the push client on
+        # a project that was never installed.
+        installed_markers = [
+            os.path.join(H, "scripts", "powershell", "harness-runtime-guard.ps1"),
+            os.path.join(H, "scripts", "bash", "harness-runtime-guard.sh"),
+            os.path.join(H, "control", "casan-policies.yaml"),
+            os.path.join(H, "schemas", "casan-policies.schema.json"),
+        ]
+        present = [p for p in installed_markers if os.path.exists(p)]
+        if present:
+            yield FAIL, "bundle integrity", (
+                "%d bundle-installed file(s) are here but .bundle-manifest.json is GONE — this "
+                "project WAS installed and lost its receipt, which is not the same as never having "
+                "been installed. Every fleet scan now counts it as missing while it looks healthy "
+                "from inside. Reinstall the bundle to restore the receipt, and check whether the "
+                "same event took .harness/portal-sync.json with it." % len(present)
+            )
+        else:
+            yield INFO, "bundle integrity", "no .bundle-manifest.json — this project was not installed from a bundle."
+
+        # Same loss, different file, and the one with teeth: without
+        # portal-sync.json the push client skips and exits 0, so telemetry stops
+        # LEGITIMATELY. A leftover key is proof the project was wired once.
+        if os.path.exists(os.path.join(H, "portal-sync.key")) and \
+           not os.path.exists(os.path.join(H, "portal-sync.json")):
+            yield FAIL, "portal sync config", (
+                "portal-sync.key is here but portal-sync.json is GONE — this project was wired to "
+                "the Portal and lost its config. push-telemetry prints 'push sync not configured, "
+                "skipping' and exits 0, so telemetry stops with no error anywhere and the Portal "
+                "shows the project as if nobody works on it."
+            )
     else:
         try:
             receipt = json.loads(_read(receipt_path) or "{}")
-            recorded = receipt.get("files") or {}
+            recorded = receipt.get("files") or []
             version = receipt.get("version") or "?"
+
+            def _eol_hashes(data):
+                # A core.autocrlf checkout, or the managed .gitattributes block's
+                # `*.ps1 text eol=crlf`, changes line endings; a Windows editor may
+                # add a BOM. Neither is drift (install.* and harness-verify.* compare
+                # the same way). The receipt hashes the SHIPPED bytes -- LF, and for
+                # most .ps1 WITH a UTF-8 BOM (policy-ci requires one) -- so the LF
+                # form must be tried with the BOM kept as well as stripped. Before
+                # 1.8.11 only the stripped form was tried: a BOM'd .ps1 checked out
+                # as CRLF matched neither, and a fresh clone of AllIn1Site reported
+                # 40 of 92 scripts drifted (B-77).
+                lf = data.replace(b"\r\n", b"\n")
+                forms = [data, lf, lf[3:] if lf[:3] == b"\xef\xbb\xbf" else lf]
+                return {hashlib.sha256(f).hexdigest() for f in forms}
+
+            # Per-file states (receipts from install 0.6 on). A file the last install
+            # KEPT (project-owned, or hand-edited while the bundle did not change it)
+            # or left in CONFLICT, or SKIPPED, is not "an installed file that
+            # drifted": the receipt says it was never put there. Report it as what it
+            # is. A receipt without states is read as before -- every file installed.
+            by_state = {"conflict": [], "skipped": [], "kept": []}
             # Only entries the receipt carries a hash for can be compared; an
             # older receipt shape simply yields nothing to check, and says so
             # rather than passing silently.
-            checked = drifted = 0
+            checked = drifted = unverifiable = 0
             examples = []
             for entry in recorded:
                 if not isinstance(entry, dict):
                     continue
                 rel = entry.get("path") or ""
+                state = entry.get("state") or "installed"
+                if rel and state in by_state:
+                    by_state[state].append(rel.replace("\\", "/"))
+                    continue
                 # installed_sha256 is what the installer actually wrote (it can
                 # differ from sha256 for a file the installer templated); it is
                 # the honest baseline for "is this still what we installed".
+                # "unknown" (an empty file) is no hash at all -- never a match.
                 want = entry.get("installed_sha256") or entry.get("sha256")
-                if not rel or not want:
+                if want == "unknown":
+                    want = entry.get("sha256") if entry.get("sha256") != "unknown" else None
+                if not rel:
                     continue
                 norm = rel.replace("\\", "/")
                 if not (norm.startswith(".harness/scripts/") or norm.startswith("tools/harness-bundle/")):
                     continue
+                if not want:
+                    unverifiable += 1
+                    continue
+                checked += 1
                 target = os.path.join(root, norm.replace("/", os.sep))
                 if not os.path.exists(target):
                     drifted += 1
                     if len(examples) < 3:
                         examples.append(norm + " (missing)")
                     continue
-                checked += 1
-                h = hashlib.sha256(open(target, "rb").read()).hexdigest()
-                if h != want:
+                with open(target, "rb") as fh:
+                    data = fh.read()
+                if want not in _eol_hashes(data):
                     drifted += 1
                     if len(examples) < 3:
                         examples.append(norm)
-            if checked == 0 and drifted == 0:
+
+            unresolved = by_state["conflict"] + by_state["skipped"]
+
+            def _names(paths):
+                return ", ".join(paths[:3]) + (" +%d more" % (len(paths) - 3) if len(paths) > 3 else "")
+
+            notes = []
+            if by_state["conflict"]:
+                notes.append("%d in CONFLICT (yours kept, the shipped copy sits beside it as <file>.new: %s)"
+                             % (len(by_state["conflict"]), _names(by_state["conflict"])))
+            if by_state["skipped"]:
+                notes.append("%d SKIPPED (existed, installed without --force: %s)"
+                             % (len(by_state["skipped"]), _names(by_state["skipped"])))
+            if by_state["kept"]:
+                notes.append("%d kept as yours (%s)" % (len(by_state["kept"]), _names(by_state["kept"])))
+            note = ("; the last install also left: " + "; ".join(notes)) if notes else ""
+
+            if checked == 0 and not notes:
                 yield INFO, "bundle integrity", (
                     "receipt for v%s carries no per-file hashes — cannot verify the installed files "
                     "are still the ones that were installed. Re-install with a current packer to enable "
                     "this check." % version)
             elif drifted:
                 yield FAIL, "bundle integrity", (
-                    "%d of %d bundled script(s) no longer match the v%s receipt (%s). Something "
+                    "%d of %d installed bundled script(s) no longer match the v%s receipt (%s). Something "
                     "overwrote them after install -- in this fleet that is usually the project's own "
                     "git, which tracks .harness/. Re-install the bundle, then COMMIT it, or the next "
-                    "checkout restores the old copy again."
-                    % (drifted, checked + drifted, version, ", ".join(examples)))
+                    "checkout restores the old copy again%s."
+                    % (drifted, checked, version, ", ".join(examples), note))
+            elif unresolved:
+                yield WARN, "bundle integrity", (
+                    "the v%s install is PARTIAL: %d file(s) were not applied%s. The %d installed "
+                    "script(s) checked match the receipt. Resolve each conflict by hand (or adopt the "
+                    ".new copy) and re-install; until then this project is not fully on v%s."
+                    % (version, len(unresolved), note, checked, version))
             else:
-                yield OK, "bundle integrity", "%d bundled script(s) match the v%s receipt." % (checked, version)
+                yield OK, "bundle integrity", "%d bundled script(s) match the v%s receipt%s%s." % (
+                    checked, version, note,
+                    (" (%d empty/unhashed file(s) not compared)" % unverifiable) if unverifiable else "")
         except Exception as e:
             yield WARN, "bundle integrity", "could not verify bundle files: %s" % e
 
 
-def as_json(root):
+def as_json(root, ci=False):
     """The same run, as the JSON the push client sends to the Portal (S-1).
 
     Emitting the identical check list the terminal shows -- not a summary -- so
     the Portal renders exactly what the developer saw. A health screen that
     paraphrases its source is a second place for the truth to drift.
     """
-    checks = [{"status": s, "label": l, "detail": d} for s, l, d in run(root)]
+    checks = [{"status": s, "label": l, "detail": d} for s, l, d in run(root, ci=ci)]
     counts = {k: sum(1 for c in checks if c["status"] == k) for k in (OK, WARN, FAIL, INFO)}
     if counts[FAIL]:
         verdict = "failing"
@@ -811,13 +1314,16 @@ def main(argv):
     root = "."
     strict = False
     want_json = False
+    ci = False
     for a in argv[1:]:
         if a == "--strict":
             strict = True
         elif a == "--json":
             want_json = True
+        elif a == "--ci":
+            ci = True
         elif a in ("-h", "--help"):
-            print("usage: harness_doctor.py [ROOT] [--strict] [--json]"); return 0
+            print("usage: harness_doctor.py [ROOT] [--strict] [--json] [--ci]"); return 0
         elif not a.startswith("-"):
             root = a
     root = os.path.abspath(root)
@@ -825,14 +1331,14 @@ def main(argv):
     if want_json:
         # Machine output only -- no banner, so the caller can pipe it straight
         # into the push payload.
-        print(json.dumps(as_json(root), ensure_ascii=False))
+        print(json.dumps(as_json(root, ci=ci), ensure_ascii=False))
         return 0
 
     print("harness doctor  --  %s" % root)
     print("=" * 60)
     counts = {OK: 0, WARN: 0, FAIL: 0, INFO: 0}
     icon = {OK: "[ OK ]", WARN: "[WARN]", FAIL: "[FAIL]", INFO: "[INFO]"}
-    for status, label, detail in run(root):
+    for status, label, detail in run(root, ci=ci):
         counts[status] += 1
         print("%s %-20s %s" % (icon[status], label, detail))
     print("=" * 60)

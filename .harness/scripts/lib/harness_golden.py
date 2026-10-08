@@ -22,10 +22,11 @@ import re
 import sys
 
 
-def _load_deny_patterns(root):
+def _load_deny_patterns(root, path=None):
     """Naive YAML scrape of `pattern:` values under command_deny_patterns —
-    dependency-free, matches how the guard reads its policy."""
-    p = os.path.join(root, ".harness", "control", "risk-policy.yaml")
+    dependency-free, matches how the guard reads its policy. `path` overrides
+    the file (policy-ci reads the installer's risk-policy.yaml.new with it)."""
+    p = path or os.path.join(root, ".harness", "control", "risk-policy.yaml")
     pats = []
     if not os.path.isfile(p):
         return pats
@@ -67,8 +68,16 @@ def _case_files(root):
         return []
     return sorted(
         os.path.join(d, n) for n in os.listdir(d)
-        if n.lower().endswith(".jsonl") and os.path.isfile(os.path.join(d, n))
+        if n.lower().endswith(".jsonl") and n.lower() not in _NOT_GOLDEN
+        and os.path.isfile(os.path.join(d, n))
     )
+
+
+# Fixtures of OTHER guards that projects keep in the same dir. redteam-cases.jsonl
+# holds prompt-injection cases for the injection guard; replaying it against the
+# command deny patterns scores every injection prompt "allowed" -- a false red
+# (C14). The 1.7 upgrade dropped this exclusion; 1.8.2 restores it.
+_NOT_GOLDEN = frozenset({"redteam-cases.jsonl"})
 
 
 def run(root):
@@ -107,6 +116,14 @@ def run(root):
 
 
 if __name__ == "__main__":
+    # Consuming projects run on Windows consoles whose codepage (cp932, cp1252,
+    # ...) cannot encode an em-dash; one such glyph in a SKIP/WARN line raised
+    # UnicodeEncodeError AFTER the counts printed, so harness-eval recorded a
+    # clean run as failed (AllIn1Site, 2026-10-06). Same guard as harness_doctor.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
     root = sys.argv[1] if len(sys.argv) > 1 else "."
     r = run(root)
     if r is None:

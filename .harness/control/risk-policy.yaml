@@ -164,6 +164,16 @@ command_deny_patterns:
 
 # Tool-level deny (matches tool name in tool-registry)
 # Used by PreToolUse hook for non-command tools
+  # added 2026-10-06 by fix-fleet-deny-patterns from risk-policy.yaml.new (B-75):
+  # shipped baseline deny cases this policy did not block.
+  - pattern: "([Ii]rm|[Ii]nvoke-[Rr]est[Mm]ethod|[Dd]ownload[Ss]tring)[^|]*\\|\\s*([Ii]ex|[Ii]nvoke-[Ee]xpression)\\b"
+    risk: "critical"
+    reason: "REST download piped into Invoke-Expression — remote code execution"
+    action: "deny"
+  - pattern: "([Ii]ex|[Ii]nvoke-[Ee]xpression)\\s*\\(+\\s*(\\(?\\s*[Nn]ew-[Oo]bject\\s+([Ss]ystem\\.)?[Nn]et\\.[Ww]eb[Cc]lient|[Ii]rm\\b|[Ii]nvoke-[Rr]est[Mm]ethod|[Ii]wr\\b|[Ii]nvoke-[Ww]eb[Rr]equest)"
+    risk: "critical"
+    reason: "Invoke-Expression wrapped around a download (iex (irm …), WebClient cradle) — remote code execution"
+    action: "deny"
 tool_deny_defaults:
   deploy: { risk: "high", action: "deny", unless_in_workflow: true }
   rollback_deploy: { risk: "high", action: "deny", unless_in_workflow: true }

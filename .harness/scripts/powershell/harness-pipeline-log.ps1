@@ -68,12 +68,18 @@ if (-not (Test-Path $lib)) { Write-Error "not found: $lib"; exit 3 }
 # straight to a native exe is argument-by-argument and safe.
 $a = @(
     $lib, $Root,
-    "--skill", $Skill, "--verdict", $Verdict, "--pipeline-id", $PipelineId,
+    "--skill", $Skill, "--verdict", $Verdict,
     "--found", $Found, "--confirmed", $Confirmed, "--dropped", $Dropped,
     "--fixed", $Fixed, "--retries", $Retries, "--files", $Files,
     "--force-full", $(if ($ForceFull) { "true" } else { "false" }),
     "--tests-passed", $TestsPassed, "--tests-failed", $TestsFailed,
-    "--duration-s", $DurationS, "--base", $Base, "--head", $Head
+    "--duration-s", $DurationS
 )
+# Only when set: PS 5.1 drops an EMPTY string argument on the way to a native
+# exe, so `--head ""` arrived as a bare `--head` and argparse rejected the whole
+# record ("expected one argument") -- a run with no head commit was not loggable.
+if ($PipelineId) { $a += @("--pipeline-id", $PipelineId) }
+if ($Base) { $a += @("--base", $Base) }
+if ($Head) { $a += @("--head", $Head) }
 & $py.Source @a
 exit $LASTEXITCODE

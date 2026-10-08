@@ -151,6 +151,20 @@
         ]
       }
     ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-handoff-check.sh"
+            ]
+          }
+        ]
+      }
+    ],
     "SessionEnd": [
       {
         "matcher": "",
