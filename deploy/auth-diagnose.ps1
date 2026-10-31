@@ -13,6 +13,10 @@
 $ErrorActionPreference = "Continue"
 $S = "mcp-80"
 
+# Ghi ca man hinh ra file de khong bi cuon mat.
+$OutFile = Join-Path $env:TEMP "dbmanager-auth-diagnose.txt"
+Start-Transcript -Path $OutFile -Force | Out-Null
+
 function Section($t) { Write-Host ""; Write-Host "=== $t ===" -ForegroundColor Cyan }
 
 Write-Host ""
@@ -49,10 +53,15 @@ ssh $S 'docker logs --since 2h dbmanager-app 2>&1 | grep -i -E "auth|error|warn"
 Write-Host "  (het log)" -ForegroundColor DarkGray
 
 Section "8. Thu goi thang endpoint auth tu tren server"
-ssh $S 'curl -s -o /dev/null -w "  /api/auth/providers -> %{http_code}\n" http://127.0.0.1:9230/api/auth/providers'
+# Luu y: -w "...%{http_code}" bi vo khi di qua PowerShell -> ssh -> sh.
+# Dung -s -S voi head/status rieng cho chac.
 ssh $S 'curl -s http://127.0.0.1:9230/api/auth/providers | head -c 400; echo'
-ssh $S 'curl -s -o /dev/null -w "  /api/auth/csrf -> %{http_code}\n" http://127.0.0.1:9230/api/auth/csrf'
+ssh $S 'curl -s -D - -o /dev/null http://127.0.0.1:9230/api/auth/csrf | head -1'
+ssh $S 'curl -s -D - -o /dev/null http://127.0.0.1:9230/api/auth/signin/google | head -1'
 
+Stop-Transcript | Out-Null
 Write-Host ""
-Write-Host "### Xong. Copy toan bo output gui lai. ###" -ForegroundColor Green
+Write-Host "### Xong. Output day du da luu o: ###" -ForegroundColor Green
+Write-Host "    $OutFile" -ForegroundColor Yellow
+Write-Host "Gui file do lai (hoac mo bang: notepad $OutFile)" -ForegroundColor Green
 Write-Host ""

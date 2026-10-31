@@ -12,8 +12,11 @@ Verify tren mcp-80 (operator chay script, 2026-10-31):
 - `https://dbmanager.allin1site.com/` = **307** -> trang dang nhap
 - Build trong `builder` stage pass => `npm run test` + `npm run build` deu
   chay duoc tren Node 22 alpine.
-- **Dang nhap thu: chua co xac nhan** cua operator tai thoi diem ghi. Xem
-  OPEN-5.
+**Ticket Ops (nang Node 20 -> 22): DONG.** Muc tieu la roi Node 20 EOL, da
+dat va verify tren production.
+
+**Dang nhap KHONG duoc** — nhung nguyen nhan nam o tang proxy (gzip hong),
+khong phai do nang Node. Tach thanh bug rieng: **OPEN-5**.
 
 - Commit `0b5a9d9` tren branch `claude/node-20-to-22-upgrade-e0b3fc`, da
   merge ff-only vao `main` va push.
@@ -55,12 +58,44 @@ Verify tren mcp-80 (operator chay script, 2026-10-31):
   code. Lan sau build local hong kieu nay: doi chieu voi `main` truoc khi
   nghi la do minh, hoac bo qua va dua vao build trong Docker.
 
-- **OPEN-5 — chua xac nhan dang nhap duoc sau khi len Node 22.**
-  307 + health 200 chi chung minh app boot va redirect dung; chua chung minh
-  session/Redis/giai ma saved-connection con chay. Assistant khong duoc nhap
-  credential that vao production nen khong tu kiem duoc.
-  *until:* operator login thanh cong VA mo duoc 1 saved connection (xac nhan
-  volume `dbmanager_dbmanager_data` + AES decrypt con nguyen).
+- **OPEN-5 — KHONG dang nhap duoc: `/api/auth/providers` tra body gzip hong.**
+  **Day la bug RIENG, khong thuoc ticket nang Node 22** (xem muc "Quan he voi
+  Node 22" ben duoi).
+
+  Chuoi loi (da tai hien duoc 2026-10-31 bang browser, khong can credential):
+  1. Bam "Sign in with Google" -> `GET /api/auth/providers`
+  2. Response **200** + header `content-encoding: gzip`, nhung body KHONG
+     phai gzip hop le -> `net::ERR_CONTENT_DECODING_FAILED`
+  3. Auth.js client ném `Failed to fetch` -> `next-auth/react` chuyen huong
+     sang `/api/auth/error` (khong co `?error=`, khop URL operator bao)
+  Nut bam chua bao gio di toi Google.
+
+  **App KHONG hong**: `curl http://127.0.0.1:9230/api/auth/providers` ngay
+  tren server tra JSON dung. Loi phat sinh o tang proxy
+  (container -> nginx host -> Cloudflare; header co `server: cloudflare`,
+  `cf-ray`). Nghi double-compression: mot tang gzip roi tang sau gzip tiep.
+
+  **Buoc tiep theo** - 2 lenh read-only de biet tang nao:
+  ```
+  ssh mcp-80 "curl -s -D - -o /tmp/p1.bin -H 'Accept-Encoding: gzip' http://127.0.0.1:9230/api/auth/providers; file /tmp/p1.bin"
+  ssh mcp-80 "curl -sk -D - -o /tmp/p2.bin -H 'Accept-Encoding: gzip' -H 'Host: dbmanager.allin1site.com' https://127.0.0.1/api/auth/providers; file /tmp/p2.bin"
+  ```
+  p1 sach + p2 hong => nginx host. Ca hai sach => Cloudflare. p1 hong =>
+  moi phai nghi Next.js/Node.
+
+  **Quan he voi Node 22: CHUA CHUNG MINH DUOC, va co ly do tin la khong.**
+  Tang gay loi nam ngoai container. `.env.production` de ngay 19/08 va
+  operator chua dang nhap gan day, nen bug co the da ton tai tu lau ma khong
+  ai thay: trang HTML tai binh thuong, chi `fetch()` XHR cua Auth.js moi chet
+  vi trinh duyet khat khe voi decoding hon. Rollback ve Node 20 **khong**
+  duoc coi la cach sua cho den khi p1 chung minh loi nam trong container.
+  *until:* chay 2 lenh tren, xac dinh tang, sua tang do, roi login thanh cong
+  VA mo duoc 1 saved connection.
+
+- **OPEN-6 — CSP chan Cloudflare beacon.** `script-src 'self' 'unsafe-inline'`
+  chan `static.cloudflareinsights.com/beacon.min.js`. Vo hai (chi analytics
+  CF khong chay), ghi lai de khoi dieu tra lai.
+  *until:* them CF vao CSP, hoac quyet dinh bo analytics.
 - **OPEN-2 — CI con pin Node 20.**
   `.github/workflows/ci.yml:26`, `:58` va `.github/workflows/tests.yml:21` van
   `node-version: "20"`. Ngoai scope yeu cau (chi 3 dong Dockerfile), nhung
