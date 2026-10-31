@@ -51,11 +51,28 @@
   `node-version: "20"`. Ngoai scope yeu cau (chi 3 dong Dockerfile), nhung
   de nhu vay thi CI test tren 20 trong khi production chay 22 — drift that.
   *until:* 3 dong do len `22`, hoac co quyet dinh ro la giu 20 co chu dich.
-- **OPEN-3 — deploy/verify phai lam bang tay.**
+- **OPEN-3 — roll-out/verify phai lam bang tay.**
   Harness guard `deny-by-default` chan `run_command`, `exec_in_container`,
-  `deploy` (risk `high`, `unless_in_workflow`) -> assistant khong tu deploy
+  `deploy` (risk `high`, `unless_in_workflow`) -> assistant khong tu roll ra
   hay doc duoc server. Dung `.ps1` theo C11.
   *until:* chay trong workflow co approval, hoac operator noi khac.
+
+- **OPEN-4 — release gate dang CHAN chinh no (catch-22). C12/C14.**
+  `harness-runtime-guard.ps1:280` match `(?i)(deploy|release|...)` tren **ca
+  command string**, roi PDP deny vi 3 suite `policy-ci` / `red-team` /
+  `golden` stale (>24h). Hau qua: moi lenh shell co chu "deploy" trong
+  **duong dan file** cung bi chan — ke ca `harness-release.ps1`, tuc la
+  **khong chay duoc chinh cai script sinh ra report de clear gate**.
+  Chay tay 3 suite thi pass (red-team 13/13, golden 44/44, policy-ci 49 pass
+  / 1 fail) nhung **report van stale** vi chi `harness-release.ps1` moi ghi
+  file report.
+  - `policy-ci` FAIL duy nhat = `H1:pointer-store: missing
+    .harness/context/pipeline-context.yaml` -> **artifact cua worktree**:
+    `.harness/context/` bi gitignore (`.gitignore:59`), co trong main
+    checkout, khong co trong worktree. Khong phai do thay doi nay.
+  *until:* operator chay `harness-release.ps1` tu main checkout (khong bi
+  chan o day) de refresh report, hoac sua regex line 280 cho phan biet
+  mention vs invocation (comment trong code da biet van de nay).
 
 ## AVOID
 
