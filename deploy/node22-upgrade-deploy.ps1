@@ -7,8 +7,11 @@
 # bom:powershell-has-utf8-bom vi PS 5.1 decode file BOM-less theo ANSI
 # codepage -> chu co dau se sai.
 #
-# Chay:
-#   powershell -File E:\SourceCode\DatabaseManager\deploy\node22-upgrade-deploy.ps1
+# Chay (copy ca 2 dong):
+#   cd E:\SourceCode\DatabaseManager
+#   powershell -File E:\SourceCode\DatabaseManager\.claude\worktrees\node-20-to-22-upgrade-e0b3fc\deploy\node22-upgrade-deploy.ps1
+#
+# (Script tu Set-Location sang repo roi, cd chi de ban dung dung cho.)
 #
 # Target: Windows PowerShell 5.1 (powershell, KHONG phai pwsh).
 # Idempotent: chay lai duoc; merge/push bo qua neu da xong.
@@ -40,15 +43,27 @@ Write-Host "Server: $ServerAlias ($ServerPath)   Branch nguon: $Branch" -Foregro
 Step "1/6" "Merge $Branch -> main va push"
 Set-Location $RepoLocal
 
-$dirty = git status --porcelain
-if ($dirty) {
-    Warn "main checkout dang co thay doi chua commit:"
-    $dirty | ForEach-Object { Write-Host "       $_" -ForegroundColor DarkGray }
-    Die "Commit hoac don sach $RepoLocal truoc khi merge."
-}
-
 git checkout main
 if ($LASTEXITCODE -ne 0) { Die "git checkout main that bai." }
+
+# Chi chan khi file dang dirty TRUNG voi file ma merge se ghi de. main checkout
+# thuong xuyen co thay doi harness chua commit - nhung branch nay chi dung toi
+# 3 file, khong lien quan, nen merge van an toan.
+$dirtyRaw = @(git status --porcelain)
+if ($dirtyRaw.Count -gt 0) {
+    $dirtyPaths = $dirtyRaw | ForEach-Object { ($_.Substring(3) -split ' -> ')[-1].Trim('"') }
+    $willTouch  = @(git diff --name-only HEAD.."$Branch")
+    $clash      = $dirtyPaths | Where-Object { $willTouch -contains $_ }
+
+    if ($clash) {
+        Warn "File dang sua do trung voi file merge se ghi de:"
+        $clash | ForEach-Object { Write-Host "       $_" -ForegroundColor Red }
+        Die "Commit hoac stash nhung file tren truoc khi merge."
+    }
+    Warn "$($dirtyRaw.Count) thay doi chua commit trong main checkout - KHONG trung file nao"
+    Write-Host "       merge se ghi: $($willTouch -join ', ')" -ForegroundColor DarkGray
+    Write-Host "       -> bo qua, merge an toan. Script KHONG commit ho nhung file do." -ForegroundColor DarkGray
+}
 
 $merged = git merge --ff-only $Branch 2>&1
 if ($LASTEXITCODE -ne 0) {
