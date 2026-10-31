@@ -4,10 +4,19 @@
 
 ## NOW (2026-10-31)
 
-**Node 20 -> 22 trong `SecureConnect/Dockerfile`: code xong, CHUA deploy.**
+**Node 20 -> 22 trong `SecureConnect/Dockerfile`: DA LEN PRODUCTION.**
 
-- Commit `0b5a9d9` tren branch `claude/node-20-to-22-upgrade-e0b3fc`
-  (worktree `.claude/worktrees/node-20-to-22-upgrade-e0b3fc`).
+Verify tren mcp-80 (operator chay script, 2026-10-31):
+- `docker exec dbmanager-app node --version` = **v22.23.4** (truoc: 20.20.2)
+- `http://127.0.0.1:9230/api/health` = **200**
+- `https://dbmanager.allin1site.com/` = **307** -> trang dang nhap
+- Build trong `builder` stage pass => `npm run test` + `npm run build` deu
+  chay duoc tren Node 22 alpine.
+- **Dang nhap thu: chua co xac nhan** cua operator tai thoi diem ghi. Xem
+  OPEN-5.
+
+- Commit `0b5a9d9` tren branch `claude/node-20-to-22-upgrade-e0b3fc`, da
+  merge ff-only vao `main` va push.
 - Diff = **dung 3 dong**: `FROM node:20-alpine` -> `node:22-alpine` o stage
   `deps`, `builder`, `runner`. Khong doi gi khac — user `nextjs` (uid 1001),
   group `nodejs` (gid 1001), entrypoint, HEALTHCHECK, `/data` chown: nguyen ven.
@@ -27,25 +36,31 @@
 
 ## NEXT
 
-1. Operator chay:
+1. **Dang nhap thu + mo 1 saved connection** (OPEN-5) — chua xac nhan.
+2. Xu ly OPEN-2 (CI con pin Node 20) de CI va production cung phien ban.
+3. Main checkout con **~25 file harness chua commit** (`.harness/control/`,
+   `CLAUDE.md`, `tools/harness-bundle/`, nhieu file untracked trong
+   `.harness/ledger/`). Khong lien quan thay doi nay, script da co tinh bo
+   qua. Dang de review + commit rieng.
+4. Rollback neu can:
    ```
-   powershell -File E:\SourceCode\DatabaseManager\deploy\node22-upgrade-deploy.ps1
+   ssh mcp-80 "cd /opt/dbmanager && git revert --no-edit HEAD && docker compose build --no-cache app && docker compose up -d app"
    ```
-   Script tu: merge branch -> `main`, push, `git pull --ff-only` tren mcp-80,
-   `docker compose build --no-cache app`, `up -d app` (**khong dung redis**),
-   roi verify `node --version` = v22.x, health 200, public 307.
-2. Buoc cuoi (**dang nhap thu**) operator tu bam — assistant khong duoc nhap
-   credential that vao site production.
-3. Xac nhan mo duoc 1 saved connection sau khi login => volume
-   `dbmanager_dbmanager_data` con nguyen.
 
 ## OPEN
 
-- **OPEN-1 — `npm run build` local crash (0xC0000409).**
-  Chua biet la pre-existing hay khong. Khong chan deploy (build trong Docker
-  dung Node 22 alpine, moi truong khac hoan toan).
-  *until:* build trong `builder` stage tren mcp-80 pass => dong, va ghi lai day
-  la artifact cua Windows/Node 24 local.
+- ~~**OPEN-1 — `npm run build` local crash (0xC0000409).**~~ **DONG
+  2026-10-31**: build trong `builder` stage tren mcp-80 pass => crash chi la
+  artifact cua moi truong local (Windows + Node v24.16.0), khong phai loi
+  code. Lan sau build local hong kieu nay: doi chieu voi `main` truoc khi
+  nghi la do minh, hoac bo qua va dua vao build trong Docker.
+
+- **OPEN-5 — chua xac nhan dang nhap duoc sau khi len Node 22.**
+  307 + health 200 chi chung minh app boot va redirect dung; chua chung minh
+  session/Redis/giai ma saved-connection con chay. Assistant khong duoc nhap
+  credential that vao production nen khong tu kiem duoc.
+  *until:* operator login thanh cong VA mo duoc 1 saved connection (xac nhan
+  volume `dbmanager_dbmanager_data` + AES decrypt con nguyen).
 - **OPEN-2 — CI con pin Node 20.**
   `.github/workflows/ci.yml:26`, `:58` va `.github/workflows/tests.yml:21` van
   `node-version: "20"`. Ngoai scope yeu cau (chi 3 dong Dockerfile), nhung
