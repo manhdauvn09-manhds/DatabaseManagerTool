@@ -93,9 +93,17 @@ $ping = (ssh $S 'docker exec dbmanager-redis redis-cli ping') 2>$null
 if ($ping -match 'PONG') { Ok "redis PONG" } else { Bad "redis khong tra PONG: $ping" }
 
 Section "6. Log loi 1h qua"
-$errs = (ssh $S 'docker logs --since 1h dbmanager-app 2>&1 | grep -c -i -E "\[auth\]\[error\]|FATAL|unhandled"') 2>$null
-if ($errs -match '^\d+$' -and [int]$errs -eq 0) { Ok "khong co loi nghiem trong" }
-else { Warn "$errs dong log dang nghi - xem: ssh $S 'docker logs --since 1h dbmanager-app'" }
+# `grep -c` in ra "0" nhung THOAT voi exit 1 khi khong khop gi, nen PowerShell
+# nhan chuoi rong va script cu bao dong gia moi lan log sach. Dung `| wc -l`:
+# luon in mot so va luon exit 0. (C14: canh bao sai lam mat uy tin kenh canh bao.)
+$errRaw = (ssh $S 'docker logs --since 1h dbmanager-app 2>&1 | grep -i -E "\[auth\]\[error\]|FATAL|unhandled" | wc -l') 2>$null
+$errCount = ($errRaw | Out-String).Trim()
+if ($errCount -match '^\d+$') {
+    if ([int]$errCount -eq 0) { Ok "khong co loi nghiem trong" }
+    else { Warn "$errCount dong log dang nghi - xem: ssh $S 'docker logs --since 1h dbmanager-app'" }
+} else {
+    Warn "khong doc duoc log (ssh loi?) - chua ket luan duoc, KHONG coi la pass"
+}
 
 Write-Host ""
 if ($script:Fail -eq 0) {

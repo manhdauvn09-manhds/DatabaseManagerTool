@@ -5,13 +5,35 @@
 
 ## NOW
 
-### 1. CAN LAM NGAY: production van dang hong
+### 1. JSON API da song lai — DA DEPLOY, DA XAC NHAN
 
-**Toan bo JSON API cua production khong dung duoc trong trinh duyet, va da
-nhu vay tu 2026-06-20 — khoang 4,5 thang.** Khong ai dang nhap duoc.
+Fix `d738f5c` len production **2026-11-10**. Su co keo dai tu 2026-06-20,
+tong cong khoang **4,5 thang** khong ai dang nhap duoc.
 
-Fix da co trong code (`d738f5c`) nhung **CHUA deploy**. Production chi lanh
-sau khi roll-out.
+**Bang chung (do bang trinh duyet that, khong phai bang curl):**
+
+| Kiem | Ket qua |
+|---|---|
+| `/api/health` | 200, `{"ok":true,...}`, 43 bytes, doc duoc |
+| `/api/auth/csrf` | 200, JSON hop le, 80 bytes |
+| `/api/auth/providers` | 200, JSON hop le, 200 bytes |
+| `/api/auth/session` | 200, `null`, 4 bytes |
+| Content-Encoding | `zstd` — Cloudflare tu nen dung, app thoi noi doi |
+| Bam nut Sign in | toi **accounts.google.com** that, trang nhap email |
+| `redirect_uri` Google nhan | `https://dbmanager.allin1site.com/api/auth/callback/google` |
+| PKCE | `code_challenge_method=S256`, scope `openid profile email` |
+| Node | v22.23.4 |
+| Redis | PONG |
+| Log 1h | sach, khong co `[auth][error]` |
+
+Google **chap nhan** redirect_uri -> nghi van cu ve `redirect_uri_mismatch`
+va ve allowlist email deu bi loai bo.
+
+**Con lai duy nhat**: dang nhap bang tai khoan that + mo 1 saved connection.
+Assistant khong duoc nhap credential vao production nen khong tu kiem duoc
+(OPEN-5).
+
+**Nguyen nhan goc da sua:**
 
 **Nguyen nhan** — `SecureConnect/next.config.mjs` gan cung header
 `Content-Encoding: gzip` cho moi route `/api/*`:
@@ -36,12 +58,7 @@ Docker HEALTHCHECK (`-O /dev/null`), compose healthcheck va script roll-out
 (`curl -o /dev/null -w %{http_code}`) deu bao **200 xanh** trong suot thoi
 gian API chet. Chi trinh duyet that moi giai nen.
 
-**Deploy fix:**
-```
-cd E:\SourceCode\DatabaseManager
-powershell -File E:\SourceCode\DatabaseManager\deploy\node22-upgrade-deploy.ps1
-```
-Sau do verify muc body (xem muc 3 ben duoi), roi **dang nhap thu bang tay**.
+Deploy xong 2026-11-10. Verify muc body: xem muc 3.
 
 ### 2. Node 20 -> 22: XONG
 
@@ -77,12 +94,14 @@ powershell -File E:\SourceCode\DatabaseManager\deploy\verify-production.ps1
 
 ## NEXT
 
-1. **Deploy fix `d738f5c`** (muc 1) — viec gap nhat.
-2. Chay `verify-production.ps1`, roi **dang nhap thu + mo 1 saved connection**
-   (xac nhan volume `dbmanager_dbmanager_data` + AES decrypt con nguyen).
-3. Doi Node tren may dev ve 22 (OPEN-1) de lay lai kha nang verify o local.
-4. Xem lai ~25 file harness chua commit trong main checkout
-   (`.harness/control/`, `CLAUDE.md`, `tools/harness-bundle/`).
+1. **Dang nhap thu + mo 1 saved connection** (OPEN-5) — viec duy nhat con
+   lai de dong hoan toan su co.
+2. Doi Node tren may dev ve 22 (OPEN-1) de lay lai kha nang verify o local.
+3. Commit 24 file harness 1.8.20 dang treo trong main checkout. **Xem ky
+   truoc khi `git add -A`**: `.harness/portal-sync.json` tung bi policy-ci
+   canh bao chua `member_email`, va `.harness/ledger/*` la state may-local
+   ma commit `d55c646` da chu dong ngung track.
+4. Xac nhan job `e2e` chay xanh tren CI (OPEN-2).
 
 ## OPEN
 
@@ -121,6 +140,13 @@ powershell -File E:\SourceCode\DatabaseManager\deploy\verify-production.ps1
   *until:* chay `harness-release.ps1` tu main checkout, hoac sua regex dong
   280 cho phan biet mention vs invocation.
 
+- **OPEN-5 — chua dang nhap that bang tai khoan thuc.**
+  Toan bo luong da duoc xac nhan toi tan trang dang nhap Google (xem bang o
+  muc 1), nhung buoc nhap credential + mo 1 saved connection thi assistant
+  khong duoc lam tren production. Day la buoc duy nhat chung minh phan sau
+  callback (tao session, giai ma AES saved-connections) con chay.
+  *until:* operator login thanh cong VA mo duoc 1 saved connection.
+
 - **OPEN-4 — CSP chan Cloudflare beacon.**
   `script-src 'self' 'unsafe-inline'` chan
   `static.cloudflareinsights.com/beacon.min.js`. Vo hai (chi analytics CF
@@ -148,3 +174,4 @@ powershell -File E:\SourceCode\DatabaseManager\deploy\verify-production.ps1
 | 2026-10-31 | Node 20 -> 22, deploy + verify (v22.23.4) |
 | 2026-11-09 | Tim ra bug Content-Encoding, fix + test chan tai phat |
 | 2026-11-10 | Sua cac tang kiem tra de nhin vao body; cap nhat tai lieu |
+| 2026-11-10 | **Deploy fix. API song lai, xac nhan bang trinh duyet that** |
