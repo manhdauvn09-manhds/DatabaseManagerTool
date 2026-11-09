@@ -44,11 +44,15 @@ const nextConfig = {
     return [
       { source: "/:path*", headers: SECURITY_HEADERS },
       {
+        // NEVER set Content-Encoding here. A static header claims every /api
+        // response is gzip while the body is plain JSON, so the browser tries
+        // to gunzip plain text and aborts with ERR_CONTENT_DECODING_FAILED —
+        // every JSON endpoint, sign-in included, dies in the browser while
+        // `curl` (which ignores the header unless --compressed) looks fine.
+        // Real compression is `compress: true` above: Next sets the header
+        // itself, only when it actually compressed the body.
         source: "/api/:path*",
-        headers: [
-          ...API_CACHE_HEADERS,
-          { key: "Content-Encoding", value: "gzip" }
-        ]
+        headers: API_CACHE_HEADERS
       },
       {
         source: "/_next/static/:path*",
