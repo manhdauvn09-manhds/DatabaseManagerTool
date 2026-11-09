@@ -46,7 +46,15 @@ EXPOSE 3000
 # wget without --spider so it issues GET (not HEAD). Next.js app router only
 # exports GET for /api/health; HEAD would return 405 and flip the container
 # to (unhealthy) even though the app is fine.
+#
+# Read the BODY, do not discard it. `-O /dev/null` only ever proved that some
+# bytes arrived with status 200, which is how a dead API stayed "healthy" for
+# months: an error page, an empty body or a JSON error all pass a status check.
+#
+# Honest limit: this still cannot catch a lying Content-Encoding header, because
+# wget sends no Accept-Encoding and ignores the header. Only a real browser
+# decompresses — that check lives in the Playwright smoke suite (e2e/smoke.spec.ts).
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
-  CMD wget -q -O /dev/null --tries=1 http://127.0.0.1:3000/api/health || exit 1
+  CMD wget -q -O - --tries=1 http://127.0.0.1:3000/api/health | grep -q '"ok":true' || exit 1
 
 CMD ["sh", "./docker-entrypoint.sh"]

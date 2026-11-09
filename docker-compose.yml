@@ -42,7 +42,9 @@ services:
       - ./SecureConnect/.env.production:/app/.env.production:ro
     healthcheck:
       # GET (not HEAD) — Next.js /api/health only exports GET so HEAD would 405.
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "--tries=1", "http://127.0.0.1:3000/api/health"]
+      # Assert on the BODY: a status-only check reported "healthy" throughout a
+      # total API outage. CMD-SHELL because this needs a pipe.
+      test: ["CMD-SHELL", "wget -q -O - --tries=1 http://127.0.0.1:3000/api/health | grep -q '\"ok\":true'"]
       interval: 30s
       timeout: 10s
       retries: 3
