@@ -1,4 +1,53 @@
-# Release Notes — DatabaseManager v0.1.0
+# Release Notes — DatabaseManager
+
+## 2026-11-10 — Khôi phục JSON API + sửa các tầng kiểm tra
+
+### Sự cố: toàn bộ JSON API chết 4,5 tháng (2026-06-20 → 2026-11-09)
+
+`next.config.mjs` gắn cứng header `Content-Encoding: gzip` cho mọi route
+`/api/*`, trong khi body là JSON thuần. Trình duyệt gunzip thất bại
+(`ERR_CONTENT_DECODING_FAILED`) và vứt bỏ response. Đăng nhập Google chết
+theo: Auth.js client fetch `/api/auth/providers` thất bại rồi tự chuyển
+hướng sang `/api/auth/error`.
+
+Do commit `e6a8a84` (2026-06-20, *"Code quality + Performance improvements
+(100x)"*) đưa vào.
+
+**Vì sao không ai phát hiện trong 4,5 tháng**: không một tầng kiểm tra nào
+đọc body. `curl`/`wget` bỏ qua `Content-Encoding` trừ khi có `--compressed`,
+nên Docker HEALTHCHECK, compose healthcheck và script deploy đều báo 200
+xanh suốt thời gian đó.
+
+### Thay đổi
+
+- **Fix**: bỏ header tĩnh; compression thật sự do `compress: true` lo —
+  Next tự đặt header khi nó thật sự nén body.
+- **Chặn tái phát**: `src/lib/__tests__/nextConfigHeaders.test.ts` cấm mọi
+  header transport tĩnh (`content-encoding` / `transfer-encoding` /
+  `content-length`). Đã kiểm chứng 2 chiều: FAIL trên config cũ, PASS trên
+  config mới.
+- **HEALTHCHECK + compose healthcheck**: đọc body, `grep '"ok":true'`.
+- **E2E**: thêm test `fetch()` từ trong trang — đường đi thật của người dùng;
+  `request.get()` của Playwright là client Node nên đã để lọt bug này. Thêm
+  test bấm nút sign-in phải tới Google chứ không rơi vào `/api/auth/error`.
+- **`deploy/verify-production.ps1`**: verify mức body dùng lại được, dùng
+  `curl --compressed`.
+- **CI**: `node-version` 20 → 22 cho khớp production.
+- **Ghim Node**: `package.json` `engines` + `.nvmrc` = 22.
+
+### Node 20 → 22 (2026-10-31)
+
+`Dockerfile` dùng `node:22-alpine` ở cả 3 stage. Production: **v22.23.4**
+(trước 20.20.2, EOL 04/2026). User `nextjs` (uid 1001) giữ nguyên.
+Không liên quan sự cố trên.
+
+### Test
+
+244/244 unit test pass (25 file).
+
+---
+
+## v0.1.0 — bản đầu
 
 ## Tổng quan
 Phiên bản đầu của DatabaseManager theo BMAD SDD Skills v2 (Secure Connect):

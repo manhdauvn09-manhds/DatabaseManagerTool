@@ -1,8 +1,8 @@
 # DBManager — Project Knowledge
 
-> ⚠️ **GROUND TRUTH (2026-06-09)** — single source of truth. Mọi `.md`, `.html`,
-> `deploy.config.example.json`, `deploy/nginx/setup-nginx-site.sh`, `docs/DEVELOPER_GUIDE.html`
-> còn nhắc `62.238.28.106`/`prod-106` là phế liệu (server cũ đã xoá 2026-06-04).
+> ⚠️ **GROUND TRUTH (cập nhật 2026-11-10)** — single source of truth. Mọi
+> `.md`, `.html`, `.sh` còn nhắc `62.238.28.106`/`prod-106` là phế liệu
+> (server cũ đã xoá 2026-06-04). Trạng thái đang thay đổi: xem `Handoff.md`.
 
 ## Where things live
 
@@ -16,6 +16,22 @@
 | Health | `http://127.0.0.1:9230/api/health` |
 | Public | `https://DBManager.allin1site.com` |
 | SSL | LE wildcard `allin1site-wildcard` |
+| Node | **22** (`node:22-alpine`, production v22.23.4) — Node 20 EOL 04/2026 |
+| Local dev | **phải dùng Node 22** (`.nvmrc`); Node 24 crash `next build`/`next dev` |
+
+## Kiểm tra: luôn nhìn vào BODY
+
+⚠️ **Status code 200 KHÔNG chứng minh API còn sống.** `curl` và `wget` bỏ qua
+`Content-Encoding` trừ khi có `--compressed`. Một header `Content-Encoding`
+sai đã làm toàn bộ JSON API chết trong trình duyệt **4,5 tháng** trong khi
+Docker HEALTHCHECK, compose healthcheck và script deploy đều báo xanh.
+
+- Verify production: `powershell -File deploy\verify-production.ps1` (dùng
+  `curl --compressed`).
+- **Không bao giờ** đặt `Content-Encoding` làm header tĩnh trong
+  `next.config.mjs` hay nginx — tầng nào nén thì tầng đó đặt.
+  `src/lib/__tests__/nextConfigHeaders.test.ts` chặn việc này.
+- Đăng nhập thử bằng tay vẫn là bước không script nào thay được.
 
 ## Data
 
@@ -40,11 +56,15 @@ MCP `deploy` { server_id: "mcp-80", app_id: "dbmanager" }
 - ❌ Start container nginx riêng — sẽ giết host nginx + 12 site khác.
 
 ## Phế liệu — ignore
+
+Đã dọn 2026-11-10 (`README.md`, `deploy.config.example.json`,
+`docs/DEVELOPER_GUIDE.html`, `SecureConnect/public/features.html` giờ đã đúng).
+Còn lại:
+
 ```
-README.md (phần Server)
-deploy.config.example.json
-deploy/nginx/setup-nginx-site.sh
-docs/DEVELOPER_GUIDE.html
+deploy/nginx/setup-nginx-site.sh   — trỏ server cũ, ĐỪNG chạy
+docs/history.html                  — lưu trữ lịch sử, có IP cũ là đúng bối cảnh
+docs/srs.html                      — như trên
 ```
 
 ---

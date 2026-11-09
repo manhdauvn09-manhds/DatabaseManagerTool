@@ -23,7 +23,11 @@ DatabaseManager/
 
 ## Deployment flow (local → git → server)
 
-Bạn KHÔNG cần cài Node.js trên máy local. Toàn bộ build chạy trong Docker trên server.
+Build production chạy trong Docker trên server, nên về mặt kỹ thuật bạn có thể
+deploy mà không cài Node.js. **Nhưng nên cài Node 22 ở local** — xem
+"Local dev" bên dưới để biết vì sao: không chạy được app ở local thì mọi kiểm
+tra bị đẩy sang `curl` bắn vào production, và `curl` mù đúng loại lỗi đã làm
+toàn bộ API chết 4,5 tháng mà không ai biết (xem `Handoff.md`).
 
 ### Lần đầu — chuẩn bị
 
@@ -66,7 +70,20 @@ Script tự động:
 .\deploy.ps1 -Message "fix: ..."
 ```
 
-## Local dev (chỉ khi có Node.js)
+## Local dev
+
+**Yêu cầu Node 22** — bản này khớp production và được ghim trong
+`SecureConnect/package.json` (`engines`) + `SecureConnect/.nvmrc`.
+
+```bash
+nvm install 22
+nvm use 22
+```
+
+Node 24 **không chạy được**: cả `next build` lẫn `next dev` đều crash
+`0xC0000409` với Next.js 14.2.35 trên Windows. Dùng sai bản Node thì bạn mất
+khả năng verify ở local — đó chính là cách một sự cố production sống sót 4,5
+tháng.
 
 ```bash
 cd SecureConnect
@@ -76,6 +93,28 @@ npm run dev
 ```
 
 Mở http://localhost:3000 → redirect `/signin` → Google → `/app`.
+
+### Kiểm tra trước khi push
+
+```bash
+npm run lint
+npm run type-check
+npm test          # 244 unit test
+npm run e2e       # Playwright, cần `npm run build` trước
+```
+
+## Verify production
+
+Sau mỗi lần deploy, chạy kiểm tra **mức body** — không chỉ status code:
+
+```powershell
+cd E:\SourceCode\DatabaseManager
+powershell -File E:\SourceCode\DatabaseManager\deploy\verify-production.ps1
+```
+
+Script dùng `curl --compressed` (giải nén thật), `curl -o /dev/null -w
+%{http_code}` không bắt được lỗi body. Nó **không** thay được việc đăng nhập
+thử bằng tay.
 
 ## Secure Connect flow (defense-in-depth)
 

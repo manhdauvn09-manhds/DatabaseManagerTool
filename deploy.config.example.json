@@ -1,8 +1,11 @@
 {
-  "Server": "62.238.28.106",
-  "User": "deploy",
+  "_comment": "Mau cau hinh cho deploy.ps1. Ground truth ve ha tang: xem CLAUDE.md.",
+  "_server_cu": "62.238.28.106 da bi xoa 2026-06-04. Dung dung lai IP do.",
+  "Server": "65.108.62.80",
+  "ServerAlias": "mcp-80",
+  "User": "root",
   "Path": "/opt/dbmanager",
   "Branch": "main",
   "HealthUrl": "https://DBManager.allin1site.com/api/health",
-  "SshKey": "C:\\Users\\ManhDS\\.ssh\\id_ed25519"
+  "SshKey": "C:\\Users\\<ban>\\.ssh\\id_ed25519"
 }
