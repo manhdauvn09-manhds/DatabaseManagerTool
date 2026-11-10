@@ -97,11 +97,43 @@ powershell -File E:\SourceCode\DatabaseManager\deploy\verify-production.ps1
 1. **Dang nhap thu + mo 1 saved connection** (OPEN-5) — viec duy nhat con
    lai de dong hoan toan su co.
 2. Doi Node tren may dev ve 22 (OPEN-1) de lay lai kha nang verify o local.
-3. Commit 24 file harness 1.8.20 dang treo trong main checkout. **Xem ky
-   truoc khi `git add -A`**: `.harness/portal-sync.json` tung bi policy-ci
-   canh bao chua `member_email`, va `.harness/ledger/*` la state may-local
-   ma commit `d55c646` da chu dong ngung track.
-4. Xac nhan job `e2e` chay xanh tren CI (OPEN-2).
+3. Xac nhan job `e2e` chay xanh tren CI (OPEN-2).
+
+## Don dep repo (2026-11-10) - XONG
+
+Chuan bi cho viec clone sang `E:\Develop`. Chay bang skill `worktree-cleanup`,
+script o `C:\Users\ManhDS\worktree-cleanup\DatabaseManager-20261110-170340\`.
+
+| Truoc | Sau |
+|---|---|
+| 848,2 MB / 57.405 file | **386,1 MB / 28.835 file** |
+| 2 worktree | 1 (chi con main) |
+| 52 muc chua commit | 0 - working tree sach |
+
+- `2374db0` - harness 1.8.20 + bang chung ledger (48 file). `portal-sync.json`
+  bo `member_email`, sua canh bao ISMS cua policy-ci.
+- `b246e89` - 3 script van hanh chuyen vao `deploy/`, `.gitignore` them
+  `.claude/worktrees/` (truoc chi ignore qua `.git/info/exclude` von khong
+  duoc commit nen clone moi mat luat nay), cursor/cache telemetry, `*.new`,
+  `*.bak`.
+- Worktree `node-20-to-22-upgrade-e0b3fc` va branch cua no da xoa sau khi
+  backup. Tag `backup/wt/node-20-to-22-upgrade-e0b3fc/20261110-170340` con
+  giu - **dung xoa trong 30 ngay**.
+
+### Clone sang thu muc moi: `git clone` KHONG du
+
+26 file bi gitignore (dung vay) nhung can de chay duoc, da goi san:
+
+```
+C:\Users\ManhDS\worktree-cleanup\DatabaseManager-20261110-170340\backup\local-state\local-state-20261110-170340.zip
+```
+
+Gom: `.harness/local/checkout.json`, `.harness/portal-sync.key`,
+`.claude/settings.local.json`, `deploy.config.json`,
+`.harness/ledger/chain.jsonl`, 17 file telemetry.
+**Zip chua secret** - chep truc tiep, dung commit, dung gui qua chat.
+
+`SecureConnect/.env.production` KHONG co o local (chi nam tren mcp-80).
 
 ## OPEN
 
@@ -175,3 +207,4 @@ powershell -File E:\SourceCode\DatabaseManager\deploy\verify-production.ps1
 | 2026-11-09 | Tim ra bug Content-Encoding, fix + test chan tai phat |
 | 2026-11-10 | Sua cac tang kiem tra de nhin vao body; cap nhat tai lieu |
 | 2026-11-10 | **Deploy fix. API song lai, xac nhan bang trinh duyet that** |
+| 2026-11-10 | **Don repo: 848 -> 386 MB, xoa worktree, commit 52 file** |
