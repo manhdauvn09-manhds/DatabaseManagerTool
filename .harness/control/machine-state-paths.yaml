@@ -55,6 +55,10 @@ machine_local:
     kind: cursor
     status: stays_in_place
     reason: Content hashes of snapshot-shaped payload parts (S-3), written by push-telemetry.
+  - path: .harness/telemetry/.transcript-cache.json
+    kind: cursor
+    status: stays_in_place
+    reason: Per-transcript token summary keyed by (size, mtime), written by push-telemetry (PERF-04). A lost cache only means one full re-read.
   - path: .harness/telemetry/.sync-cursor.json
     kind: cursor
     status: stays_in_place

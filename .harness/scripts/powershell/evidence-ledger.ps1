@@ -162,10 +162,15 @@ function Write-AppendFailure {
 # run on one machine. An OS lock dies with its process: a hook killed on timeout
 # cannot leave the ledger locked forever, which a lock FILE or directory would.
 $LedgerLockFile = "$LedgerDir\chain.lock"
-$LedgerLockTimeoutMs = 10000
+# B-93: 10 s lost 24 appends in 24hHotnewsAI under parallel tool calls. The hook has
+# Claude Code's default 60 s, so waiting 30 s still leaves room to write; the
+# backoff grows (10..50 ms up to 100..400 ms) with jitter so waiters do not retry
+# in lockstep against a holder that is now short (tail read capped at 64 KB first).
+$LedgerLockTimeoutMs = 30000
 
 function Enter-LedgerLock {
     $sw = [System.Diagnostics.Stopwatch]::StartNew()
+    $tries = 0
     while ($true) {
         $fs = $null
         try {
@@ -177,7 +182,9 @@ function Enter-LedgerLock {
             if ($sw.ElapsedMilliseconds -ge $LedgerLockTimeoutMs) {
                 throw "ledger lock not acquired within $LedgerLockTimeoutMs ms (another append is holding it)"
             }
-            Start-Sleep -Milliseconds (Get-Random -Minimum 10 -Maximum 50)
+            $tries++
+            $hi = [Math]::Min(50 * [Math]::Pow(2, [Math]::Floor($tries / 10)), 400)
+            Start-Sleep -Milliseconds (Get-Random -Minimum ([int]($hi / 4)) -Maximum ([int]$hi))
         }
     }
 }
@@ -196,6 +203,53 @@ function Get-EntryHash {
     $bytes = [System.Text.Encoding]::UTF8.GetBytes($Json)
     $hash = (Get-FileHash -InputStream ([System.IO.MemoryStream]::new($bytes)) -Algorithm SHA256).Hash.ToLower()
     return $hash
+}
+
+# --- Helper: the bash writer's canonical text (B-87, 26-10-2026) ---
+# The bash twin hashes json.dumps(entry, sort_keys=True, separators=(",",":")): keys sorted,
+# compact, non-ASCII written as \uXXXX. This writer hashes its own ConvertTo-Json text in the
+# line's key order. A chain both twins append to (SynthGora: 1 bash entry among 7,854) therefore
+# failed verify here on every bash-written line -- "TAMPER DETECTED" on an untouched ledger (C14).
+# This rebuilds the bash text exactly, so verify can accept an entry that matches EITHER writer's
+# rule; one that matches neither is still reported. A value it cannot reproduce byte for byte
+# (a float) throws, and the entry stays a mismatch -- never a pass.
+function ConvertTo-PyJsonString([string]$s) {
+    $sb = New-Object System.Text.StringBuilder
+    [void]$sb.Append('"')
+    foreach ($ch in $s.ToCharArray()) {
+        $c = [int]$ch
+        # if/elseif, not switch: `continue` inside a PowerShell switch leaves the switch, not this loop
+        if ($c -eq 0x22) { [void]$sb.Append('\"') }
+        elseif ($c -eq 0x5C) { [void]$sb.Append('\\') }
+        elseif ($c -eq 0x0A) { [void]$sb.Append('\n') }
+        elseif ($c -eq 0x0D) { [void]$sb.Append('\r') }
+        elseif ($c -eq 0x09) { [void]$sb.Append('\t') }
+        elseif ($c -eq 0x08) { [void]$sb.Append('\b') }
+        elseif ($c -eq 0x0C) { [void]$sb.Append('\f') }
+        elseif (($c -lt 0x20) -or ($c -gt 0x7F)) { [void]$sb.Append(('\u{0:x4}' -f $c)) }   # json.dumps ensure_ascii
+        else { [void]$sb.Append($ch) }
+    }
+    [void]$sb.Append('"')
+    return $sb.ToString()
+}
+
+function ConvertTo-PySortedJson($Value) {
+    if ($null -eq $Value) { return 'null' }
+    if ($Value -is [bool]) { if ($Value) { return 'true' } else { return 'false' } }
+    if ($Value -is [string]) { return (ConvertTo-PyJsonString $Value) }
+    if ($Value -is [int] -or $Value -is [long] -or $Value -is [int16] -or $Value -is [byte]) {
+        return $Value.ToString([System.Globalization.CultureInfo]::InvariantCulture)
+    }
+    if ($Value -is [System.Array]) {
+        return '[' + ((@($Value) | ForEach-Object { ConvertTo-PySortedJson $_ }) -join ',') + ']'
+    }
+    if ($Value -is [System.Management.Automation.PSCustomObject]) {
+        [string[]]$names = @($Value.PSObject.Properties | ForEach-Object { $_.Name })
+        [Array]::Sort($names, [StringComparer]::Ordinal)
+        $parts = foreach ($n in $names) { (ConvertTo-PyJsonString $n) + ':' + (ConvertTo-PySortedJson $Value.$n) }
+        return '{' + (@($parts) -join ',') + '}'
+    }
+    throw "value of type $($Value.GetType().Name) has no exact bash-writer form"
 }
 
 # --- Helper: read last entry ---
@@ -224,28 +278,68 @@ function Get-LastEntry {
     # PowerShell 5.1 -- it, not JSON parsing, was what let the PostToolUse hook
     # time out on every append. Seek-and-read of the last 4 MB is milliseconds
     # regardless of how the line got there.
+    #
+    # B-93: the window used to be a flat 4 MB, decoded whole (UTF-16 ~8 MB) and then
+    # copied again by TrimEnd -- ~20 MB per append to find a ~650-byte last line,
+    # times every parallel hook, on machines with < 1 GB free: 15 of 39 lost appends
+    # in 24hHotnewsAI were OutOfMemoryException here, and the long hold behind the
+    # lock made 24 more give up waiting. Now the window starts at 64 KB and doubles
+    # (cap still 4 MB) only while it holds no line boundary; the boundary is found on
+    # the BYTES, and only the last line is decoded.
     $text = $null
+    $take = 0
+    $noBoundary = $false
+    $cap = 4MB
     try {
         $fs = [System.IO.File]::Open($ChainFile, 'Open', 'Read', 'ReadWrite')
         try {
             $len = $fs.Length
             if ($len -le 0) { return $null }
-            $cap = 4MB
-            $take = [int][Math]::Min([int64]$cap, $len)
-            $fs.Seek($len - $take, 'Begin') | Out-Null
-            $buf = New-Object byte[] $take
-            $read = $fs.Read($buf, 0, $take)
-            # A window that starts mid-file may open mid-way through a multi-byte
-            # UTF-8 char; harmless here, because everything matched below is ASCII.
-            $text = [System.Text.Encoding]::UTF8.GetString($buf, 0, $read)
+            $window = 64KB
+            while ($true) {
+                $take = [int][Math]::Min([int64]$window, $len)
+                $fs.Seek($len - $take, 'Begin') | Out-Null
+                $buf = New-Object byte[] $take
+                $read = 0
+                while ($read -lt $take) {
+                    $n = $fs.Read($buf, $read, $take - $read)
+                    if ($n -le 0) { break }
+                    $read += $n
+                }
+                # Skip the trailing CR/LF, then scan back for the previous LF.
+                $end = $read - 1
+                while ($end -ge 0 -and ($buf[$end] -eq 10 -or $buf[$end] -eq 13)) { $end-- }
+                if ($end -lt 0) {
+                    if ($take -ge $len) { return $null }   # the file is only newlines
+                    $window = $window * 2; continue
+                }
+                $start = $end
+                while ($start -ge 0 -and $buf[$start] -ne 10) { $start-- }
+                # A boundary was found, or the window already covers the whole file,
+                # or the cap is reached (a > 4 MB last line: its tail is read, below).
+                if ($start -ge 0 -or $take -ge $len -or $take -ge $cap) {
+                    $from = $start + 1
+                    # Starting mid-file can split a multi-byte UTF-8 char only in the
+                    # capped case; harmless, because everything matched below is ASCII.
+                    $text = [System.Text.Encoding]::UTF8.GetString($buf, $from, $end - $from + 1)
+                    $noBoundary = ($start -lt 0)
+                    break
+                }
+                $window = [Math]::Min($window * 2, $cap)
+            }
         } finally { $fs.Dispose() }
-    } catch { return $null }
-    if (-not $text) { return $null }
+    } catch {
+        # $null means "no chain yet" to every caller, and append() turns it into GENESIS -- so a
+        # read failure here (OutOfMemoryException on a low-memory box, a locked file, a permission
+        # error) wrote index 0 into the middle of a long chain: a fork that verifies as a new one.
+        # Re-throw: append()'s catch (FailStage "read-last-entry") records it in
+        # append-failures.jsonl and writes nothing. Found and patched first by SynthGora (50f4535).
+        throw
+    }
+    # The file has bytes but none came back: an unreadable chain, not an empty one.
+    if (-not $text) { throw "[evidence-ledger] $ChainFile has $len byte(s) but the read returned none" }
 
-    $trimmed = $text.TrimEnd("`r", "`n")
-    if ($trimmed.Length -eq 0) { return $null }
-    $nl = $trimmed.LastIndexOf("`n")
-    $line = if ($nl -ge 0) { $trimmed.Substring($nl + 1) } else {
+    $line = if (-not $noBoundary) { $text } else {
         # No newline left in the window. Two very different causes, and the
         # earlier version conflated them:
         #
@@ -265,7 +359,7 @@ function Get-LastEntry {
             # outermost entry's own fields sit -- best-effort linkage, said out loud.
             Write-Warning "[evidence-ledger] last entry exceeds 4MB; reading its tail window only"
         }
-        $trimmed
+        $text
     }
 
     # Corruption sentinel: an index stored as an ARRAY is the fingerprint of the
@@ -294,7 +388,9 @@ function Get-LastEntry {
         Write-Warning "[evidence-ledger] last entry stores index as an array (pre-b730629 corruption); ignoring it and using chain length"
     }
 
-    if ($null -eq $entryHash -and $null -eq $index) { return $null }
+    # A last line with neither field is still a predecessor that exists: return it with both unset, so
+    # append() links it as UNREADABLE and takes the index from the chain length -- never GENESIS / 0,
+    # which would orphan every entry above it (bash last_link() already did this).
     return [PSCustomObject]@{ index = $index; entry_hash = $entryHash }
 }
 
@@ -491,13 +587,24 @@ switch ($Command) {
             exit 1
         }
 
-        $Lines = Get-Content -Path $ChainFile -Encoding utf8 -ErrorAction SilentlyContinue | Where-Object { $_ -ne '' }
-        $TotalEntries = $Lines.Count
+        # PERF-08: streamed line by line ([IO.File]::ReadLines), not read whole -- Get-Content of a
+        # 61 MB chain ran out of memory (24hHotnewsAI). An unreadable file is an ERROR now: with
+        # -ErrorAction SilentlyContinue it read as 0 lines and printed "LEDGER INTACT" (C14).
+        try {
+            $LineSource = [System.IO.File]::ReadLines($ChainFile)
+        } catch {
+            Write-Error "[evidence-ledger] Cannot read $ChainFile -- $($_.Exception.Message)"
+            exit 1
+        }
+        $TotalEntries = 0
+        $BashWritten = 0
         $Valid = $true
         $PreviousHash = "GENESIS"
 
-        for ($i = 0; $i -lt $TotalEntries; $i++) {
-            $Entry = $Lines[$i] | ConvertFrom-Json
+        foreach ($Line in $LineSource) {
+            if ($Line -eq '') { continue }
+            $TotalEntries++
+            $Entry = $Line | ConvertFrom-Json
 
             # Verify prev_hash chain
             if ($Entry.prev_hash -ne $PreviousHash) {
@@ -514,6 +621,13 @@ switch ($Command) {
             $ComputedHash = Get-EntryHash $JsonWithoutHash
 
             if ($ComputedHash -ne $StoredHash) {
+                # B-87: an entry the bash twin wrote is hashed by ITS rule (sorted keys); accept it
+                # only when that rule reproduces the stored hash exactly.
+                $AltHash = $null
+                try { $AltHash = Get-EntryHash (ConvertTo-PySortedJson $Entry) } catch { $AltHash = $null }
+                if ($AltHash -eq $StoredHash) { $ComputedHash = $AltHash; $BashWritten++ }
+            }
+            if ($ComputedHash -ne $StoredHash) {
                 Write-Error "[evidence-ledger] TAMPER DETECTED at entry $($Entry.index): entry_hash mismatch"
                 Write-Error "[evidence-ledger]   Computed: $ComputedHash"
                 Write-Error "[evidence-ledger]   Stored:   $StoredHash"
@@ -524,7 +638,9 @@ switch ($Command) {
         }
 
         if ($Valid) {
-            Write-Output "[evidence-ledger] LEDGER INTACT -- $TotalEntries entries, all hashes verified"
+            $by = ""
+            if ($BashWritten -gt 0) { $by = " ($BashWritten written by the bash writer, verified by its rule)" }
+            Write-Output "[evidence-ledger] LEDGER INTACT -- $TotalEntries entries, all hashes verified$by"
         } else {
             Write-Error "[evidence-ledger] LEDGER COMPROMISED -- integrity check FAILED"
             exit 2
@@ -681,7 +797,11 @@ switch ($Command) {
                 scanner = if ($Input.security_scan.scanner) { $Input.security_scan.scanner } else { "" }
                 findings_count = if ($Input.security_scan.findings_count) { $Input.security_scan.findings_count } else { 0 }
                 high_critical_count = if ($Input.security_scan.high_critical_count) { $Input.security_scan.high_critical_count } else { 0 }
-                passed = if ($Input.security_scan.passed) { $Input.security_scan.passed } else { $true }
+                # C14: an explicit `false` used to fall to the else branch and be recorded as PASSED, and a
+                # bundle with no scan at all claimed one passed. Now: the value given, or null = no scan ran.
+                passed = $(if ($null -eq $Input.security_scan.passed) { $null }
+                           elseif ($Input.security_scan.passed -is [string]) { $Input.security_scan.passed -eq 'true' }
+                           else { [bool]$Input.security_scan.passed })
                 report_ref = if ($Input.security_scan.report_ref) { $Input.security_scan.report_ref } else { "" }
             }
             review_verdict = @{
@@ -745,14 +865,21 @@ switch ($Command) {
             Write-Error "[evidence-ledger] No chain file found"
             exit 1
         }
-        $Lines = Get-Content -Path $ChainFile -Encoding utf8 | Where-Object { $_ -ne '' }
         $CsvFile = "$LedgerDir\ledger-export-$(Get-Date -Format 'yyyyMMddHHmmss').csv"
-        Write-Utf8NoBom -Path $CsvFile -Value "index,timestamp,agent,action_type,tool,decision_result,risk_level,entry_hash,prev_hash`n"
-        foreach ($line in $Lines) {
-            $e = $line | ConvertFrom-Json
-            Add-Utf8NoBom -Path $CsvFile -Value "$($e.index),$($e.timestamp),$($e.actor.agent),$($e.action.type),$($e.action.tool),$($e.decision.result),$($e.decision.risk_level),$($e.entry_hash),$($e.prev_hash)`n"
-        }
-        Write-Output "[evidence-ledger] Exported $($Lines.Count) entries to $CsvFile"
+        # PERF-08: streamed in, one writer out -- the same bytes as before (UTF-8 without BOM, LF),
+        # without holding the chain in memory or reopening the CSV once per entry.
+        $Exported = 0
+        $Writer = New-Object System.IO.StreamWriter($CsvFile, $false, $Utf8NoBom)
+        try {
+            $Writer.Write("index,timestamp,agent,action_type,tool,decision_result,risk_level,entry_hash,prev_hash`n")
+            foreach ($line in [System.IO.File]::ReadLines($ChainFile)) {
+                if ($line -eq '') { continue }
+                $e = $line | ConvertFrom-Json
+                $Writer.Write("$($e.index),$($e.timestamp),$($e.actor.agent),$($e.action.type),$($e.action.tool),$($e.decision.result),$($e.decision.risk_level),$($e.entry_hash),$($e.prev_hash)`n")
+                $Exported++
+            }
+        } finally { $Writer.Dispose() }
+        Write-Output "[evidence-ledger] Exported $Exported entries to $CsvFile"
         break
     }
 }

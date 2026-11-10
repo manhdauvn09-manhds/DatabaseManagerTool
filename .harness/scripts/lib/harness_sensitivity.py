@@ -30,6 +30,7 @@ Usage:
       prints decision "unreachable". The guards treat anything but "allow" as DENY.
 """
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -142,7 +143,44 @@ def load_rules(root, override=""):
             # Opt-in per rule (P1 1.0): absent means NOT approvable.
             "approvable": r.get("approvable") is True,
         })
+    rules.extend(load_self_protect(root, default))
     return cfg, rules, ""
+
+
+def _repo_has_all(root, globs):
+    """True when every glob (repo-relative) matches at least one file."""
+    return bool(globs) and all(glob.glob(os.path.join(root, g)) for g in globs)
+
+
+def load_self_protect(root, default_delta=60):
+    """SEC-03: rules for the harness's own rule files (self-protect-paths.json).
+
+    Read from the project only -- the file ships with this matcher in the bundle, so
+    a project without it has not been updated yet and keeps the old behaviour. Not
+    applied in the toolkit source repo (recognised by shape, as in B-85), where
+    editing these files is the work. Any read error yields no rules: fail-open,
+    like the rest of the F2 path."""
+    p = os.path.join(root, ".harness", "control", "self-protect-paths.json")
+    if not os.path.exists(p):
+        return []
+    try:
+        with open(p, "r", encoding="utf-8-sig") as fh:
+            cfg = json.load(fh)
+        if _repo_has_all(root, cfg.get("skip_when_repo_has_all") or []):
+            return []
+        return [{
+            "id": r["id"],
+            "inc": [glob_to_re(g) for g in r.get("globs", [])],
+            "exc": [glob_to_re(g) for g in r.get("exclude_globs", [])],
+            "delta": r.get("score_delta", default_delta),
+            "reason": r.get("reason", ""),
+            "approvable": r.get("approvable") is True,
+            # Kept out of --scan: that is the noise metric for the F2 globs over
+            # project code, and the harness's own files would inflate it.
+            "self": True,
+        } for r in cfg.get("rules", [])]
+    except (IOError, OSError, ValueError, KeyError, TypeError):
+        return []
 
 
 def load_tiers(root):
@@ -352,6 +390,7 @@ def _read_tool_input(args):
 
 
 def scan(root, rules, tiers):
+    rules = [r for r in rules if not r.get("self")]
     hits, total = [], 0
     for dp, dns, fns in os.walk(root):
         dns[:] = [d for d in dns if d not in SKIP_DIRS]

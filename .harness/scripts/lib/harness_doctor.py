@@ -15,13 +15,16 @@ run and the template's `--strict` made harness-gate red forever. With --ci, a
 check whose evidence lives only under a machine_local path from that YAML is
 reported as INFO "not checkable on a CI runner" (unproven, never OK -- C12);
 everything else, bundle integrity included, is graded exactly as on a
-workstation. The skip list is read from the YAML (C2); without it nothing is
+workstation -- except (B-89) a missing receipt or portal-sync.json that git
+itself reports as ignored in this repo: a clone cannot hold it, so that line is
+the same INFO, never a FAIL no reinstall could clear. The skip list is read from the YAML (C2); without it nothing is
 skipped. Explicit flag only: GITHUB_ACTIONS is not read to switch it on, since
 the toolkit's own CI runs doctor tests that expect the workstation grading.
 
 Shared core so the PowerShell and bash wrappers emit identical output (C7): the
 two harness-doctor.* scripts are thin shells that call this.
 """
+import datetime
 import glob
 import hashlib
 import json
@@ -333,7 +336,8 @@ def _ci_preamble(root):
         lines.append((INFO, "ci mode", (
             "--ci on a CI runner (%s=true): checks whose evidence lives only under a machine_local "
             "path of .harness/control/machine-state-paths.yaml are reported as not checkable here; "
-            "bundle integrity and every repo-level check are graded as usual." % env[0])))
+            "bundle integrity and every repo-level check are graded as usual, except a receipt "
+            "or portal-sync.json this repo gitignores." % env[0])))
     else:
         # Not a refusal -- a local dry run of the CI job is legitimate -- but a
         # workstation that passes --ci hides its own ledger/context, so say so.
@@ -342,6 +346,26 @@ def _ci_preamble(root):
             "and --ci has just skipped its ledger, telemetry and context checks. Run without --ci "
             "here.")))
     return match, lines
+
+
+def _git_ignored(root, rel):
+    """-> True / False from `git check-ignore`, or None when git cannot say (no git, not a repo).
+
+    Exit 0 = ignored, 1 = not ignored, anything else = no answer (C13: None, not a guess).
+    """
+    try:
+        p = subprocess.run(("git", "-C", root, "check-ignore", "-q", "--", rel),
+                           capture_output=True, timeout=20)
+    except Exception:  # noqa: BLE001
+        return None
+    return {0: True, 1: False}.get(p.returncode)
+
+
+def _ignored_on_ci(label, rel):
+    return INFO, label, (
+        "not checkable on a CI runner: %s is gitignored in this repo (git check-ignore), so a "
+        "clone never holds it and its absence here says nothing. Unproven here, not passing -- "
+        "run harness doctor on the workstation where the bundle was installed for this line." % rel)
 
 
 def _not_here(label, rel):
@@ -429,11 +453,43 @@ def run(root, ci=False):
                     if "LEDGER-APPEND-LOST" in l]
         except Exception:
             lost = []
-        if lost:
+        # hook-errors.log is append-only diagnostics: deleting a line to clear this FAIL would destroy
+        # the evidence (C14). A loss is HANDLED once the operator has moved append-failures.jsonl aside
+        # as append-failures-handled-<date>.jsonl (the step 1b asks for); lines older than the newest
+        # such file are reported as handled, newer ones still FAIL.
+        handled_at = None
+        try:
+            ldir = os.path.join(H, "ledger")
+            marks = [os.path.join(ldir, n) for n in os.listdir(ldir)
+                     if n.startswith("append-failures-handled-") and n.endswith(".jsonl")]
+            if marks:
+                handled_at = max(os.path.getmtime(m) for m in marks)
+        except OSError:
+            handled_at = None
+
+        def _when(line):
+            try:
+                # PowerShell writes 7 fraction digits; trim to 6 so every Python 3.x parses it
+                stamp = re.sub(r"(\.\d{6})\d+", r"\1", line.split()[0])
+                return datetime.datetime.fromisoformat(stamp).timestamp()
+            except (ValueError, IndexError):
+                return None          # undated line: never assume it was handled
+
+        open_lost = [l for l in lost if handled_at is None or (_when(l) or float("inf")) > handled_at]
+        if open_lost:
+            # Quote what the record says caused it; guessing "disk, not memory" contradicted lines
+            # that read OutOfMemoryException.
+            cause = open_lost[-1].split("::", 1)[-1].strip()[:120] if "::" in open_lost[-1] else "?"
             yield FAIL, "ledger append (fallback)", (
                 "%d append(s) failed AND could not be recorded in append-failures.jsonl — see "
-                "LEDGER-APPEND-LOST in hook-errors.log. Both the record and its fallback failed, "
-                "which usually means the disk or the permissions, not memory." % len(lost)
+                "LEDGER-APPEND-LOST in hook-errors.log (both the record and its fallback failed). "
+                "Most recent cause: %s. Once handled, move append-failures.jsonl aside as "
+                "append-failures-handled-<date>.jsonl; never delete the log line." % (len(open_lost), cause)
+            )
+        elif lost:
+            yield INFO, "ledger append (fallback)", (
+                "%d lost append(s) in hook-errors.log, all older than the newest "
+                "append-failures-handled-*.jsonl — handled; kept as evidence." % len(lost)
             )
 
     # 2) Telemetry files — present and fresh?
@@ -557,6 +613,9 @@ def run(root, ci=False):
     a = _age(cur)
     if a is not None:
         yield OK, "portal push", "last local push %s ago (cursor present)." % a
+    elif not os.path.exists(sync_cfg) and ci and _git_ignored(root, ".harness/portal-sync.json"):
+        # B-89: "not wired to a Portal" would be a guess on a clone that cannot hold the file.
+        yield _ignored_on_ci("portal push", ".harness/portal-sync.json")
     elif not os.path.exists(sync_cfg):
         yield INFO, "portal push", "portal-sync.json absent — this project is not wired to a Portal, so there is nothing to push."
     else:
@@ -1147,7 +1206,16 @@ def run(root, ci=False):
             os.path.join(H, "schemas", "casan-policies.schema.json"),
         ]
         present = [p for p in installed_markers if os.path.exists(p)]
-        if present:
+        # B-89: a project may gitignore its receipt (24hHotnewsAI does, as install
+        # state). A CI clone then never has it while the tracked markers are there,
+        # and this FAILed on every run -- a FAIL no reinstall can clear (C14). Only
+        # under --ci and only when git itself says the receipt is ignored: on a
+        # workstation the receipt is never cloned, so its absence there still means
+        # it was lost (the 06·10 case), and a receipt that is NOT ignored should
+        # have been in the checkout.
+        if present and ci and _git_ignored(root, ".harness/.bundle-manifest.json"):
+            yield _ignored_on_ci("bundle integrity", ".harness/.bundle-manifest.json")
+        elif present:
             yield FAIL, "bundle integrity", (
                 "%d bundle-installed file(s) are here but .bundle-manifest.json is GONE — this "
                 "project WAS installed and lost its receipt, which is not the same as never having "
@@ -1162,7 +1230,8 @@ def run(root, ci=False):
         # portal-sync.json the push client skips and exits 0, so telemetry stops
         # LEGITIMATELY. A leftover key is proof the project was wired once.
         if os.path.exists(os.path.join(H, "portal-sync.key")) and \
-           not os.path.exists(os.path.join(H, "portal-sync.json")):
+           not os.path.exists(os.path.join(H, "portal-sync.json")) and \
+           not (ci and _git_ignored(root, ".harness/portal-sync.json")):
             yield FAIL, "portal sync config", (
                 "portal-sync.key is here but portal-sync.json is GONE — this project was wired to "
                 "the Portal and lost its config. push-telemetry prints 'push sync not configured, "

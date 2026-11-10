@@ -185,7 +185,8 @@ for key in candidates:
     entry = tools.get(key)
     if not isinstance(entry, dict):
         continue
-    if entry.get("risk_level") in ("high", "critical") and entry.get("default_action") == "deny":
+    # B-95 (parity with the .ps1): default_action is the policy, whatever the risk level.
+    if entry.get("default_action") == "deny":
         print("%s	%s" % (key, entry.get("risk_level")))
     break
 REG

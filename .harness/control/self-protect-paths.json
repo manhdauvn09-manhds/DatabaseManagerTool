@@ -1,0 +1,36 @@
+{
+  "$schema": "../schemas/self-protect-paths.schema.json",
+  "schema_version": "1.0.0",
+  "description": "SEC-03 (system review 19-10-2026): the harness's own rule files, scored like an F2 sensitive path so an agent cannot quietly switch off the guard that watches it. Read by harness_sensitivity.py next to sensitive-paths.json.",
+  "governs": "assistant_workflow",
+  "enforced_at": "pretooluse_optin",
+  "enforcement_note": "HONEST STATUS (C10): enforced only where sensitive-paths.json has enforce_at_pretooluse=true (the shipped value), by the PreToolUse guard (PowerShell and bash both call harness_sensitivity.py), for the Write/Edit/MultiEdit/NotebookEdit tools. A shell write is not intercepted, and the guard fails OPEN on any error. Defense-in-depth against an agent steered by injected text, not a boundary against a person.",
+  "why_not_on_the_preserve_list": "sensitive-paths.json is project-owned (preserve list), so a rule added there never reaches a project that already has the file. This file is bundle-owned: every update replaces it.",
+  "skip_when_repo_has_all": [
+    "bundles/*/bundle.yaml",
+    "tools/harness-bundle/pack.*"
+  ],
+  "skip_note": "The toolkit source repo is recognised by shape, as the installer does for B-85: both a bundle manifest and the packer. There, editing these files is the work itself. One half of the shape is not enough.",
+  "rules": [
+    {
+      "id": "harness-self",
+      "globs": [
+        ".harness/control/**",
+        ".harness/scripts/**",
+        ".claude/settings.json",
+        ".claude/settings.posix.json"
+      ],
+      "exclude_globs": [
+        ".harness/control/casan-policies.yaml",
+        ".harness/control/token-pricing.json"
+      ],
+      "score_delta": 60,
+      "approvable": true,
+      "reason": "Harness rule file: a write here can turn the guard off for every later call. Edit it by hand, update it through the bundle, or get the write approved on the Portal."
+    }
+  ],
+  "notes": {
+    "excluded": "casan-policies.yaml and token-pricing.json are project-tuned (on the preserve list) and switch no gate off. .claude/settings.local.json is personal and never shipped, so it is not listed at all.",
+    "why_approvable": "Same escape hatch as db-migrations: a reviewer on the Portal can approve exactly one write of exactly these bytes. Hard-blocking with no way through would get the whole guard switched off instead."
+  }
+}

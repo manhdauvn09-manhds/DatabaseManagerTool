@@ -24,6 +24,14 @@ How:
 Files at an indexed path that match NO release are reported as `unmatched`
 (locally edited, or from a release newer than the index).
 
+Project-adapted files (B-83) are NOT part of a release's identity: the paths the
+installer lets the project own or merges into -- the receipt's `preserve` list and
+bundle-ownership.yaml's project_owned / project_owned_globs / keyed_lists /
+merge_json_maps / merge_hook_settings. Their bytes differ on every correctly
+installed project by design, so scoring them made every install read "modified"
+(C14). They are listed under `project_adapted` instead of being hidden. With no
+ownership source on disk nothing is excluded, and a warning says so (C13).
+
 Read-only. Exit codes: 0 identified (and the receipt, if any, agrees); 1 identified
 but the receipt claims a version outside the matching range; 2 could not identify
 (no index / no bundle files) -- unproven, never green.
@@ -31,6 +39,7 @@ but the receipt claims a version outside the matching range; 2 could not identif
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import hashlib
 import json
 import os
@@ -44,6 +53,9 @@ INDEX_REL = os.path.join(".harness", "control", "release-index.json")
 # installed release fingerprint as the previous one, "modified" (QA-gate #2, C14).
 INDEX_POSIX = ".harness/control/release-index.json"
 RECEIPT_REL = os.path.join(".harness", ".bundle-manifest.json")
+OWNERSHIP_REL = os.path.join(".harness", "control", "bundle-ownership.yaml")
+_OWNERSHIP_KEYS = ("project_owned", "project_owned_globs", "keyed_lists", "merge_json_maps",
+                   "merge_hook_settings")
 _BOM = b"\xef\xbb\xbf"
 
 
@@ -125,6 +137,69 @@ def read_receipt(root: str):
         return None, "install receipt unreadable (%s)" % type(e).__name__
 
 
+def _ownership_paths(path: str) -> list:
+    """Paths/globs under the ownership sections of bundle-ownership.yaml. A small reader
+    for this file's two shapes (`- "path"` list items, `"path": "x"` map keys) so the
+    probe needs no YAML library on a dev machine."""
+    out, section = [], None
+    with open(path, "r", encoding="utf-8-sig") as f:
+        for raw in f:
+            line = raw.split(" #", 1)[0].rstrip() if not raw.lstrip().startswith("#") else ""
+            if not line.strip():
+                continue
+            top = re.match(r"^([A-Za-z_][A-Za-z0-9_]*):\s*$", line)
+            if top:
+                section = top.group(1)
+                continue
+            if re.match(r"^\S", line):
+                section = None
+                continue
+            if section not in _OWNERSHIP_KEYS:
+                continue
+            item = re.match(r"^\s+-\s+[\"']?([^\"']+?)[\"']?\s*$", line)
+            key = re.match(r"^\s+[\"']([^\"']+)[\"']\s*:", line)
+            if item:
+                out.append(item.group(1).strip())
+            elif key:
+                out.append(key.group(1).strip())
+    return out
+
+
+def project_adapted_rules(root: str):
+    """(paths/globs the project may adapt, sources used). Empty sources = no rule found."""
+    rules, sources = [], []
+    rp = os.path.join(root, RECEIPT_REL)
+    if os.path.isfile(rp):
+        try:
+            with open(rp, "r", encoding="utf-8-sig") as f:
+                pres = json.load(f).get("preserve") or []
+            if isinstance(pres, list) and pres:
+                rules += [str(x) for x in pres if isinstance(x, str)]
+                sources.append("receipt preserve")
+        except Exception:  # noqa: BLE001 - a diagnostic never crashes
+            pass
+    op = os.path.join(root, OWNERSHIP_REL)
+    if os.path.isfile(op):
+        try:
+            got = _ownership_paths(op)
+            if got:
+                rules += got
+                sources.append("bundle-ownership.yaml")
+        except OSError:
+            pass
+    return rules, sources
+
+
+def _is_adapted(rel: str, rules) -> bool:
+    for r in rules:
+        if r == rel:
+            return True
+        if any(c in r for c in "*?["):
+            if fnmatch.fnmatchcase(rel, r) or fnmatch.fnmatchcase(rel.rsplit("/", 1)[-1], r):
+                return True
+    return False
+
+
 def _unsafe_rel(rel: str) -> bool:
     """An index path must be a plain relative path inside the root."""
     if not rel or os.path.isabs(rel) or rel.startswith(("/", "\\")):
@@ -174,8 +249,16 @@ def fingerprint(root: str, index_path: str) -> dict:
     by_path.pop(INDEX_POSIX, None)
     for pv in per_version.values():
         pv.pop(INDEX_POSIX, None)
+    rules, rule_sources = project_adapted_rules(root)
+    adapted_paths = sorted(p for p in by_path if _is_adapted(p, rules))
+    for p in adapted_paths:
+        by_path.pop(p, None)
+    for pv in per_version.values():
+        for p in adapted_paths:
+            pv.pop(p, None)
     skipped: list = []
     project = hash_project(root, by_path.keys(), skipped)
+    adapted_present = hash_project(root, adapted_paths)
     claimed, claim_src = read_receipt(root)
     res = {
         "root": os.path.abspath(root),
@@ -188,11 +271,16 @@ def fingerprint(root: str, index_path: str) -> dict:
         "candidates": [],
         "unmatched": [],
         "skipped_unsafe": sorted(skipped),
+        "project_adapted": sorted(adapted_present),
+        "project_adapted_source": ", ".join(rule_sources),
         "missing_from_best": [],
         "receipt_agrees": None,
         "identified": False,
         "warnings": [],
     }
+    if not rule_sources:
+        res["warnings"].append("no ownership rules found (receipt preserve, %s): project-adapted files "
+                               "were scored like bundle-owned ones" % OWNERSHIP_REL.replace(os.sep, "/"))
     if skipped:
         res["warnings"].append("%d indexed path(s) skipped, not hashed (absolute, '..', symlink or "
                                "outside the root): %s" % (len(skipped), ", ".join(sorted(skipped)[:5])))

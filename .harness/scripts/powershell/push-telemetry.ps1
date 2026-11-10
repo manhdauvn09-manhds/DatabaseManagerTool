@@ -132,7 +132,8 @@ if ($Facts -and $Facts.auth) {
 $IngestKey = $env:HARNESS_PORTAL_INGEST_KEY
 if (-not $IngestKey) {
     $KeyFile = Join-Path $HarnessRoot ".harness\portal-sync.key"
-    if (Test-Path $KeyFile) { $IngestKey = (Get-Content -Path $KeyFile -Raw).Trim() }
+    # "$(...)": an EMPTY key file reads as $null and .Trim() crashed instead of "No ingest key" (B-92).
+    if (Test-Path $KeyFile) { $IngestKey = "$(Get-Content -Path $KeyFile -Raw)".Trim() }
 }
 if (-not $IngestKey -and -not $CheckoutCred) {
     Write-Warning "[push-telemetry] No checkout credential (.harness/local/checkout.json) and no ingest key (env HARNESS_PORTAL_INGEST_KEY or .harness/portal-sync.key)"
@@ -420,17 +421,50 @@ if os.path.isdir(proot):
             tout += int(u.get("output_tokens") or 0)
         if tin == 0 and tout == 0 and not model: return None
         return {"tin": tin, "tout": tout, "tools": tools, "model": model or "unknown", "first": first, "last": last}
+    # PERF-04 (system review 19-10-2026): a transcript is only re-read when its size or
+    # mtime changed. Every push used to parse every transcript of the project from the
+    # first byte. The cache holds the same summary sample() returns, so agentops.log is
+    # byte-for-byte what a full re-read would write. Machine-local; a missing or
+    # unreadable cache only means one full re-read.
+    _cache_path = os.path.join(root, ".harness", "telemetry", ".transcript-cache.json")
+    try:
+        with open(_cache_path, encoding="utf-8") as _cf:
+            _cache = json.load(_cf)
+        _old = _cache.get("files") if isinstance(_cache, dict) and _cache.get("v") == 1 else {}
+        if not isinstance(_old, dict): _old = {}
+    except Exception:
+        _old = {}
+    _new = {}
+    def sample_cached(fp):
+        try: st = os.stat(fp)
+        except OSError: return None
+        key = [st.st_size, st.st_mtime_ns]
+        hit = _old.get(fp)
+        if isinstance(hit, dict) and hit.get("k") == key:
+            r = hit.get("r")
+        else:
+            r = sample(fp)
+        _new[fp] = {"k": key, "r": r}
+        return dict(r) if r else None
     entries = {}
     for d in dirs:
         for fp in glob.glob(os.path.join(d, "**", "*.jsonl"), recursive=True):
             sid = os.path.splitext(os.path.basename(fp))[0]
-            r = sample(fp)
+            r = sample_cached(fp)
             if not r: continue
             agent = "subagent" if (os.sep + "subagents" + os.sep) in fp else "main"
             k = sid + ":" + agent
             prev = entries.get(k)
             if prev and (prev["tin"] + prev["tout"]) >= (r["tin"] + r["tout"]): continue
             r["sid"] = sid; r["agent"] = agent; entries[k] = r
+    try:
+        os.makedirs(os.path.dirname(_cache_path), exist_ok=True)
+        _tmp = _cache_path + ".tmp"
+        with open(_tmp, "w", encoding="utf-8") as _cf:
+            json.dump({"v": 1, "files": _new}, _cf, separators=(",", ":"))
+        os.replace(_tmp, _cache_path)
+    except Exception:
+        pass
     if entries:
         tel = os.path.join(root, ".harness", "telemetry"); os.makedirs(tel, exist_ok=True)
         log_path = os.path.join(tel, "agentops.log")
@@ -618,6 +652,10 @@ if (-not $HasContent) {
 # Claims about this machine ride along only once we know there is something to
 # push: they are metadata, and must not turn "nothing new" into a push.
 Add-CheckoutFacts $Body
+# PERF-07: say outright whether this checkout keeps a security-events log. The server used to infer
+# it from whether this push's SLICE of the file was non-empty, so one blocked action could be booked
+# twice (from the ledger when the slice was empty, from the log when it was not).
+$Body.has_security_log = [bool](Test-Path -LiteralPath (Join-Path $Tel "security-events.jsonl"))
 if ($Body.ContainsKey('worktree')) {
     # A worktree pushes into its parent checkout but its chain is its own; the
     # parent anchors the parent's chain.

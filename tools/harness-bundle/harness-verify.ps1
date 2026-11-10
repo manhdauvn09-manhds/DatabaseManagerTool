@@ -16,6 +16,21 @@
   .\harness-verify.ps1 -TargetDir <project>        # default: current dir
 #>
 param([string]$TargetDir = ".")
+# --- run log: every top-level run leaves a transcript in %TEMP% (operator ask,
+# 20.10). A script started by another one that already logs writes into that
+# log (HARNESS_RUN_LOG). Skipped under pytest/CI. PowerShell 5.1 transcripts
+# do not capture native programs' stderr.
+$__HarnessRunLog = $null
+if (-not $env:HARNESS_RUN_LOG -and -not $env:PYTEST_CURRENT_TEST -and -not $env:GITHUB_ACTIONS) {
+    $__HarnessRunLog = Join-Path ([IO.Path]::GetTempPath()) ("{0}-{1}.log" -f [IO.Path]::GetFileNameWithoutExtension($PSCommandPath), (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    try {
+        Start-Transcript -Path $__HarnessRunLog -WhatIf:$false -ErrorAction Stop | Out-Null
+        $env:HARNESS_RUN_LOG = $__HarnessRunLog
+        Write-Host "log: $__HarnessRunLog" -ForegroundColor DarkGray
+    } catch { $__HarnessRunLog = $null }
+}
+try {
+# --- end run log header ---
 
 $ErrorActionPreference = "Stop"
 if (-not (Test-Path $TargetDir)) { throw "Target not found: $TargetDir" }
@@ -130,4 +145,17 @@ if ($healthy) {
     if ($missing.Count) { Write-Output "   -> $($missing.Count) file(s) missing: re-run install.ps1" }
     if (-not $hooksWired) { Write-Output "   -> hooks not wired: delete .claude/settings.json then re-run install (or install.ps1 -Force)" }
     exit 1
+}
+# --- run log footer ---
+} catch {
+    # A throw would print after the transcript closed; write it into the log
+    # first, then rethrow so the exit code and console output are unchanged.
+    if ($__HarnessRunLog) { Write-Host ("[ERROR] " + $_.Exception.Message) -ForegroundColor Red; Write-Host $_.InvocationInfo.PositionMessage }
+    throw
+} finally {
+    if ($__HarnessRunLog) {
+        try { Stop-Transcript | Out-Null } catch {}
+        $env:HARNESS_RUN_LOG = $null
+        Write-Host "log: $__HarnessRunLog" -ForegroundColor DarkGray
+    }
 }

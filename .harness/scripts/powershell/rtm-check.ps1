@@ -25,6 +25,8 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
+# Under `powershell -File`, -Tests a,b arrives as ONE string "a,b"; re-split on comma.
+$Tests = @($Tests | ForEach-Object { $_ -split ',' } | ForEach-Object { $_.Trim() } | Where-Object { $_ })
 
 if ($HarnessRoot -eq "") {
     $HarnessRoot = Split-Path -Parent (Split-Path -Parent (Split-Path -Parent $PSScriptRoot))

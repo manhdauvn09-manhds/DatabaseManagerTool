@@ -110,6 +110,16 @@ _PRUNE_DIRS = {".git", "__pycache__", "node_modules", ".venv", "venv", "env",
                ".mypy_cache", ".pytest_cache", ".tox", "dist", "build",
                ".next", "coverage", ".turbo"}
 
+# B-91: Claude Code keeps whole extra checkouts under .claude/worktrees/. They are
+# other copies of the repo, not evidence about this one, and 24hHotnewsAI held 21
+# of them (92,196 files): every file was opened and line-counted, the snapshot ran
+# past ten minutes, push-telemetry never reached its POST, and the fleet sync
+# (projects in name order, 24hHotnewsAI first) was killed at the task's one-hour
+# limit every day -- so NO project's telemetry reached the Portal after 27·10.
+# Pruned by path relative to the repo root, so a directory merely NAMED worktrees
+# elsewhere is still walked.
+_PRUNE_REL = {".claude/worktrees"}
+
 # C5 — never ship a secret. Matched against both the basename and the full
 # relative path, lowercased, before the file is opened. A file denied here is
 # recorded in "skipped" with withheld=true, so the server reports the criteria
@@ -301,7 +311,8 @@ def snapshot(root):
         if not os.path.isdir(base):
             continue
         for dirpath, dirnames, filenames in os.walk(base):
-            dirnames[:] = sorted(d for d in dirnames if d not in _PRUNE_DIRS)
+            dirnames[:] = sorted(d for d in dirnames if d not in _PRUNE_DIRS
+                                 and _rel(root, os.path.join(dirpath, d)) not in _PRUNE_REL)
             for fn in sorted(filenames):
                 full = os.path.join(dirpath, fn)
                 rel = _rel(root, full)

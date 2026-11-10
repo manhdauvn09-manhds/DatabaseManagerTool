@@ -64,11 +64,13 @@ LEDGER_PY_PRELUDE='
 import json, os, re, sys, time, random, hashlib
 from datetime import datetime, timezone
 
-LOCK_TIMEOUT_S = 10.0
+# B-93 (parity with evidence-ledger.ps1): 30 s, growing jittered backoff.
+LOCK_TIMEOUT_S = 30.0
 
 def ledger_lock(ledger_dir):
     f = open(os.path.join(ledger_dir, "chain.lock"), "a+b")
     deadline = time.time() + LOCK_TIMEOUT_S
+    tries = 0
     while True:
         try:
             if os.name == "nt":
@@ -83,7 +85,9 @@ def ledger_lock(ledger_dir):
             if time.time() >= deadline:
                 f.close()
                 raise TimeoutError("ledger lock not acquired within %ss (another append is holding it)" % LOCK_TIMEOUT_S)
-            time.sleep(random.uniform(0.01, 0.05))
+            tries += 1
+            hi = min(0.05 * 2 ** (tries // 10), 0.4)
+            time.sleep(random.uniform(hi / 4, hi))
 
 def ledger_unlock(f):
     try:
@@ -110,11 +114,20 @@ def last_link(chain_file):
         for line in f:
             if line.strip():
                 n += 1
+    # B-93: grow the tail window from 64 KB (cap 4 MB) until it holds a line
+    # boundary, and decode only the last line -- not a flat 4 MB per append.
     with open(chain_file, "rb") as f:
         size = os.path.getsize(chain_file)
-        f.seek(max(0, size - 4 * 1024 * 1024))
-        tail = f.read().decode("utf-8", "replace").rstrip("\r\n")
-    last = tail.rsplit("\n", 1)[-1]
+        window = 64 * 1024
+        while True:
+            take = min(window, size)
+            f.seek(size - take)
+            buf = f.read(take).rstrip(b"\r\n")
+            nl = buf.rfind(b"\n")
+            if nl >= 0 or take >= size or take >= 4 * 1024 * 1024:
+                break
+            window = min(window * 2, 4 * 1024 * 1024)
+    last = buf[nl + 1:].decode("utf-8", "replace")
     h = None
     try:
         h = json.loads(last).get("entry_hash")
@@ -266,11 +279,17 @@ print(f'Appended entry {next_idx}, hash={h}, prev={prev_hash}')
     verify)
         CHAIN_FILE="$CHAIN_FILE" python3 -c "
 import json, hashlib, os, sys
-with open(os.environ['CHAIN_FILE']) as f:
-    lines = [l.strip() for l in f if l.strip()]
+# PERF-08: streamed, not read whole into a list. UTF-8 (the ledger's encoding), not the
+# platform default -- cp932 on a Japanese Windows mis-decodes any non-ASCII entry.
+f = open(os.environ['CHAIN_FILE'], encoding='utf-8-sig')
+lines = (l.strip() for l in f if l.strip())
 prev = 'GENESIS'
 valid = True
+n = 0
+ps_written = 0
+q = chr(34)
 for i, line in enumerate(lines):
+    n += 1
     e = json.loads(line)
     if e['prev_hash'] != prev:
         print(f'CHAIN BREAK at {i}: prev_hash mismatch', file=sys.stderr)
@@ -279,13 +298,21 @@ for i, line in enumerate(lines):
     e['entry_hash'] = ''
     computed = hashlib.sha256(json.dumps(e, sort_keys=True, separators=(',',':')).encode()).hexdigest()
     if computed != stored:
+        # B-87: the PowerShell twin hashes its own compact JSON in the line's key order -- i.e.
+        # this very line with the hash value emptied. Accept only an exact reproduction.
+        own = line.replace(q + 'entry_hash' + q + ':' + q + str(stored) + q, q + 'entry_hash' + q + ':' + q + q, 1)
+        if own != line and hashlib.sha256(own.encode('utf-8')).hexdigest() == stored:
+            computed = stored
+            ps_written += 1
+    if computed != stored:
         print(f'TAMPER at {i}: hash mismatch', file=sys.stderr)
         valid = False
     prev = stored
 if valid:
     # ASCII '--', not an em dash: this prints to whatever console the operator
     # has, and cp932/cp936 consoles crash python on U+2014 (a consuming project's report).
-    print(f'LEDGER INTACT -- {len(lines)} entries verified')
+    by = f' ({ps_written} written by the PowerShell writer, verified by its rule)' if ps_written else ''
+    print(f'LEDGER INTACT -- {n} entries verified{by}')
 else:
     print('LEDGER COMPROMISED', file=sys.stderr)
     sys.exit(2)
@@ -381,6 +408,15 @@ def sv(d, k, default):
     v = d.get(k)
     return v if v not in (None, '', 0, False, []) else default
 
+def tri(d, k):
+    # C14: True / False as given, None when absent (no scan ran). sv() turned False into its default.
+    v = d.get(k)
+    if isinstance(v, bool):
+        return v
+    if isinstance(v, str):
+        return v.strip().lower() == 'true'
+    return None
+
 change_id = inp.get('change_id') or ('change-' + os.environ['TIMESTAMP'].replace('-', '').replace(':', '').replace('T', '').replace('Z', ''))
 
 # H3-2 depth: pass the judge's per-dimension rubric through, same filter
@@ -429,7 +465,7 @@ bundle = {
         'scanner': sv(sect('security_scan'), 'scanner', ''),
         'findings_count': sv(sect('security_scan'), 'findings_count', 0),
         'high_critical_count': sv(sect('security_scan'), 'high_critical_count', 0),
-        'passed': sv(sect('security_scan'), 'passed', True),
+        'passed': tri(sect('security_scan'), 'passed'),
         'report_ref': sv(sect('security_scan'), 'report_ref', ''),
     },
     'review_verdict': {

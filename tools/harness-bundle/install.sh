@@ -41,6 +41,24 @@ fi
 [[ -n "$BUNDLE" && -f "$BUNDLE" ]] || { echo "bundle file not found (use --bundle)" >&2; exit 2; }
 [[ -n "$TARGET" ]] || { echo "usage: --target <project dir> required" >&2; exit 2; }
 
+# Never install into the toolkit's own source repo (B-85). Bundles are BUILT there; an
+# install overwrites newer source with the older packed copy (09-10: harness_fingerprint.py
+# lost its B-83 fix). Same shape rule as install.ps1: bundles/*/bundle.yaml AND
+# tools/harness-bundle/pack.ps1|pack.sh -- either one alone is an ordinary project.
+is_toolkit_source() {
+  local d="$1" m
+  [[ -d "$d" ]] || return 1
+  [[ -f "$d/tools/harness-bundle/pack.ps1" || -f "$d/tools/harness-bundle/pack.sh" ]] || return 1
+  for m in "$d"/bundles/*/bundle.yaml; do
+    [[ -f "$m" ]] && return 0
+  done
+  return 1
+}
+if is_toolkit_source "$TARGET"; then
+  echo "B-85: refusing to install into the toolkit source repo ($TARGET): it holds bundles/*/bundle.yaml and tools/harness-bundle/pack.*. Bundles are BUILT here (pack / ship-bundle), never installed here -- an install would overwrite newer source with the older packed copy." >&2
+  exit 2
+fi
+
 PY="$(command -v python3 || command -v python || true)"
 [[ -n "$PY" ]] || { echo "python3 required" >&2; exit 3; }
 
@@ -790,8 +808,19 @@ if [[ ${#SH_LIST[@]} -gt 0 ]]; then
   done
   echo "[execbit] chmod +x on ${#SH_LIST[@]} shipped .sh file(s)"
   if command -v git >/dev/null 2>&1 && [[ "$(git -C "$TARGET" rev-parse --is-inside-work-tree 2>/dev/null)" == "true" ]]; then
-    if git -C "$TARGET" update-index --add --chmod=+x -- "${SH_LIST[@]}" 2>/dev/null; then
-      echo "[execbit] git index +x (mode 100755) recorded on ${#SH_LIST[@]} .sh file(s) -- survives commits, including from Windows checkouts"
+    # B-94 (parity with install.ps1): `update-index --add` STAGES an untracked file,
+    # so a file the project gitignores and does not track is left alone.
+    STAMP_LIST=(); IGNORED_SH=0
+    for rel in "${SH_LIST[@]}"; do
+      if ! git -C "$TARGET" ls-files --error-unmatch -- "$rel" >/dev/null 2>&1 && \
+         git -C "$TARGET" check-ignore -q -- "$rel" 2>/dev/null; then
+        IGNORED_SH=$((IGNORED_SH + 1)); continue
+      fi
+      STAMP_LIST+=("$rel")
+    done
+    [[ $IGNORED_SH -gt 0 ]] && echo "[execbit] skipped $IGNORED_SH .sh file(s) this project gitignores and does not track -- not staged (B-94)"
+    if [[ ${#STAMP_LIST[@]} -eq 0 ]] || git -C "$TARGET" update-index --add --chmod=+x -- "${STAMP_LIST[@]}" 2>/dev/null; then
+      echo "[execbit] git index +x (mode 100755) recorded on ${#STAMP_LIST[@]} .sh file(s) -- survives commits, including from Windows checkouts"
     else
       echo "[execbit] WARNING: git update-index --chmod=+x failed -- the filesystem bit is set, but a commit from a filemode-less checkout may still ship mode 100644"
     fi

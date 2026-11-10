@@ -19,7 +19,8 @@ usage() {
 while [ $# -gt 0 ]; do
     case "$1" in
         --spec)      ARGS+=(--spec "${2:-}"); shift 2 ;;
-        --tests)     ARGS+=(--tests "${2:-}"); shift 2 ;;
+        # comma list accepted, same as rtm-check.ps1 -Tests a,b
+        --tests)     IFS=',' read -r -a _t <<< "${2:-}"; for _d in "${_t[@]}"; do [ -n "$_d" ] && ARGS+=(--tests "$_d"); done; shift 2 ;;
         --id-prefix) ARGS+=(--id-prefix "${2:-}"); shift 2 ;;
         --json)      ARGS+=(--json); shift ;;
         --fail-on-gap) ARGS+=(--fail-on-gap); shift ;;

@@ -26,6 +26,21 @@ param(
     [string]$PM = "",
     [string]$ApprovalCode = ""
 )
+# --- run log: every top-level run leaves a transcript in %TEMP% (operator ask,
+# 20.10). A script started by another one that already logs writes into that
+# log (HARNESS_RUN_LOG). Skipped under pytest/CI. PowerShell 5.1 transcripts
+# do not capture native programs' stderr.
+$__HarnessRunLog = $null
+if (-not $env:HARNESS_RUN_LOG -and -not $env:PYTEST_CURRENT_TEST -and -not $env:GITHUB_ACTIONS) {
+    $__HarnessRunLog = Join-Path ([IO.Path]::GetTempPath()) ("{0}-{1}.log" -f [IO.Path]::GetFileNameWithoutExtension($PSCommandPath), (Get-Date -Format 'yyyyMMdd-HHmmss'))
+    try {
+        Start-Transcript -Path $__HarnessRunLog -WhatIf:$false -ErrorAction Stop | Out-Null
+        $env:HARNESS_RUN_LOG = $__HarnessRunLog
+        Write-Host "log: $__HarnessRunLog" -ForegroundColor DarkGray
+    } catch { $__HarnessRunLog = $null }
+}
+try {
+# --- end run log header ---
 
 $ErrorActionPreference = "Stop"
 $Utf8NoBom = New-Object System.Text.UTF8Encoding($false)
@@ -88,5 +103,18 @@ switch ($Action) {
         if ($computed -ne $p.hash) { throw "Approval code does not match. Lock NOT cleared." }
         Remove-Item $policyPath -Force
         Write-Output "[lock] cleared. uninstall now needs only interactive confirmation."
+    }
+}
+# --- run log footer ---
+} catch {
+    # A throw would print after the transcript closed; write it into the log
+    # first, then rethrow so the exit code and console output are unchanged.
+    if ($__HarnessRunLog) { Write-Host ("[ERROR] " + $_.Exception.Message) -ForegroundColor Red; Write-Host $_.InvocationInfo.PositionMessage }
+    throw
+} finally {
+    if ($__HarnessRunLog) {
+        try { Stop-Transcript | Out-Null } catch {}
+        $env:HARNESS_RUN_LOG = $null
+        Write-Host "log: $__HarnessRunLog" -ForegroundColor DarkGray
     }
 }

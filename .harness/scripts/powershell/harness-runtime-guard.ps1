@@ -199,7 +199,11 @@ if (Test-Path $ToolDenyPath) {
             if ($prop) { $ToolEntry = $prop.Value; $MatchedKey = $candidate; break }
         }
         if ($ToolEntry) {
-            if ($ToolEntry.risk_level -in @("high", "critical") -and $ToolEntry.default_action -eq "deny") {
+            # B-95 (C2/C6): the registry's `default_action` IS the policy. Filtering it to
+            # risk_level high/critical let codeprovider-mcp.http_fetch (medium, deny -- the
+            # SSRF-relevant one, named in C6) through with no deny, no PDP round trip and no
+            # ledger entry. Found and patched first by SynthGora (50f4535, 30·09).
+            if ($ToolEntry.default_action -eq "deny") {
                 $DenyReason = "Tool '$ToolName' (registry key '$MatchedKey') has risk level '$($ToolEntry.risk_level)' — deny-by-default"
                 Write-Warning "[harness-runtime-guard] DENIED: $DenyReason"
                 Write-DenyToStderr -Reason $DenyReason -Tool $ToolName -Command $CommandString
@@ -311,7 +315,7 @@ try {
                     $Key = $env:HARNESS_PORTAL_INGEST_KEY
                     if (-not $Key) {
                         $KeyFile = "$SyncRoot\.harness\portal-sync.key"
-                        if (Test-Path $KeyFile) { $Key = (Get-Content -Path $KeyFile -Raw).Trim() }
+                        if (Test-Path $KeyFile) { $Key = "$(Get-Content -Path $KeyFile -Raw)".Trim() }
                     }
                     if ($Key) { $AuthHeaders = @{ "X-Ingest-Key" = $Key }; $AuthSource = "legacy-key" }
                 }

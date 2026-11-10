@@ -1,0 +1,43 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://harness.internal/schemas/self-protect-paths.schema.json",
+  "title": "Self-protect Paths",
+  "description": "SEC-03: the harness's own rule files, scored by harness_sensitivity.py like an F2 sensitive path, except in the toolkit source repo.",
+  "type": "object",
+  "required": ["schema_version", "governs", "enforced_at", "skip_when_repo_has_all", "rules"],
+  "properties": {
+    "$schema": { "type": "string" },
+    "schema_version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "description": { "type": "string" },
+    "governs": { "type": "string", "enum": ["assistant_workflow"] },
+    "enforced_at": { "type": "string", "enum": ["pretooluse_optin"] },
+    "enforcement_note": { "type": "string" },
+    "why_not_on_the_preserve_list": { "type": "string" },
+    "skip_when_repo_has_all": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "minLength": 1 },
+      "description": "Repo-relative globs; when EVERY one matches at least one file, the repo is the toolkit source and these rules do not apply."
+    },
+    "skip_note": { "type": "string" },
+    "rules": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["id", "globs", "reason"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[a-z0-9-]+$" },
+          "globs": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+          "exclude_globs": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+          "score_delta": { "type": "integer", "minimum": 0, "maximum": 100 },
+          "approvable": { "type": "boolean" },
+          "reason": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    },
+    "notes": { "type": "object" }
+  },
+  "additionalProperties": false
+}

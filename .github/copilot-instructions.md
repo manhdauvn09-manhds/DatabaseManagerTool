@@ -1,5 +1,5 @@
 <!-- BEGIN harness-governance -->
-<!-- standard-governance v1.8.11 - MANAGED BLOCK. Edits inside are replaced on the next install; put your own project rules OUTSIDE this block. -->
+<!-- standard-governance v1.8.20 - MANAGED BLOCK. Edits inside are replaced on the next install; put your own project rules OUTSIDE this block. -->
 
 <!--
   Harness AI Toolkit — Common Governance Reference

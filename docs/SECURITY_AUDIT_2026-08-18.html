@@ -120,12 +120,31 @@ footer{margin-top:56px;padding-top:18px;border-top:1px solid var(--border);
 </div>
 
 <div class="note">
-  <strong>Trạng thái xử lý (2026-08-18):</strong> đã sửa bằng code
-  <strong>V-01, V-02, V-03, V-04, V-06</strong> — <em>chưa commit, chưa deploy</em>.
+  <strong>Trạng thái xử lý (cập nhật 2026-08-19):</strong>
+  <strong>V-01, V-02, V-03, V-04, V-06 đã ĐƯỢC DEPLOY lên production</strong>
+  (commit <code>e328b69</code>, mcp-80, health 200).
+  Xác minh code thật sự chạy: chuỗi <code>SHARE_READONLY</code> có mặt trong bundle đã build
+  (<code>/app/.next/server/chunks/967.js</code>) — grep comment không dùng được vì Next.js strip
+  comment khi build, nên phải kiểm bằng string literal.
+  Hai volume dữ liệu và container redis không bị đụng tới (redis vẫn <em>Up 8 days</em>).
   Suite: <strong>241/241 pass</strong> (+5 test mới), <code>tsc --noEmit</code> sạch,
   policy-ci / red-team / golden xanh.
   <br><br>
-  <strong>Còn mở:</strong> V-05 (env), V-07–V-10, và <strong>V-11</strong> (cần thao tác phía server).
+  <br><br>
+  <strong>V-07 đã giảm nhẹ (2026-08-19):</strong> <code>REQUIRE_CLOUDFLARE=true</code> đã bật trên
+  production và restart. Kiểm ba chiều thay vì một — vì một gate có thể im lặng không hoạt động mà
+  vẫn báo xanh nếu chỉ kiểm chiều thuận:
+  <ul>
+    <li><code>/api/health</code> qua Cloudflare → <strong>200</strong> (đường bình thường còn sống)</li>
+    <li><code>/app</code> gọi thẳng origin → <strong>403</strong> (gate <em>thật sự</em> chặn — mục đích của nó)</li>
+    <li><code>/api/health</code> gọi thẳng origin → <strong>200</strong> (uptime-kuma không gãy, đúng như
+      dự đoán từ thứ tự dòng 18 so với 26 trong <code>middleware.ts</code>)</li>
+  </ul>
+  Lưu ý mức độ: đây là <em>giảm nhẹ</em>, không phải sửa. Chừng nào <strong>V-11</strong> chưa xử lý thì
+  origin vẫn mở với toàn Internet — <code>REQUIRE_CLOUDFLARE</code> chỉ bảo vệ riêng DBManager, còn 11+
+  site khác trên cùng máy vẫn không có gì chặn.
+  <br><br>
+  <strong>Còn mở:</strong> V-05, V-08, V-09, V-10, và <strong>V-11</strong> (script đã sẵn sàng, chưa chạy).
   Hai phát hiện phụ về chính harness được ghi ở <strong>mục 9</strong>.
 </div>
 
@@ -529,8 +548,9 @@ return jerr("QUERY_FAIL", msg, 500);   // ← khong che giau</code></pre>
       vhost khi bị gọi thẳng bằng IP. Việc một host <em>bên ngoài</em> tới được cổng đó là suy ra từ
       rule <code>ALLOW Anywhere</code> — chưa test từ mạng ngoài. Kết luận vẫn vững ở tầng packet filter,
       nhưng đây là suy luận chứ không phải quan sát.</li>
-    <li><strong>Chưa audit dependency.</strong> <code>npm audit</code> không chạy được vì ổ C: của máy
-      thao tác <strong>còn 0 GB</strong>. Đây là mảng còn trống, không phải mảng đã sạch.</li>
+    <li><strike>Chưa audit dependency.</strike> <strong>Đã lấp — xem mục 9.</strong> Ổ đĩa đã được dọn
+      (0.8 → 5.4 GB) nên <code>npm audit</code> chạy được: 23 lỗ hổng thô, nhưng sau khi đối chiếu với
+      đường code thực sự dùng thì không có cái nào phơi ra ở production.</li>
     <li>Chưa soát <code>e2e/</code>, thư mục <code>cli/</code>, và nội dung cấu hình nginx phía host.</li>
     <li>Không đọc giá trị của bất kỳ secret nào — chỉ kiểm tra có/không và độ dài.</li>
   </ul>
@@ -552,7 +572,71 @@ return jerr("QUERY_FAIL", msg, 500);   // ← khong che giau</code></pre>
   <li>V-06 → V-10 xử lý theo đợt bảo trì thường.</li>
 </ol>
 
-<h2>9. Phụ lục — hai gate của chính harness đang hỏng</h2>
+<h2>9. Audit dependency — mảng trước đây còn trống, nay đã lấp</h2>
+
+<p>Ở bản trước, mục "Giới hạn" ghi rõ <em>chưa audit dependency</em> vì ổ C: hết chỗ.
+  Sau khi dọn đĩa (0.8 GB → 5.4 GB), <code>npm audit</code> đã chạy được.</p>
+
+<div class="tiles">
+  <div class="tile t-crit"><div class="n">3</div><div class="l">Critical (thô)</div></div>
+  <div class="tile t-high"><div class="n">12</div><div class="l">High (thô)</div></div>
+  <div class="tile t-med"><div class="n">7</div><div class="l">Moderate</div></div>
+  <div class="tile t-low"><div class="n">1</div><div class="l">Low</div></div>
+</div>
+
+<div class="note warn">
+  <strong>23 lỗ hổng nghe rất nặng — nhưng con số thô không phải mức độ thật.</strong>
+  Một advisory chỉ có ý nghĩa khi đường code bị ảnh hưởng <em>thực sự được dùng</em>.
+  Tôi đã kiểm từng cái thay vì chép lại bảng của npm; kết quả bên dưới khác hẳn.
+</div>
+
+<div class="scroll">
+<table>
+  <thead><tr><th>Gói</th><th>npm nói</th><th>Thực tế trong repo này</th><th>Mức thật</th></tr></thead>
+  <tbody>
+    <tr>
+      <td><code>@auth/core</code></td><td>Critical — homoglyph bypass ở email normalizer</td>
+      <td>Chỉ ảnh hưởng <strong>Email provider (magic link)</strong>. <code>auth.ts</code> khai báo
+        <strong>duy nhất Google</strong> — không có Email provider.</td>
+      <td><span class="tag low">Không áp dụng</span></td>
+    </tr>
+    <tr>
+      <td><code>next-auth</code></td><td>Critical — email misdelivery</td>
+      <td>Cùng lý do: đường email không được dùng.</td>
+      <td><span class="tag low">Không áp dụng</span></td>
+    </tr>
+    <tr>
+      <td><code>vitest</code></td><td>Critical — RCE qua API server</td>
+      <td><strong>devDependency.</strong> Cần truy cập web độc hại <em>trong lúc</em> vitest API server
+        đang chạy. Không có trong image production.</td>
+      <td><span class="tag med">Chỉ máy dev</span></td>
+    </tr>
+    <tr>
+      <td><code>next</code> 14.2.35</td><td>High — DoS qua Image Optimizer <code>remotePatterns</code></td>
+      <td><code>next.config.mjs</code> <strong>không cấu hình <code>images</code></strong>. Nhưng đây là gói
+        chạy trong production, và là gói duy nhất trong danh sách như vậy.</td>
+      <td><span class="tag med">Nên nâng cấp</span></td>
+    </tr>
+    <tr>
+      <td><code>postcss</code>, <code>eslint-*</code>, <code>glob</code>, <code>minimatch</code>,
+          <code>js-yaml</code>, <code>brace-expansion</code>, <code>vite</code></td>
+      <td>High/Moderate</td>
+      <td>Toàn bộ là <strong>build-time / dev-time</strong>, không nằm trong runtime image.</td>
+      <td><span class="tag low">Thấp</span></td>
+    </tr>
+  </tbody>
+</table>
+</div>
+
+<p><strong>Kết luận trung thực:</strong> không có lỗ hổng dependency nào đang phơi ra ở production theo
+  cách khai thác được. Thứ đáng làm là <strong>nâng <code>next</code> lên bản vá</strong> — vừa là gói
+  runtime duy nhất bị dính, vừa là loại nâng cấp nên làm định kỳ chứ không chờ có sự cố.</p>
+
+<p><strong>Cảnh báo về <code>npm audit fix --force</code>:</strong> nó muốn kéo <code>uuid</code> lên 14.0.2
+  (breaking) chỉ để vá một issue nằm trong <code>@azure/msal-node</code> — một nhánh phụ thuộc gián tiếp.
+  Chạy <code>--force</code> ở đây là đổi một rủi ro lý thuyết lấy một breaking change có thật.</p>
+
+<h2>10. Phụ lục — hai gate của chính harness đang hỏng</h2>
 <p>Không phải lỗ hổng bảo mật, nhưng cùng một loại bệnh: cơ chế bảo vệ <em>tồn tại</em> mà không hoạt động.
   Cả hai phát hiện trong lúc chạy audit này, và cả hai đã sửa.</p>
 

@@ -88,11 +88,40 @@ function Test-BytesEqual([byte[]]$A, [byte[]]$B) {
     return [System.Linq.Enumerable]::SequenceEqual($A, $B)
 }
 
+# --- Never install into the toolkit's own source repo (B-85) ---
+# The toolkit is the SOURCE of every bundle. Installing into it overwrites newer source
+# with the older packed copy: on 09-10 a Harness Connect run picked the toolkit checkout
+# and harness_fingerprint.py lost its B-83 fix. Recognised by SHAPE -- a bundle manifest
+# AND the packer, two files no bundle ships into a project -- so a renamed clone or a
+# worktree is caught too, and a project carrying only one of them still installs.
+# Same rule in install.sh and in Harness Connect (connect-lib.ps1).
+function Test-ToolkitSourceDir([string]$Path) {
+    if (-not $Path -or -not (Test-Path -LiteralPath $Path -PathType Container)) { return $false }
+    $manifests = @(Get-ChildItem -LiteralPath (Join-Path $Path "bundles") -Directory -ErrorAction SilentlyContinue |
+                   Where-Object { Test-Path -LiteralPath (Join-Path $_.FullName "bundle.yaml") -PathType Leaf })
+    if ($manifests.Count -eq 0) { return $false }
+    $tools = Join-Path $Path "tools\harness-bundle"
+    return ((Test-Path -LiteralPath (Join-Path $tools "pack.ps1") -PathType Leaf) -or
+            (Test-Path -LiteralPath (Join-Path $tools "pack.sh") -PathType Leaf))
+}
+if (Test-ToolkitSourceDir $TargetDir) {
+    throw ("B-85: refusing to install into the toolkit source repo ($TargetDir): it holds bundles/*/bundle.yaml " +
+           "and tools/harness-bundle/pack.*. Bundles are BUILT here (pack / ship-bundle), never installed here -- " +
+           "an install would overwrite newer source with the older packed copy.")
+}
+
 # --- Auto-find newest bundle if not specified ---
 if (-not $BundleFile) {
-    $found = Get-ChildItem -Recurse -Filter "*.bundle.json" -ErrorAction SilentlyContinue |
-             Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if (-not $found) { throw "No .bundle.json found. Specify -BundleFile <path-or-url>." }
+    # B-90: this used to search the CURRENT directory recursively and take the newest
+    # *.bundle.json by mtime -- run from C:\Users\<name> it picked a VS Code extension's
+    # nls.bundle.json (the integrity check refused it). Look only in the toolkit's own
+    # bundles\ beside this script, and take the highest <name>-x.y.z version.
+    $bundlesDir = Join-Path $PSScriptRoot "..\..\bundles"
+    $found = Get-ChildItem -Path (Join-Path $bundlesDir "*\*.bundle.json") -ErrorAction SilentlyContinue |
+             Where-Object { $_.Name -match '-\d+\.\d+\.\d+\.bundle\.json$' } |
+             Sort-Object { if ($_.Name -match '-(\d+\.\d+\.\d+)\.bundle\.json$') { [version]$matches[1] } } |
+             Select-Object -Last 1
+    if (-not $found) { throw "No <name>-x.y.z.bundle.json under $bundlesDir. Specify -BundleFile <path-or-url>." }
     $BundleFile = $found.FullName
     Write-Output "[install] Auto-selected bundle: $BundleFile"
 }
@@ -924,8 +953,17 @@ if ($shOnDisk.Count -gt 0) {
     } elseif ($inTree -ne 'true') {
         Write-Output "[execbit] target is not a git work tree -- nothing to stamp; the index +x bit applies once the project is under git"
     } else {
-        $ok = 0; $failedSh = @()
+        $ok = 0; $failedSh = @(); $ignoredSh = 0
         foreach ($rel in $shOnDisk) {
+            # B-94: `update-index --add` STAGES an untracked file. In a project that
+            # gitignores .harness/ on purpose (FPT-co-works: its deploy refuses a dirty
+            # tree) that put 29 .sh files into the next commit. Stamp only what git
+            # already tracks, or what it does not ignore.
+            & git -C $TargetDir ls-files --error-unmatch -- $rel *> $null
+            if ($LASTEXITCODE -ne 0) {
+                & git -C $TargetDir check-ignore -q -- $rel *> $null
+                if ($LASTEXITCODE -eq 0) { $ignoredSh++; continue }
+            }
             try {
                 & git -C $TargetDir update-index --add --chmod=+x -- $rel 2>$null
                 if ($LASTEXITCODE -eq 0) { $ok++ } else { $failedSh += $rel }
@@ -933,6 +971,7 @@ if ($shOnDisk.Count -gt 0) {
         }
         Write-Output "[execbit] git index +x (mode 100755) recorded on $ok/$($shOnDisk.Count) .sh file(s) -- survives commits made from Windows"
         if ($failedSh.Count -gt 0) { Write-Output "[execbit] WARNING: could not stamp: $($failedSh -join ', ')" }
+        if ($ignoredSh -gt 0) { Write-Output "[execbit] skipped $ignoredSh .sh file(s) this project gitignores and does not track -- not staged (B-94)" }
     }
     $ErrorActionPreference = $prevEap
 }

@@ -64,7 +64,7 @@
         "scanner": { "type": "string" },
         "findings_count": { "type": "integer" },
         "high_critical_count": { "type": "integer" },
-        "passed": { "type": "boolean" },
+        "passed": { "type": ["boolean", "null"], "description": "true/false as the scanner reported; null = no scan ran (never assumed passed, C14)" },
         "report_ref": { "type": "string" }
       }
     },
