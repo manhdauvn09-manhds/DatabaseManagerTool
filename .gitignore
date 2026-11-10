@@ -1,4 +1,4 @@
-# Node / Next
+﻿# Node / Next
 **/node_modules
 **/.next
 **/out
@@ -57,3 +57,19 @@ __pycache__/
 .harness/telemetry/.push-content.json
 .harness/telemetry/.sync-cursor.json
 .harness/context/
+
+# --- worktree-cleanup 20261110: giu clone moi sach ---
+# Worktree Claude tao ra. Truoc day chi duoc ignore qua .git/info/exclude,
+# ma file do KHONG duoc commit - nen clone moi mat luat nay.
+.claude/worktrees/
+
+# Cache/cursor telemetry: machine-state-paths.yaml xep la machine_local.
+.harness/telemetry/.transcript-cache.json
+.harness/telemetry/.push-cursor.json
+.harness/telemetry/.push-content.json
+.harness/telemetry/.sync-cursor.json
+
+# File tam cua trinh cai dat va ban sao luu.
+*.new
+*.bak
+# --- het khoi worktree-cleanup ---
