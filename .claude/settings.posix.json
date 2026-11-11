@@ -43,6 +43,14 @@
             "args": [
               "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-session-start.sh"
             ]
+          },
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-worktree.sh",
+              "start"
+            ]
           }
         ]
       }
@@ -160,6 +168,14 @@
             "command": "bash",
             "args": [
               "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-handoff-check.sh"
+            ]
+          },
+          {
+            "type": "command",
+            "command": "bash",
+            "args": [
+              "${CLAUDE_PROJECT_DIR}/.harness/scripts/bash/harness-worktree.sh",
+              "stop"
             ]
           }
         ]

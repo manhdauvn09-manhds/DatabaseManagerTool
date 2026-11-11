@@ -59,8 +59,8 @@ def effective_config(root):
     return cfg
 
 
-def read_config(root):
-    """The `handoff:` block of casan-policies.yaml as a dict, or None.
+def read_config(root, block="handoff"):
+    """The `<block>:` block (default `handoff:`) of casan-policies.yaml as a dict, or None.
 
     Line-scanned, not YAML-parsed: no PyYAML dependency in a hook. Supports the
     shapes the block uses -- scalars, inline lists, block lists.
@@ -74,7 +74,7 @@ def read_config(root):
     cfg, key, inside = {}, None, False
     for raw in lines:
         if not inside:
-            if re.match(r"^handoff\s*:\s*(#.*)?$", raw):
+            if re.match(r"^%s\s*:\s*(#.*)?$" % re.escape(block), raw):
                 inside = True
             continue
         if not raw.strip() or raw.lstrip().startswith("#"):

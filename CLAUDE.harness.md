@@ -149,6 +149,21 @@ what is inside it. Run the installer with `-MergeGuides` / `--merge-guides`.
   `Stop` when files changed this session but `Handoff.md` did not, and
   `harness doctor` warns when it falls behind the latest commit
   (`casan-policies.yaml` → `handoff`).
+- **C16 — Worktree budget: at most two, finished means merged and removed.**
+  A git worktree is a full second copy of the source on disk, and a forgotten
+  one is a second place the truth lives. Keep **at most two** worktrees besides
+  the main checkout per repository (`casan-policies.yaml` → `worktrees.max_extra`),
+  and prefer working in the main checkout when the task does not need isolation.
+  When the work in a worktree is done, **merge it into `main` at once, push, and
+  remove the worktree and its branch** — one command does all of it and refuses
+  on any doubt (uncommitted files, a conflict, `main` not clean), never with
+  `--force`: `harness-worktree finish` (`.harness/scripts/powershell/harness-worktree.ps1`
+  or `bash/harness-worktree.sh`). An assistant may run `finish` for the worktree
+  it is working in; another worktree is the operator's call. Claude Code's
+  PreToolUse guard denies creating a worktree over the budget and its `Stop`
+  hook reminds once per commit to finish; an assistant whose hooks do not run
+  this guard (Codex today) is only warned — by a git `post-checkout` hook (`harness-worktree
+  install-git-hook`), at `SessionStart` and by `harness doctor` (C10).
 
 ## Plane separation — what these policies do NOT govern
 

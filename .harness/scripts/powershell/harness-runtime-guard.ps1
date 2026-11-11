@@ -148,6 +148,41 @@ foreach ($pattern in $DenyPatterns) {
     }
 }
 
+# --- C16 worktree budget -------------------------------------------------------
+# A call that would create a local git worktree (EnterWorktree, Agent with
+# isolation: worktree, a desktop session with use_worktree, `git worktree add`)
+# is denied once the repo already has worktrees.max_extra of them besides main.
+# The cheap prefilter here only decides whether to ask; harness_worktree.py
+# decides (shared with the bash guard, C7) from `git worktree list` (C13) and
+# casan-policies.yaml -> worktrees (C2). Fail-open on any error (C10).
+try {
+    $WtMaybe = ($ToolName -eq "EnterWorktree") -or
+               ((@("Agent", "Task") -contains $ToolName) -and $ToolInput -and ("$($ToolInput.isolation)" -eq "worktree")) -or
+               (("$ToolName" -like "*start_session") -and $ToolInput -and ($ToolInput.use_worktree -eq $true)) -or
+               ($CommandString -match '(?i)worktree\s+add')
+    if ($WtMaybe) {
+        $WtLib = Join-Path $PSScriptRoot "..\lib\harness_worktree.py"
+        $wpy = Get-Command python -ErrorAction SilentlyContinue
+        if (-not $wpy) { $wpy = Get-Command python3 -ErrorAction SilentlyContinue }
+        if ($wpy -and (Test-Path $WtLib)) {
+            $OutputEncoding = New-Object System.Text.UTF8Encoding($false)
+            $WtRaw = $InputJson | & $wpy.Source $WtLib guard "$HarnessRoot" 2>$null
+            if ($WtRaw) {
+                $WtVerdict = ($WtRaw -join "") | ConvertFrom-Json
+                if ($WtVerdict.decision -eq "deny") {
+                    Write-DenyToStderr -Reason $WtVerdict.reason -Tool $ToolName -Command $CommandString
+                    Write-LedgerDeny -Tool $ToolName -Pattern "C16:worktree-budget" -Command $CommandString
+                    @{ permissionDecision = "deny"; reason = $WtVerdict.reason; tool = $ToolName } |
+                        ConvertTo-Json -Compress | Write-Output
+                    exit 2
+                }
+            }
+        }
+    }
+} catch {
+    # Fail-open: a broken budget check must never brick the shell.
+}
+
 # Claude Code names an MCP tool `mcp__<server>__<tool>`; the tool registry keys
 # it `<server>.<tool>` (C3). Those two strings are never equal, so the registry
 # lookup below silently missed EVERY MCP tool -- all ten deny-by-default

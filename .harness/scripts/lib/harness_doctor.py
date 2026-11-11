@@ -305,6 +305,36 @@ def _c15_handoff(root):
         yield OK, label, "%s committed within %d day(s) of HEAD (%.0f)." % (rel, max_age, lag)
 
 
+def _c16_worktrees(root):
+    """C16: worktrees besides main within worktrees.max_extra, none left behind
+    after a merge, none abandoned. WARN at worst, never FAIL (C14); `unknown`
+    (INFO) when git cannot list them (C12)."""
+    label = "worktrees (C16)"
+    try:
+        import harness_worktree as HW
+    except Exception as e:
+        yield INFO, label, "unknown: cannot load harness_worktree (%s)" % e
+        return
+    cfg = HW.effective_config(root)
+    if cfg.get("enabled") is False:
+        yield INFO, label, "disabled in casan-policies.yaml (worktrees.enabled: false)."
+        return
+    r = HW.report_lines(root, cfg)
+    if r is None:
+        yield INFO, label, "unknown: `git worktree list` unreadable here -- budget not checked."
+        return
+    over, ex, lines = r
+    if over:
+        yield WARN, label, ("%d worktree(s) besides main, limit %d -- finish one "
+                            "(harness-worktree finish): %s" % (len(ex), cfg["max_extra"],
+                                                              "; ".join(HW._short(w) for w in ex)))
+    if lines:
+        yield WARN, label, "left behind: " + " | ".join(lines)
+    if not over and not lines:
+        yield OK, label, "%d/%d worktree(s) besides main, none merged-and-kept or abandoned." % (
+            len(ex), cfg["max_extra"])
+
+
 def _machine_local_matcher(root):
     """-> (callable(rel) -> bool, None) from machine-state-paths.yaml, or (None, why)."""
     try:
@@ -583,6 +613,10 @@ def run(root, ci=False):
     for item in _c15_handoff(root):
         yield item
 
+    # 5c) C16 worktree budget.
+    for item in _c16_worktrees(root):
+        yield item
+
     # 6) Hook wiring — is anything actually invoking the harness on tool use?
     settings = _read(os.path.join(root, ".claude", "settings.json"))
     if not settings:
@@ -756,9 +790,26 @@ def run(root, ci=False):
                 "These are installed but will NEVER run." % (default, whence, "; ".join(dead)))
         elif not default:
             yield WARN, "ci gates", "%s present, but the default branch could not be resolved to verify the trigger." % ", ".join(harness_wf)
-        elif source in ("convention", "checkout"):
+        elif source in ("cache", "convention", "checkout"):
             # Matching a branch we only GUESSED proves nothing. Reporting OK here
             # would be the dead-gate bug wearing a green badge for a fourth time.
+            #
+            # `cache` was missing from this list, and it is the one source with a
+            # documented incident behind it. _default_branch's own docstring
+            # tells callers to treat the cached value "as weaker evidence rather
+            # than as facts", and its comment on the cache branch says the same;
+            # the caller then graded it OK anyway. C13 names the case: a repo
+            # whose refs/remotes/*/HEAD pointed at a temporary branch while its
+            # real default was main, which pinned CI to a branch someone later
+            # deleted. Nothing here re-reads that pointer, so a green verdict
+            # published a clone-time cache as a verified fact.
+            #
+            # It WARNs rather than FAILs on purpose: the trigger does match the
+            # best value available, and `ls-remote` failing (offline, or no
+            # credential for this remote) is ordinary rather than broken. The
+            # message says what to run, so it is actionable instead of noise --
+            # a warning nobody can act on is the C14 defect in the other
+            # direction.
             yield WARN, "ci gates", (
                 "%s trigger on '%s', which matches -- but that branch was %s, so the match "
                 "is unverified. Run `git remote set-head <remote> -a` (or fetch) and re-run."

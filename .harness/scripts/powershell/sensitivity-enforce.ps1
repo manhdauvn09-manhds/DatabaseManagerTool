@@ -38,7 +38,7 @@ if (-not (Test-Path $Cfg)) {
     Write-Host ""
     Write-Host "Nghia la harness chua duoc cai, hoac bundle cai vao con cu hon F2." -ForegroundColor Yellow
     Write-Host "Cai bundle truoc:" -ForegroundColor Yellow
-    Write-Host "  powershell -File E:\SourceCode\HarnessAI-ToolKIT\tools\harness-bundle\install.ps1 ``"
+    Write-Host "  powershell -File E:\Develop\HarnessAI-ToolKIT\tools\harness-bundle\install.ps1 ``"
     Write-Host "    -TargetDir `"$Project`" -MergeGuides"
     Write-Host ""
     Write-Host "Luu y: bundle moi nhat (1.7.1) co TRUOC F2, nen cai xong van chua co" -ForegroundColor Yellow
@@ -59,7 +59,7 @@ if ($Status -or (-not $On -and -not $Off)) {
     Write-Host "  So rule : $($d.rules.Count)"
     Write-Host ""
     Write-Host "  Xem truoc file nao se bi chan:"
-    Write-Host "    python E:\SourceCode\HarnessAI-ToolKIT\.harness\scripts\lib\harness_sensitivity.py `"$Project`" --scan"
+    Write-Host "    python E:\Develop\HarnessAI-ToolKIT\.harness\scripts\lib\harness_sensitivity.py `"$Project`" --scan"
     Write-Host ""
     exit 0
 }

@@ -63,6 +63,10 @@ machine_local:
     kind: cursor
     status: stays_in_place
     reason: Central sync's per-project byte cursor.
+  - path: .harness/telemetry/.codex-collect-state.json
+    kind: cursor
+    status: stays_in_place
+    reason: Codex collector's per-machine cursor (collect-codex). Was ignored only through one checkout's .git/info/exclude until 10-11-2026.
 
   # ---- telemetry the hooks write ---------------------------------------------------------
   - path: .harness/telemetry/daily-*.jsonl

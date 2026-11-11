@@ -218,6 +218,36 @@ if ($installerRules -and (Test-Path $installerRules)) {
     }
 }
 
+# --- Per-project ownership (opt-in): .harness/project/ownership.yaml in the TARGET
+# may list `project_owned` paths. FPT-co-works and JLPT_Test each run a 7-stage DAG
+# of their own in contracts/workflow.yaml; as a keyed_lists file it reported every
+# install PARTIAL, while moving it into project_owned fleet-wide would have stopped
+# the other 21 projects from ever receiving a pipeline change -- silently. The file
+# itself sits under .harness/project/*, already project-owned, so no install touches
+# it. Scope is deliberately narrow: only paths under contracts/ or .harness/eval/
+# (the project's own contracts and golden cases) are honoured. A path elsewhere --
+# a guard script, settings hooks, the tool registry -- is fleet policy and is
+# IGNORED with a warning: a project that could opt out of those would keep an old
+# guard through every security fix (SynthGora's local http_fetch patch, B-95, is
+# the case where that cut the other way). Each honoured path is printed by name.
+$projOwnFile = Join-Path $TargetDir ".harness\project\ownership.yaml"
+if (Test-Path -LiteralPath $projOwnFile) {
+    try {
+        $pr = Read-OwnershipRules ([System.IO.File]::ReadAllText($projOwnFile, $Utf8NoBom))
+        foreach ($p in $pr.Owned) {
+            $p = $p.Trim().Replace('\', '/')
+            if ($p -notmatch '^(contracts|\.harness/eval)/[^*?]+$' -or $p -match '(^|/)\.\.(/|$)') {
+                Write-Output "[own] IGNORED project-declared path '$p' -- only exact paths under contracts/ or .harness/eval/ can be project-owned (fleet policy elsewhere)"
+                continue
+            }
+            if ($preserve -notcontains $p) { $preserve += $p }
+            Write-Output "[own] project declares it owns: $p (kept as-is; the shipped copy lands as $p.new when it differs)"
+        }
+    } catch {
+        Write-Output "[own] WARNING: .harness/project/ownership.yaml unreadable ($($_.Exception.Message)); ignored"
+    }
+}
+
 # --- Tamper detection (C9-adjacent): the PREVIOUS install's receipt already
 # records a sha256 per shipped file. Comparing it to what is on disk now answers
 # the question `preserve` never could -- "did the project hand-edit a file the
@@ -959,8 +989,12 @@ if ($shOnDisk.Count -gt 0) {
             # gitignores .harness/ on purpose (FPT-co-works: its deploy refuses a dirty
             # tree) that put 29 .sh files into the next commit. Stamp only what git
             # already tracks, or what it does not ignore.
-            & git -C $TargetDir ls-files --error-unmatch -- $rel *> $null
-            if ($LASTEXITCODE -ne 0) {
+            # Tracked = `ls-files` prints the path. Not `--error-unmatch`: its
+            # "did not match any file(s)" goes to stderr, and a PS 5.1 transcript
+            # records that as a red NativeCommandError even under *> $null -- a
+            # false alarm in every update-all log for each NEW .sh (C14, 11-11).
+            $tracked = "$(& git -C $TargetDir ls-files -- $rel 2>$null)".Trim()
+            if (-not $tracked) {
                 & git -C $TargetDir check-ignore -q -- $rel *> $null
                 if ($LASTEXITCODE -eq 0) { $ignoredSh++; continue }
             }
@@ -1173,7 +1207,7 @@ if ($WithCiGates) {
                     # reached.
                     $instWd = ""
                     if ($workDir) { $instWd = "`n        working-directory: $workDir" }
-                    $setup = "      - uses: actions/setup-node@v4`n        with:`n          node-version: '20'`n      - run: $inst$instWd"
+                    $setup = "      - uses: actions/setup-node@v5`n        with:`n          node-version: '20'`n      - run: $inst$instWd"
                 } elseif ($full -match 'pytest|python -m') {
                     $pyInstall = $null
                     # Test dependencies commonly live in a *-test/-dev file rather
@@ -1191,11 +1225,11 @@ if ($WithCiGates) {
                         if ($pj -match '(?m)^\s*\[project\]') { $pyInstall = "pip install -e ." }
                     }
                     if ($pyInstall) {
-                        $setup = "      - uses: actions/setup-python@v5`n        with:`n          python-version: '3.12'`n      - run: $pyInstall"
+                        $setup = "      - uses: actions/setup-python@v6`n        with:`n          python-version: '3.12'`n      - run: $pyInstall"
                     } else {
                         # No honest install command exists. Say so in the file
                         # rather than emitting one that will fail.
-                        $setup = "      - uses: actions/setup-python@v5`n        with:`n          python-version: '3.12'`n      # TODO: this repo has no requirements.txt and no installable pyproject [project]`n      # table, so the installer could not infer how to install deps. Add the`n      # right command here (e.g. pip install pytest -r dev-requirements.txt).`n      - run: pip install pytest"
+                        $setup = "      - uses: actions/setup-python@v6`n        with:`n          python-version: '3.12'`n      # TODO: this repo has no requirements.txt and no installable pyproject [project]`n      # table, so the installer could not infer how to install deps. Add the`n      # right command here (e.g. pip install pytest -r dev-requirements.txt).`n      - run: pip install pytest"
                         Write-Output "[ci] tests.yml: no requirements.txt / installable pyproject -- left a TODO for the dependency step"
                     }
                 } elseif ($full -match 'artisan|phpunit') {
@@ -1257,7 +1291,7 @@ jobs:
     name: Project test suite
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 $setup
       - run: $full$wdLine
 "@

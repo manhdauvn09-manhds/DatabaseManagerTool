@@ -21,8 +21,8 @@ jobs:
     name: Policy CI (schemas, C4/C5/C8/C10, plane separation)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - run: pip install pyyaml jsonschema
@@ -40,8 +40,8 @@ jobs:
     name: Harness doctor (evidence pipeline health)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       # --strict makes a FAIL line fail the build. --ci (B-78): the ledger chain,
@@ -57,7 +57,7 @@ jobs:
     name: Secret scan (C5)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0
       - name: secret-scan
@@ -68,8 +68,8 @@ jobs:
     runs-on: ubuntu-latest
     needs: [policy-ci]
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
       - name: harness golden

@@ -243,6 +243,25 @@ if own_rules_path and os.path.isfile(own_rules_path):
     except Exception as e:
         print("[own] WARNING: installer-side bundle-ownership.yaml unreadable (%s); using the bundle's own rules only" % e)
 
+# Per-project ownership (opt-in), parity with install.ps1: the TARGET's
+# .harness/project/ownership.yaml may list `project_owned` paths, honoured only
+# when exact and under contracts/ or .harness/eval/. Anything else is fleet policy
+# (guard scripts, hooks, the tool registry) and is ignored with a warning.
+_proj_own = os.path.join(target, ".harness", "project", "ownership.yaml")
+if os.path.isfile(_proj_own):
+    try:
+        po = parse_ownership(open(_proj_own, encoding="utf-8-sig").read())[0]
+        for p in po:
+            p = p.strip().replace("\\", "/")
+            if not re.match(r"^(contracts|\.harness/eval)/[^*?]+$", p) or re.search(r"(^|/)\.\.(/|$)", p):
+                print("[own] IGNORED project-declared path '%s' -- only exact paths under contracts/ or "
+                      ".harness/eval/ can be project-owned (fleet policy elsewhere)" % p)
+                continue
+            preserve.add(p)
+            print("[own] project declares it owns: %s (kept as-is; the shipped copy lands as %s.new when it differs)" % (p, p))
+    except Exception as e:
+        print("[own] WARNING: .harness/project/ownership.yaml unreadable (%s); ignored" % e)
+
 # The PREVIOUS install's receipt already records a sha256 per shipped file.
 # Comparing it to disk answers what `preserve` never could: did the project
 # hand-edit a file the bundle owns? Overwriting that silently is how four

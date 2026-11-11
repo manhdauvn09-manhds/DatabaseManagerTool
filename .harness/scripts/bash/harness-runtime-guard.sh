@@ -150,6 +150,32 @@ while IFS= read -r pattern; do
     fi
 done <<< "$DENY_PATTERNS"
 
+# --- C16 worktree budget (parity with the .ps1) --------------------------------
+# Deny a call that would create a local worktree once worktrees.max_extra are in
+# use. harness_worktree.py decides for both shells (C7); fail-open on error (C10).
+WT_LIB="$HARNESS_ROOT/.harness/scripts/lib/harness_worktree.py"
+if [ -f "$WT_LIB" ] && { [ "$TOOL_NAME" = "EnterWorktree" ] || [ "$TOOL_NAME" = "Agent" ] || \
+        [ "$TOOL_NAME" = "Task" ] || [[ "$TOOL_NAME" == *start_session ]] || \
+        echo "$COMMAND_STRING" | grep -qiE 'worktree[[:space:]]+add'; }; then
+    WT_REASON=$(printf '%s' "$INPUT_JSON" | python3 "$WT_LIB" guard "$HARNESS_ROOT" 2>/dev/null | python3 -c "
+import sys, json
+try:
+    v = json.load(sys.stdin)
+except Exception:
+    raise SystemExit
+if v.get('decision') == 'deny':
+    sys.stdout.write(v.get('reason', ''))  # no newline: a Windows python would add CR
+" 2>/dev/null || true)
+    if [ -n "$WT_REASON" ]; then
+        deny_to_stderr "$WT_REASON" "$TOOL_NAME" "$COMMAND_STRING"
+        persist_deny "$TOOL_NAME" "C16:worktree-budget" "$COMMAND_STRING" || true
+        printf '%s' "$WT_REASON" | TOOL="$TOOL_NAME" python3 -c "
+import sys, json, os
+print(json.dumps({'permissionDecision': 'deny', 'reason': sys.stdin.read(), 'tool': os.environ['TOOL']}))"
+        exit 2
+    fi
+fi
+
 # --- Tool-registry deny-by-default (C3) -------------------------------------
 # This layer was missing from the bash twin entirely: the PowerShell guard
 # consulted tool-registry.json and refused any registered tool marked

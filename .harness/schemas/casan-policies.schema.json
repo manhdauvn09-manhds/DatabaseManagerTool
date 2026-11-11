@@ -189,6 +189,20 @@
         "ignore_paths": { "type": "array", "items": { "type": "string" } }
       }
     },
+    "worktrees": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "C16 Worktree budget. Missing section = defaults; only enabled:false disables.",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "max_extra": { "type": "integer", "minimum": 0 },
+        "merge_target": { "type": "string", "minLength": 1 },
+        "push_after_merge": { "type": "boolean" },
+        "remind_on_stop": { "type": "boolean" },
+        "merged_idle_hours": { "type": "integer", "minimum": 0 },
+        "stale_after_days": { "type": "integer", "minimum": 1 }
+      }
+    },
     "agentops": {
       "type": "object",
       "additionalProperties": true,

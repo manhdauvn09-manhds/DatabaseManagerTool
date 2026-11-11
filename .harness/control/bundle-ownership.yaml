@@ -43,6 +43,15 @@ project_owned:
   - ".harness/control/agent-config.yaml"
   - "contracts/impact-map.yaml"
 
+# A single PROJECT can add to this list for itself, without changing the fleet:
+# .harness/project/ownership.yaml in that project, same `project_owned:` format.
+# Both installers read it from the target and honour only exact paths under
+# contracts/ or .harness/eval/ -- guard scripts, hooks and the tool registry stay
+# fleet policy and a declaration naming them is ignored with a warning. Used by
+# FPT-co-works and JLPT_Test for their own 7-stage contracts/workflow.yaml (05-11),
+# which as a keyed_lists file below made every install PARTIAL; listing it here
+# instead would have frozen the pipeline in every other project, silently.
+
 # Glob conventions for project-owned paths. A project can create any of these
 # without coordinating with the bundle, and an install will not touch them.
 # `*.local.*` is the override convention: casan-policies.local.yaml sits beside
