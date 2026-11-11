@@ -1,7 +1,7 @@
 # Handoff — DBManager
 
 > Ground truth ha tang: xem `CLAUDE.md`. File nay ghi **trang thai thay doi**.
-> Cap nhat lan cuoi: **2026-11-10**.
+> Cap nhat lan cuoi: **2026-11-11**.
 
 ## NOW
 
@@ -134,6 +134,56 @@ Gom: `.harness/local/checkout.json`, `.harness/portal-sync.key`,
 **Zip chua secret** - chep truc tiep, dung commit, dung gui qua chat.
 
 `SecureConnect/.env.production` KHONG co o local (chi nam tren mcp-80).
+
+### Di doi hoan tat (2026-11-11) - XONG
+
+Thu muc cu `E:\SourceCode\DatabaseManager` **da xoa**. Cho lam viec duy nhat
+tu day: `E:\Develop\DatabaseManagerTool`.
+
+| Kiem (do 2026-11-11) | Ket qua |
+|---|---|
+| Folder cu | khong con (`Test-Path` = False) |
+| Clone moi | 28.681 file / 385,5 MB |
+| git | `72d8323`, working tree sach, 0 commit chua push |
+| 6 file local-state | co du, da doi chieu SHA256 |
+| Doi chieu 2 thu muc | 469 file, **khong con file nao chi co o folder cu** |
+
+**Bai hoc**: zip local-state o buoc 07 goi theo danh sach lap bang tay, va
+danh sach do **sot 5 file**. Chi co doi chieu tung file giua 2 thu muc moi
+phat hien ra. Lan sau: luon doi chieu that, dung tin danh sach tu viet.
+
+5 file do (da chep tay, deu khong nam trong git lan trong zip):
+
+```
+deploy\.env.production.template                  <- CHUA AUTH_SECRET THAT
+.harness\control\casan-policies.yaml.new
+.harness\control\risk-policy.yaml.new
+.harness\control\sensitive-paths.json.new
+.harness\telemetry\daily-2026-11-10.jsonl        <- sinh ra sau khi lap danh sach
+```
+
+Khoa file luc xoa **khong phai do thieu quyen Admin** ma do chinh phien
+Claude Code dang dat working directory o folder do. Admin khong mo duoc file
+dang bi tien trinh khac giu, va cung khong lien quan gi toi gioi han
+`MAX_PATH`.
+
+`C:\Users\ManhDS\worktree-cleanup\DatabaseManager-20261110-170340\`
+(backup, bundle, zip, `99-rollback.md`) - **giu toi 2026-12-10**.
+
+### Harness tu nang len 1.8.24 (`63f13c4`, 2026-11-11)
+
+Trinh cai dat tu chay khi mo phien o thu muc clone moi, khong phai nguoi
+sua tay. Da xem diff, quet secret (khong co), commit va push.
+
+- **C16 "Worktree budget"** (moi): toi da 2 worktree phu moi repo; xong viec
+  thi `harness-worktree finish` de merge + xoa. Them `harness-worktree`
+  (.ps1/.sh/.py) va 2 hook SessionStart/Stop goi no.
+- `harness-runtime-guard` ca 2 ban: chan tao worktree khi vuot han muc,
+  **fail-open** neu check loi nen khong lam ket shell duoc.
+- `sensitivity-enforce.ps1`: duong dan huong dan doi sang
+  `E:\Develop\HarnessAI-ToolKIT` - da kiem, toolkit that su da chuyen cho.
+- `tool-registry.json` va `contracts/project.yaml.new` hien "modified"
+  nhung chi khac line-ending, noi dung y nguyen nen khong vao commit.
 
 ## OPEN
 
